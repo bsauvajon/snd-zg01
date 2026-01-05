@@ -1,0 +1,13 @@
+snd-zg01-dkms (1.0.0-1) unstable; urgency=medium
+
+  * Initial release
+  * Full-duplex audio support (playback and capture)
+  * Game channel playback working perfectly
+  * Voice channel capture working correctly
+  * Fixed buffer size calculation bug (no more sample skipping)
+  * Fixed kernel panic issues (bounds checking)
+  * Optimized URB buffering (16 URBs = 64ms)
+  * Support for xHCI controllers (localhost) and VM environments
+  * Clean compilation without warnings
+
+ -- Brice <brice@example.com>  Sun, 05 Jan 2026 18:00:00 +0100

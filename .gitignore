@@ -1,0 +1,14 @@
+*.o
+*.ko
+*.cmd
+*-
+desc.bInterfaceNumber
+*.save
+*.wav
+capture/*
+*.log
+*.tmp
+.cache
+/.vscode
+/.idea
+tags

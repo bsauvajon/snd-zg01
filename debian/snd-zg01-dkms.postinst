@@ -1,0 +1,40 @@
+#!/bin/bash
+
+# Install script for snd-zg01 DKMS module
+
+set -e
+
+NAME=snd-zg01
+VERSION=1.0.0
+
+case "$1" in
+    configure)
+        # Register with DKMS
+        dkms add -m $NAME -v $VERSION || true
+        dkms build -m $NAME -v $VERSION || true
+        dkms install -m $NAME -v $VERSION || true
+        
+        # Install udev rule for automatic module loading
+        if [ -f /usr/src/$NAME-$VERSION/src/99-zg01-autoload.rules ]; then
+            cp /usr/src/$NAME-$VERSION/src/99-zg01-autoload.rules /etc/udev/rules.d/
+            udevadm control --reload-rules || true
+            udevadm trigger || true
+        fi
+        
+        echo "Yamaha ZG01 driver installed via DKMS"
+        echo "The module has been built and installed for your kernel"
+        echo ""
+        echo "The driver will automatically load when you connect the ZG01."
+        echo "If the device is already connected, unplug and reconnect it."
+        echo ""
+        echo "To manually load the driver, run:"
+        echo "  sudo modprobe zg01_usb"
+        echo ""
+        echo "Check audio devices with:"
+        echo "  cat /proc/asound/cards"
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

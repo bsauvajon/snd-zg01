@@ -1,0 +1,24 @@
+Source: snd-zg01-dkms
+Section: kernel
+Priority: optional
+Maintainer: Brice <brice@example.com>
+Build-Depends: debhelper-compat (= 13), dkms
+Standards-Version: 4.6.0
+Homepage: https://github.com/yourusername/snd-zg01
+
+Package: snd-zg01-dkms
+Architecture: all
+Depends: ${misc:Depends}, dkms (>= 2.1.0.0)
+Description: DKMS driver for Yamaha ZG01 USB audio interface
+ This package provides the snd-zg01 kernel module for the Yamaha ZG01
+ USB audio interface (VID: 0x0499, PID: 0x1513).
+ .
+ Features:
+  - Game Channel (Output): Crystal-clear 32-bit stereo playback
+  - Voice Channel (Input): Low-latency microphone capture
+  - Full-duplex support for simultaneous playback and capture
+  - 48kHz sample rate, S32_LE format
+  - Perfect audio quality with no clicks or sample skipping
+ .
+ The module will be automatically rebuilt for new kernel versions
+ using DKMS (Dynamic Kernel Module Support).
