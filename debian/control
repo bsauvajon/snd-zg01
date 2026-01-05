@@ -1,10 +1,10 @@
 Source: snd-zg01-dkms
 Section: kernel
 Priority: optional
-Maintainer: Brice <brice@example.com>
+Maintainer: Brice Sauvajon <brice@sauvajon.net>
 Build-Depends: debhelper-compat (= 13), dkms
 Standards-Version: 4.6.0
-Homepage: https://github.com/yourusername/snd-zg01
+Homepage: https://github.com/bsauvajon/snd-zg01
 
 Package: snd-zg01-dkms
 Architecture: all

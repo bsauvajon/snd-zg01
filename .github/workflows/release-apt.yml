@@ -43,26 +43,42 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y devscripts debhelper fakeroot build-essential lintian dkms
 
-      - name: Set Debian changelog version from tag
+      - name: Set Debian changelog version from tag (handle prereleases)
         run: |
-          # GITHUB_REF_NAME is like v1.2.3; strip leading 'v'
-          ver=${GITHUB_REF_NAME#v}
-          echo "Setting Debian changelog version to ${ver}-1"
-          dch --force-bad-version -v ${ver}-1 "Release ${GITHUB_REF_NAME}"
+          # GITHUB_REF_NAME examples: v1.2.3 or v1.2.3-beta1
+          raw=${GITHUB_REF_NAME#v}
+          # Convert prerelease hyphen to Debian-friendly ~ (only first hyphen)
+          if echo "$raw" | grep -q "-"; then
+            upver=$(echo "$raw" | sed 's/-/~/')
+            echo "Detected prerelease tag. Upstream version will be: $upver"
+          else
+            upver=$raw
+          fi
+          echo "Setting Debian changelog version to ${upver}-1"
+          dch --force-bad-version -v ${upver}-1 "Release ${GITHUB_REF_NAME}"
           cat debian/changelog
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
 
       - name: Patch debian packaging files to use new version
         run: |
-          ver=${GITHUB_REF_NAME#v}
-          echo "Patching debian files to version ${ver}"
-          # update dkms control & install paths
-          sed -i "s/snd-zg01 1.0.0/snd-zg01 ${ver}/g" debian/snd-zg01-dkms.dkms || true
-          sed -i "s/usr\/src\/snd-zg01-1.0.0/usr\/src\/snd-zg01-${ver}/g" debian/snd-zg01-dkms.install || true
-          # update postinst/postrm VERSION definitions
-          sed -i "s/VERSION=1.0.0/VERSION=${ver}/g" debian/snd-zg01-dkms.postinst || true
-          sed -i "s/VERSION=1.0.0/VERSION=${ver}/g" debian/snd-zg01-dkms.postrm || true
+          raw=${GITHUB_REF_NAME#v}
+          if echo "$raw" | grep -q "-"; then
+            # convert first '-' to '~' for Debian prerelease ordering for upstream version
+            upver=$(echo "$raw" | sed 's/-/~/')
+            # For paths and filenames (no ~ allowed), use raw version without 'v'
+            pathver=$raw
+          else
+            upver=$raw
+            pathver=$raw
+          fi
+          echo "Patching debian files to upver=${upver}, pathver=${pathver}"
+          # update dkms control & install paths (dkms uses plain numeric path names)
+          sed -i "s/snd-zg01 1.0.0/snd-zg01 ${pathver}/g" debian/snd-zg01-dkms.dkms || true
+          sed -i "s/usr\/src\/snd-zg01-1.0.0/usr\/src\/snd-zg01-${pathver}/g" debian/snd-zg01-dkms.install || true
+          # update postinst/postrm VERSION definitions (these are for runtime, use path version)
+          sed -i "s/VERSION=1.0.0/VERSION=${pathver}/g" debian/snd-zg01-dkms.postinst || true
+          sed -i "s/VERSION=1.0.0/VERSION=${pathver}/g" debian/snd-zg01-dkms.postrm || true
           # show results
           echo "--- dkms file ---"
           cat debian/snd-zg01-dkms.dkms || true
