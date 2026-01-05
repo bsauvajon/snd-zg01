@@ -47,9 +47,19 @@ The driver delivers **crystal-clear audio** with no clicks or distortion after f
 
 The easiest way to install the driver is using the pre-built DKMS package:
 
+#### Using apt
+```
+curl -L https://raw.githubusercontent.com/bsauvajon/snd-zg01/refs/heads/main/apt/snd-zg01.asc | sudo tee /etc/apt/keyrings/snd-zg01.asc
+curl -L https://raw.githubusercontent.com/bsauvajon/snd-zg01/refs/heads/main/apt/snd-zg01.sources | sudo tee /etc/apt/sources.list.d/snd-zg01.sources
+sudo apt update
+sudo apt install snd-zg01-dkms
+```
+
+#### Downloading and installing manually
+
+Download the deb archive from the latest release then use these commands
+
 ```bash
-# Download the .deb package from releases
-wget https://github.com/yourusername/snd-zg01/releases/download/v1.0.0/snd-zg01-dkms_1.0.0-1_all.deb
 
 # Install the package (modules are compiled and installed automatically)
 sudo dpkg -i snd-zg01-dkms_1.0.0-1_all.deb
@@ -82,7 +92,7 @@ cat /proc/asound/cards
 ### Manual Build and Install
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/snd-zg01.git
+git clone https://github.com/bsauvajon/snd-zg01.git
 cd snd-zg01
 
 # Build the driver

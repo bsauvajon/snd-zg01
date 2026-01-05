@@ -1,0 +1,4 @@
+Types: deb
+URIs: https://github.com/bsauvajon/snd-zg01/releases/latest/download
+Suites: ./
+Signed-By: /etc/apt/keyrings/snd-zg01.asc
