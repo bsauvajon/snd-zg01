@@ -1,0 +1,101 @@
+name: Release APT repository
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  make-draft-release:
+    name: make draft release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Create draft release
+        run: |
+          gh release create ${GITHUB_REF_NAME} \
+            --draft \
+            --title ${GITHUB_REF_NAME} \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-debs:
+    name: Build Debian packages
+    needs: make-draft-release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y devscripts debhelper fakeroot build-essential lintian
+
+      - name: Build package
+        run: |
+          # assume packaging metadata is present under debian/ and top-level Makefile
+          dpkg-buildpackage -us -uc -b
+
+      - name: Run lintian
+        if: success()
+        run: |
+          lintian --display-info --pedantic ../*.changes || true
+
+      - name: Upload debs to release
+        run: |
+          gh release upload ${GITHUB_REF_NAME} ../*.deb --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-apt-repo:
+    name: Release APT repository
+    needs: [make-draft-release, build-debs]
+    runs-on: ubuntu-24.04
+    environment: apt-signing
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: GPG configuration
+        run: |
+          mkdir -p -m 0700 $HOME/.gnupg
+          echo "use-agent" > $HOME/.gnupg/gpg.conf
+          echo "pinentry-program $GITHUB_WORKSPACE/.github/scripts/pinentry.sh" > $HOME/.gnupg/gpg-agent.conf
+          echo "$GPG_PASSPHRASE" > $HOME/.gnupg/passphrase
+          gpgconf --launch gpg-agent
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "$GPG_KEY_ID:6:" | gpg --import-ownertrust
+        env:
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+
+      - name: Download debs from release
+        run: |
+          mkdir -p tmp
+          gh release download ${GITHUB_REF_NAME} -p "*.deb" -D tmp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate APT repository files
+        run: |
+          pushd tmp
+          apt-ftparchive packages . | tee Packages | xz > Packages.xz
+          apt-ftparchive release -c ../debian/release.conf . > Release || apt-ftparchive release . > Release
+          gpg --batch --yes --pinentry-mode loopback --passphrase-file $HOME/.gnupg/passphrase --clearsign -o InRelease Release
+          gpg --batch --yes --pinentry-mode loopback --passphrase-file $HOME/.gnupg/passphrase --armor --detach-sign --sign -o Release.gpg Release
+          gh release upload ${GITHUB_REF_NAME} InRelease Packages Packages.xz Release Release.gpg --clobber
+          popd
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
