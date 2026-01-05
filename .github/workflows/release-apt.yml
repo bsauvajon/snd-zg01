@@ -34,11 +34,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          tags: true
 
       - name: Install build dependencies
         run: |
           sudo apt-get update -y
           sudo apt-get install -y devscripts debhelper fakeroot build-essential lintian dkms
+
+      - name: Set Debian changelog version from tag
+        run: |
+          # GITHUB_REF_NAME is like v1.2.3; strip leading 'v'
+          ver=${GITHUB_REF_NAME#v}
+          echo "Setting Debian changelog version to ${ver}-1"
+          dch --force-bad-version -v ${ver}-1 "Release ${GITHUB_REF_NAME}"
+          cat debian/changelog
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
 
       - name: Build package
         run: |
