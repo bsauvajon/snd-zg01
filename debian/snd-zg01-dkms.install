@@ -1,10 +1,4 @@
-src/zg01_usb.c usr/src/snd-zg01-1.0.0/src/
-src/zg01_pcm.c usr/src/snd-zg01-1.0.0/src/
-src/zg01_pcm.h usr/src/snd-zg01-1.0.0/src/
-src/zg01_control.c usr/src/snd-zg01-1.0.0/src/
-src/zg01_control.h usr/src/snd-zg01-1.0.0/src/
-src/zg01_usb_discovery.c usr/src/snd-zg01-1.0.0/src/
-src/zg01.h usr/src/snd-zg01-1.0.0/src/
-src/dkms.conf usr/src/snd-zg01-1.0.0/src/
-src/99-zg01-autoload.rules usr/src/snd-zg01-1.0.0/src/
+src/ usr/src/snd-zg01-1.0.0/
+dkms.conf usr/src/snd-zg01-1.0.0/
 Makefile usr/src/snd-zg01-1.0.0/
+

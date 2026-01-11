@@ -12,8 +12,8 @@ case "$1" in
         # Uninstall from DKMS
         dkms remove -m $NAME -v $VERSION --all || true
         
-        # Remove udev rule
-        rm -f /etc/udev/rules.d/99-zg01-autoload.rules || true
+        # Remove udev rules
+        rm -f /etc/udev/rules.d/90-zg01.rules || true
         udevadm control --reload-rules || true
         udevadm trigger || true
         
@@ -23,8 +23,8 @@ case "$1" in
         # Remove source directory on purge
         rm -rf /usr/src/$NAME-$VERSION || true
         
-        # Remove udev rule
-        rm -f /etc/udev/rules.d/99-zg01-autoload.rules || true
+        # Remove udev rules
+        rm -f /etc/udev/rules.d/90-zg01.rules || true
         udevadm control --reload-rules || true
         udevadm trigger || true
         

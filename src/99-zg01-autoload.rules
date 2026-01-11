@@ -1,8 +1,0 @@
-# Yamaha ZG01 USB Audio Interface
-# Automatically load driver when device is connected
-
-# Match Yamaha ZG01 (VID:0499, PID:1513)
-ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0499", ATTRS{idProduct}=="1513", RUN+="/sbin/modprobe zg01_usb"
-
-# Blacklist generic USB Audio driver for ZG01
-ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0499", ATTRS{idProduct}=="1513", RUN+="/bin/sh -c 'echo 0499 1513 > /sys/bus/usb/drivers/snd-usb-audio/unbind 2>/dev/null || true'"

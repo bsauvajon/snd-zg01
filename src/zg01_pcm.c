@@ -60,10 +60,16 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
             pr_err("zg01_pcm: Game channel only supports playback\n");
             return -ENODEV;
         }
-    } else {
-        /* Voice channel - capture only */
+    } else if (dev->channel_type == 1) {
+        /* Voice In channel - capture only */
         if (substream->stream != SNDRV_PCM_STREAM_CAPTURE) {
-            pr_err("zg01_pcm: Voice channel only supports capture\n");
+            pr_err("zg01_pcm: Voice In channel only supports capture\n");
+            return -ENODEV;
+        }
+    } else {
+        /* Voice Out channel - playback only */
+        if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK) {
+            pr_err("zg01_pcm: Voice Out channel only supports playback\n");
             return -ENODEV;
         }
     }
@@ -139,8 +145,8 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
         if (!is_rapid_probe) {
             pr_info("zg01_pcm: Game channel configured Interface 1, Alt 1, EP 0x01 OUT (280 bytes)\n");
         }
-    } else {
-        /* Voice channel - Interface 2, Alt 1, EP 0x81 IN (124 bytes) - CAPTURE ONLY */
+    } else if (dev->channel_type == 1) {
+        /* Voice In channel - Interface 2, Alt 1, EP 0x81 IN (124 bytes) - CAPTURE ONLY */
         /* Allow flexible buffer/period sizes aligned to USB packet boundaries */
         runtime->hw.buffer_bytes_max = PCM_BUFFER_BYTES_MAX_VOICE;
         runtime->hw.period_bytes_min = PCM_PERIOD_BYTES_MIN_VOICE;
@@ -150,9 +156,9 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
         runtime->hw.rate_min = 16000;
         runtime->hw.rate_max = 48000;
         if (!is_rapid_probe) {
-            pr_info("zg01_pcm: Opening ZG01 Voice channel (Interface 2, Alt 1)\n");
+            pr_info("zg01_pcm: Opening ZG01 Voice In channel (Interface 2, Alt 1)\n");
         } else {
-            pr_debug("zg01_pcm: Opening ZG01 Voice channel (rapid probe #%u)\n", dev->open_count);
+            pr_debug("zg01_pcm: Opening ZG01 Voice In channel (rapid probe #%u)\n", dev->open_count);
         }
         
         /* Verify we have a valid usb_interface and cur_altsetting */
@@ -165,7 +171,7 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
         /* Verify we're on the correct interface */
         int current_interface = dev->interface->cur_altsetting->desc.bInterfaceNumber;
         if (current_interface != 2) {
-            pr_warn("zg01_pcm: Voice channel requires Interface 2, current is %d\n",
+            pr_warn("zg01_pcm: Voice In channel requires Interface 2, current is %d\n",
                     current_interface);
             ret = -ENODEV;
             goto unlock;
@@ -185,7 +191,62 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
             goto unlock;
         }
         if (!is_rapid_probe) {
-            pr_info("zg01_pcm: Voice channel configured Interface 2, Alt 1, EP 0x81 IN (124 bytes)\n");
+            pr_info("zg01_pcm: Voice In channel configured Interface 2, Alt 1, EP 0x81 IN (124 bytes)\n");
+        }
+    } else {
+        /* Voice Out channel - Interface 1, Alt 1, EP 0x01 OUT - PLAYBACK ONLY */
+        /* Based on USB captures, voice output uses Interface 1 Alt 1 but WITHOUT sample rate control */
+        runtime->hw.buffer_bytes_max = PCM_BUFFER_BYTES_MAX_GAME;
+        runtime->hw.period_bytes_min = PCM_PERIOD_BYTES_MIN_GAME;
+        runtime->hw.period_bytes_max = PCM_PERIOD_BYTES_MAX_GAME;
+        if (!is_rapid_probe) {
+            pr_info("zg01_pcm: Opening ZG01 Voice Out channel (Interface 1, Alt 1)\n");
+        } else {
+            pr_debug("zg01_pcm: Opening ZG01 Voice Out channel (rapid probe #%u)\n", dev->open_count);
+        }
+        
+        /* Verify we have a valid usb_interface and cur_altsetting */
+        if (!dev->interface || !dev->interface->cur_altsetting) {
+            pr_warn("zg01_pcm: No valid USB interface for Voice Out channel\n");
+            ret = -ENODEV;
+            goto unlock;
+        }
+
+        /* Voice Out uses Interface 1 like Game, but different configuration */
+        int current_interface = dev->interface->cur_altsetting->desc.bInterfaceNumber;
+        if (current_interface != 1) {
+            pr_warn("zg01_pcm: Voice Out channel requires Interface 1, current is %d\n",
+                    current_interface);
+            ret = -ENODEV;
+            goto unlock;
+        }
+
+        /* Ensure we have a valid usb_device before changing interface */
+        if (!dev->udev) {
+            pr_err("zg01_pcm: No usb_device available to set interface\n");
+            ret = -ENODEV;
+            goto unlock;
+        }
+
+        /* According to USB capture: Interface 2 Alt 0, then Interface 1 Alt 1, then Interface 2 Alt 1 */
+        ret = usb_set_interface(dev->udev, 2, 0);
+        if (ret < 0) {
+            pr_warn("zg01_pcm: Failed to set Interface 2 Alt 0 for Voice Out: %d\n", ret);
+        }
+        
+        ret = usb_set_interface(dev->udev, 1, 1);
+        if (ret < 0) {
+            pr_err("zg01_pcm: Failed to set Interface 1 Alt 1 for Voice Out: %d\n", ret);
+            goto unlock;
+        }
+        
+        ret = usb_set_interface(dev->udev, 2, 1);
+        if (ret < 0) {
+            pr_warn("zg01_pcm: Failed to set Interface 2 Alt 1 for Voice Out: %d\n", ret);
+        }
+        
+        if (!is_rapid_probe) {
+            pr_info("zg01_pcm: Voice Out channel configured Interface 1, Alt 1, EP 0x01 OUT (voice mode)\n");
         }
     }
     
@@ -193,8 +254,8 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
     runtime->hw.periods_max = 64; /* Allow more flexibility for PipeWire */
     
     /* Add constraints to ensure USB packet alignment */
-    if (dev->channel_type == 0) {
-        /* Game channel: period size must be multiple of 1536 bytes (192 frames = 1 URB) */
+    if (dev->channel_type == 0 || dev->channel_type == 2) {
+        /* Game and Voice Out channels: period size must be multiple of 1536 bytes (192 frames = 1 URB) */
         ret = snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 1536);
         if (ret < 0) {
             pr_err("zg01_pcm: Failed to set period step constraint: %d\n", ret);
@@ -207,7 +268,7 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
             goto unlock;
         }
     } else {
-        /* Voice channel: period size must be multiple of 48 bytes (6 frames) */
+        /* Voice In channel: period size must be multiple of 48 bytes (6 frames) */
         ret = snd_pcm_hw_constraint_step(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_BYTES, 48);
         if (ret < 0) {
             pr_err("zg01_pcm: Failed to set period step constraint: %d\n", ret);
@@ -229,14 +290,22 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
         }
         dev->game_channel_active = true;
         dev->substream_game = substream;
-    } else {
+    } else if (dev->channel_type == 1) {
         if (dev->voice_channel_active) {
-            pr_warn("zg01_pcm: Voice channel already active\n");
+            pr_warn("zg01_pcm: Voice In channel already active\n");
             ret = -EBUSY;
             goto unlock;
         }
         dev->voice_channel_active = true;
         dev->substream_voice = substream;
+    } else {
+        if (dev->voice_out_channel_active) {
+            pr_warn("zg01_pcm: Voice Out channel already active\n");
+            ret = -EBUSY;
+            goto unlock;
+        }
+        dev->voice_out_channel_active = true;
+        dev->substream_game = substream; /* Voice Out uses same URB/buffer arrays as game */
     }
 
 unlock:
@@ -268,15 +337,25 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
         } else {
             pr_debug("zg01_pcm: Game channel closed (rapid probe)\n");
         }
-    } else {
+    } else if (dev->channel_type == 1) {
         dev->voice_channel_active = false;
         /* Don't reset voice_initialized - keep device initialized across opens */
         dev->substream_voice = NULL;
         /* Reduce logging for rapid probe cycles */
         if (dev->open_count <= 2) {
-            pr_info("zg01_pcm: Voice channel closed\n");
+            pr_info("zg01_pcm: Voice In channel closed\n");
         } else {
-            pr_debug("zg01_pcm: Voice channel closed (rapid probe)\n");
+            pr_debug("zg01_pcm: Voice In channel closed (rapid probe)\n");
+        }
+    } else {
+        dev->voice_out_channel_active = false;
+        /* Don't reset voice_out_initialized - keep device initialized across opens */
+        dev->substream_game = NULL; /* Voice Out uses game URB arrays */
+        /* Reduce logging for rapid probe cycles */
+        if (dev->open_count <= 2) {
+            pr_info("zg01_pcm: Voice Out channel closed\n");
+        } else {
+            pr_debug("zg01_pcm: Voice Out channel closed (rapid probe)\n");
         }
     }
     
@@ -526,13 +605,18 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
 {
     struct zg01_dev *dev = snd_pcm_substream_chip(substream);
     int ret = 0;
-    int interface_num = (dev->channel_type == 0) ? 1 : 2; /* Game=1, Voice=2 */
+    int interface_num;
     bool is_first_prepare = false;
     
-    pr_info("zg01_pcm: prepare called - channel_type=%d, game_initialized=%d, voice_initialized=%d\n",
-            dev->channel_type, dev->game_initialized, dev->voice_initialized);
+    /* Determine interface number based on channel type */
+    if (dev->channel_type == 0 || dev->channel_type == 2) {
+        interface_num = 1; /* Game and Voice Out use Interface 1 */
+    } else {
+        interface_num = 2; /* Voice In uses Interface 2 */
+    }
     
-    /* Normal behavior: only initialize on first prepare per channel */
+    pr_info("zg01_pcm: prepare called - channel_type=%d, game_init=%d, voice_init=%d, voice_out_init=%d\n",
+            dev->channel_type, dev->game_initialized, dev->voice_initialized, dev->voice_out_initialized);
     
     /* Check if this is the first prepare (device needs initialization) */
     if (dev->channel_type == 0) {
@@ -541,35 +625,56 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
             is_first_prepare = true;
             dev->game_initialized = true;
         }
-    } else {
-        /* Voice channel */
+    } else if (dev->channel_type == 1) {
+        /* Voice In channel */
         if (!dev->voice_initialized) {
             is_first_prepare = true;
             dev->voice_initialized = true;
+        }
+    } else {
+        /* Voice Out channel */
+        if (!dev->voice_out_initialized) {
+            is_first_prepare = true;
+            dev->voice_out_initialized = true;
         }
     }
     
     /* Only do full initialization on first prepare */
     if (is_first_prepare) {
-        pr_info("zg01_pcm: First prepare for %s channel - running initialization\n",
-                dev->channel_type == 0 ? "Game" : "Voice");
+        const char *channel_name;
+        if (dev->channel_type == 0) channel_name = "Game";
+        else if (dev->channel_type == 1) channel_name = "Voice In";
+        else channel_name = "Voice Out";
+        
+        pr_info("zg01_pcm: First prepare for %s channel - running initialization\n", channel_name);
 
-        /* Prefer previously negotiated rate if available, otherwise request 48000 */
-        if (dev->current_rate == 16000 || dev->current_rate == 48000) {
-            pr_info("zg01_pcm: Using existing current_rate=%d\n", dev->current_rate);
-            /* Attempt to set device to current_rate to make sure device matches runtime */
-            if (zg01_set_rate(dev, dev->current_rate) < 0) {
-                pr_warn("zg01_pcm: zg01_set_rate failed for current_rate=%d, falling back to 48000\n", dev->current_rate);
-                zg01_set_rate(dev, 48000);
-                dev->current_rate = 48000;
+        /* Voice Out does NOT send SET_CUR control message according to USB capture */
+        if (dev->channel_type != 2) {
+            /* Game and Voice In: Prefer previously negotiated rate if available, otherwise request 48000 */
+            if (dev->current_rate == 16000 || dev->current_rate == 48000) {
+                pr_info("zg01_pcm: Using existing current_rate=%d\n", dev->current_rate);
+                /* Attempt to set device to current_rate to make sure device matches runtime */
+                if (zg01_set_rate(dev, dev->current_rate) < 0) {
+                    pr_warn("zg01_pcm: zg01_set_rate failed for current_rate=%d, falling back to 48000\n", dev->current_rate);
+                    zg01_set_rate(dev, 48000);
+                    dev->current_rate = 48000;
+                }
+            } else {
+                /* Set Rate with Magic Sequence, default to 48000 */
+                if (zg01_set_rate(dev, 48000) < 0) {
+                    pr_warn("zg01_pcm: zg01_set_rate(48000) failed during initialization\n");
+                } else {
+                    dev->current_rate = 48000;
+                }
             }
         } else {
-            /* Set Rate with Magic Sequence, default to 48000 */
-            if (zg01_set_rate(dev, 48000) < 0) {
-                pr_warn("zg01_pcm: zg01_set_rate(48000) failed during initialization\n");
-            } else {
-                dev->current_rate = 48000;
-            }
+            /* Voice Out: Skip sample rate setting, just configure interfaces */
+            pr_info("zg01_pcm: Voice Out - skipping sample rate control (not needed per USB capture)\n");
+            /* Set the interface sequence as shown in USB capture: Interface 2 Alt 0, Interface 1 Alt 1, Interface 2 Alt 1 */
+            usb_set_interface(dev->udev, 2, 0);
+            usb_set_interface(dev->udev, 1, 1);
+            usb_set_interface(dev->udev, 2, 1);
+            dev->current_rate = 48000; /* Assume 48kHz */
         }
 
         /* Skip clock validity check for now - it fails with -11 on localhost */
@@ -589,8 +694,10 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     /* Reset PCM position */
     if (dev->channel_type == 0) {
         dev->pcm_pos_game = 0;
-    } else {
+    } else if (dev->channel_type == 1) {
         dev->pcm_pos_voice = 0;
+    } else {
+        dev->pcm_pos_voice_out = 0;
     }
     
     return 0;
@@ -606,7 +713,7 @@ struct zg01_cleanup_work {
     
     /* For multi-URB cleanup */
     struct zg01_dev *dev;
-    bool is_game_channel;
+    int channel_type; /* 0=game, 1=voice_in, 2=voice_out */
 };
 
 /* Multi-URB cleanup function that can safely sleep */
@@ -620,18 +727,24 @@ static void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
     int iso_pkts, iso_pkt_size;
     int i;
 
-    if (cw->is_game_channel) {
+    if (cw->channel_type == 0) {
         iso_urbs = dev->iso_urbs_game;
         iso_buffers = dev->iso_buffers_game;
         iso_dmas = dev->iso_dmas_game;
         iso_pkts = ISO_PKTS_GAME;
         iso_pkt_size = ISO_PKT_SIZE_GAME;
-    } else {
+    } else if (cw->channel_type == 1) {
         iso_urbs = dev->iso_urbs_voice;
         iso_buffers = dev->iso_buffers_voice;
         iso_dmas = dev->iso_dmas_voice;
         iso_pkts = ISO_PKTS_VOICE;
         iso_pkt_size = ISO_PKT_SIZE_VOICE;
+    } else {
+        iso_urbs = dev->iso_urbs_voice_out;
+        iso_buffers = dev->iso_buffers_voice_out;
+        iso_dmas = dev->iso_dmas_voice_out;
+        iso_pkts = ISO_PKTS_GAME;
+        iso_pkt_size = ISO_PKT_SIZE_GAME;
     }
 
     /* Kill all URBs (can sleep here) */
@@ -654,10 +767,12 @@ static void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
     }
 
     /* Clear cleanup flag - new streams can now start */
-    if (cw->is_game_channel) {
+    if (cw->channel_type == 0) {
         dev->cleanup_in_progress_game = false;
-    } else {
+    } else if (cw->channel_type == 1) {
         dev->cleanup_in_progress_voice = false;
+    } else {
+        dev->cleanup_in_progress_voice_out = false;
     }
 
     pr_info("zg01_pcm: Multi-URB cleanup completed\n");
@@ -676,6 +791,7 @@ static void zg01_iso_callback(struct urb *urb)
     int i;
     int resubmit_ret;
     bool is_game_channel = false;
+    bool is_voice_out_channel = false;
     bool found_urb = false;
 
     /* Early exit for shutdown or critical errors */
@@ -705,6 +821,14 @@ static void zg01_iso_callback(struct urb *urb)
             substream = dev->substream_voice;
             pcm_pos = &dev->pcm_pos_voice;
             is_game_channel = false;
+            found_urb = true;
+            break;
+        }
+        if (urb == dev->iso_urbs_voice_out[i]) {
+            substream = dev->substream_voice_out;
+            pcm_pos = &dev->pcm_pos_voice_out;
+            is_game_channel = false;
+            is_voice_out_channel = true; /* Voice Out playback */
             found_urb = true;
             break;
         }
@@ -752,12 +876,9 @@ static void zg01_iso_callback(struct urb *urb)
     if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
         /* PLAYBACK: Copy audio data FROM PCM buffer TO USB device WITH PADDING */
         unsigned int total_frames_processed = 0; /* Track frames processed in this URB */
-       /* Just standard fixed packet size for 48kHz */
-    for (i = 0; i < urb->number_of_packets; i++) {
-        urb->iso_frame_desc[i].length = ISO_PKT_SIZE_GAME; /* 96 bytes */
-        urb->iso_frame_desc[i].offset = i * ISO_PKT_SIZE_GAME;
-    }
 
+        /* For playback, packet sizes are already set during URB initialization */
+        /* Process each packet and copy audio data */
         for (i = 0; i < urb->number_of_packets; i++) {
             unsigned char *pkt_buf;
             unsigned int pkt_len = urb->iso_frame_desc[i].length;
@@ -776,8 +897,9 @@ static void zg01_iso_callback(struct urb *urb)
             if (pkt_len == 240) {
                 spin_lock_irqsave(&dev->lock, flags);
 
-                /* Get current HW position in frames */
-                unsigned int hw_pos_frames = *(dev->channel_type == 0 ? &dev->pcm_pos_game : &dev->pcm_pos_voice);
+                /* Get current HW position in frames - use the pcm_pos we already determined */
+                unsigned int hw_pos_frames = *pcm_pos;
+                
                 /* runtime->buffer_size is already in frames, not bytes */
                 unsigned int buffer_size_frames = runtime->buffer_size;
                 unsigned int frames_copied;
@@ -806,7 +928,14 @@ static void zg01_iso_callback(struct urb *urb)
                     /* No shift needed - device expects samples in upper bits like ALSA S32_LE */
                     
                     /* Check if the channel is active */
-                    bool is_active = (dev->channel_type == 0) ? dev->game_channel_active : dev->voice_channel_active;
+                    bool is_active;
+                    if (is_game_channel) {
+                        is_active = dev->game_channel_active;
+                    } else if (is_voice_out_channel) {
+                        is_active = dev->voice_out_channel_active;
+                    } else {
+                        is_active = dev->voice_channel_active;
+                    }
 
                     /* 40-byte frame format: 8 zeros + L + R + 24 zeros */
                     memset(pkt_buf + pkt_offset, 0, 8);
@@ -966,6 +1095,7 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
     int *active_urbs;
     int urb_idx, i, j;
     bool is_game_channel = (dev->channel_type == 0);
+    bool is_voice_in_channel = (dev->channel_type == 1);
 
     /* Select parameters based on channel type */
     if (is_game_channel) {
@@ -985,10 +1115,10 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         dev->substream_game = substream;
         pr_info("zg01_pcm: Starting Game channel (EP 0x%02x, %d URBs, %d bytes each)\n", 
                 endpoint, MAX_URBS_PER_CHANNEL, iso_pkt_size);
-    } else {
+    } else if (is_voice_in_channel) {
         /* Double-check cleanup is complete */
         if (dev->cleanup_in_progress_voice) {
-            pr_warn("zg01_pcm: Voice cleanup still in progress, aborting start\n");
+            pr_warn("zg01_pcm: Voice In cleanup still in progress, aborting start\n");
             return -EBUSY;
         }
         
@@ -1001,12 +1131,30 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         active_urbs = &dev->active_urbs_voice;
         dev->substream_voice = substream;
         
-        /* Voice channel only supports capture */
+        /* Voice In channel only supports capture */
         if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-            pr_warn("zg01_pcm: Voice channel only supports capture (IN endpoint)\n");
+            pr_warn("zg01_pcm: Voice In channel only supports capture (IN endpoint)\n");
             return -ENODEV;
         }
-        pr_info("zg01_pcm: Starting Voice channel (EP 0x%02x, %d URBs, %d bytes each)\n", 
+        pr_info("zg01_pcm: Starting Voice In channel (EP 0x%02x, %d URBs, %d bytes each)\n", 
+                endpoint, MAX_URBS_PER_CHANNEL, iso_pkt_size);
+    } else {
+        /* Voice Out channel - uses same parameters as game */
+        /* Double-check cleanup is complete */
+        if (dev->cleanup_in_progress_voice_out) {
+            pr_warn("zg01_pcm: Voice Out cleanup still in progress, aborting start\n");
+            return -EBUSY;
+        }
+        
+        iso_pkts = ISO_PKTS_GAME;
+        iso_pkt_size = 240; /* Voice Out uses 240-byte packets */
+        endpoint = ZG01_EP_GAME_OUT; /* Same endpoint as game */
+        iso_urbs = dev->iso_urbs_voice_out;
+        iso_buffers = dev->iso_buffers_voice_out;
+        iso_dmas = dev->iso_dmas_voice_out;
+        active_urbs = &dev->active_urbs_voice_out;
+        dev->substream_voice_out = substream; /* CRITICAL: Voice Out needs its own substream */
+        pr_info("zg01_pcm: Starting Voice Out channel (EP 0x%02x, %d URBs, %d bytes each)\n", 
                 endpoint, MAX_URBS_PER_CHANNEL, iso_pkt_size);
     }
 
@@ -1121,6 +1269,7 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
     bool *cleanup_in_progress;
     int i;
     bool is_game_channel = (dev->channel_type == 0);
+    bool is_voice_in_channel = (dev->channel_type == 1);
     unsigned long flags;
 
     if (is_game_channel) {
@@ -1130,13 +1279,20 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
         active_urbs = &dev->active_urbs_game;
         cleanup_in_progress = &dev->cleanup_in_progress_game;
         pr_info("zg01_pcm: Stopping Game channel\n");
-    } else {
+    } else if (is_voice_in_channel) {
         iso_urbs = dev->iso_urbs_voice;
         iso_buffers = dev->iso_buffers_voice;
         iso_dmas = dev->iso_dmas_voice;
         active_urbs = &dev->active_urbs_voice;
         cleanup_in_progress = &dev->cleanup_in_progress_voice;
-        pr_info("zg01_pcm: Stopping Voice channel\n");
+        pr_info("zg01_pcm: Stopping Voice In channel\n");
+    } else {
+        iso_urbs = dev->iso_urbs_voice_out;
+        iso_buffers = dev->iso_buffers_voice_out;
+        iso_dmas = dev->iso_dmas_voice_out;
+        active_urbs = &dev->active_urbs_voice_out;
+        cleanup_in_progress = &dev->cleanup_in_progress_voice_out;
+        pr_info("zg01_pcm: Stopping Voice Out channel\n");
     }
 
     spin_lock_irqsave(&dev->lock, flags);
@@ -1155,7 +1311,7 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
     if (cw) {
         INIT_WORK(&cw->work, zg01_cleanup_multi_urb_work_fn);
         cw->dev = dev;
-        cw->is_game_channel = is_game_channel;
+        cw->channel_type = dev->channel_type;
         
         if (!queue_work(system_wq, &cw->work)) {
             pr_warn("zg01_pcm: Failed to queue multi-URB cleanup work\n");
@@ -1190,9 +1346,12 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         if (dev->channel_type == 0) {
             dev->game_channel_active = true;
             pr_info("zg01_pcm: Trigger START - Game channel playing\n");
-        } else {
+        } else if (dev->channel_type == 1) {
             dev->voice_channel_active = true;
-            pr_info("zg01_pcm: Trigger START - Voice channel playing\n");
+            pr_info("zg01_pcm: Trigger START - Voice In channel playing\n");
+        } else {
+            dev->voice_out_channel_active = true;
+            pr_info("zg01_pcm: Trigger START - Voice Out channel playing\n");
         }
         break;
 
@@ -1201,9 +1360,12 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         if (dev->channel_type == 0) {
             dev->game_channel_active = false;
             pr_info("zg01_pcm: Trigger STOP - Game channel sending silence\n");
-        } else {
+        } else if (dev->channel_type == 1) {
             dev->voice_channel_active = false;
-            pr_info("zg01_pcm: Trigger STOP - Voice channel sending silence\n");
+            pr_info("zg01_pcm: Trigger STOP - Voice In channel sending silence\n");
+        } else {
+            dev->voice_out_channel_active = false;
+            pr_info("zg01_pcm: Trigger STOP - Voice Out channel sending silence\n");
         }
         break;
 
@@ -1229,8 +1391,10 @@ static snd_pcm_uframes_t zg01_pcm_pointer(struct snd_pcm_substream *substream)
     spin_lock(&dev->lock);
     if (dev->channel_type == 0) {
         pos = dev->pcm_pos_game;
-    } else {
+    } else if (dev->channel_type == 1) {
         pos = dev->pcm_pos_voice;
+    } else {
+        pos = dev->pcm_pos_voice_out;
     }
     spin_unlock(&dev->lock);
 
@@ -1278,17 +1442,29 @@ int zg01_create_pcm(struct zg01_dev *dev)
         return 0;
     }
 
-    /* Set channel type based on interface number */
-    if (iface_num == 1) {
-        dev->channel_type = 0; /* Game channel */
+    /* Channel type should already be set by probe function, but set defaults if not */
+    if (dev->channel_type < 0) {
+        /* Set channel type based on interface number (legacy fallback) */
+        if (iface_num == 1) {
+            dev->channel_type = 0; /* Game channel */
+        } else {
+            dev->channel_type = 1; /* Voice In channel */  
+        }
+    }
+    
+    /* Set channel-specific parameters based on channel type */
+    if (dev->channel_type == 0) {
         channel_name = "Yamaha ZG01 Game PCM";
         buffer_size = PCM_BUFFER_BYTES_MAX_GAME;
-        pr_info("zg01_pcm: Creating Game channel (interface %d)\n", iface_num);
-    } else {
-        dev->channel_type = 1; /* Voice channel */  
-        channel_name = "Yamaha ZG01 Voice PCM";
+        pr_info("zg01_pcm: Creating Game channel (interface %d, type %d)\n", iface_num, dev->channel_type);
+    } else if (dev->channel_type == 1) {
+        channel_name = "Yamaha ZG01 Voice In PCM";
         buffer_size = PCM_BUFFER_BYTES_MAX_VOICE;
-        pr_info("zg01_pcm: Creating Voice channel (interface %d)\n", iface_num);
+        pr_info("zg01_pcm: Creating Voice In channel (interface %d, type %d)\n", iface_num, dev->channel_type);
+    } else {
+        channel_name = "Yamaha ZG01 Voice Out PCM";
+        buffer_size = PCM_BUFFER_BYTES_MAX_GAME;
+        pr_info("zg01_pcm: Creating Voice Out channel (interface %d, type %d)\n", iface_num, dev->channel_type);
     }
 
     if (!dev->udev) {
@@ -1303,24 +1479,30 @@ int zg01_create_pcm(struct zg01_dev *dev)
     pcm->zg01 = dev;
 
     /* Create PCM device with appropriate stream directions */
-    if (dev->channel_type == 0) {
-        /* Game channel - playback only */
-        ret = snd_pcm_new(dev->card, "zg01 PCM", 0, 1, 0, &pcm->instance);
+    if (dev->channel_type == 0 || dev->channel_type == 2) {
+        /* Game channel and Voice Out - playback only */
+        const char *pcm_name = (dev->channel_type == 0) ? "ZG01 Game" : "ZG01 Voice Out";
+        ret = snd_pcm_new(dev->card, pcm_name, 0, 1, 0, &pcm->instance);
         if (ret < 0) {
-            pr_err("zg01_pcm: Failed to create Game PCM device: %d\n", ret);
+            pr_err("zg01_pcm: Failed to create playback PCM device (type %d): %d\n", dev->channel_type, ret);
             return ret;
         }
         snd_pcm_set_ops(pcm->instance, SNDRV_PCM_STREAM_PLAYBACK, &zg01_pcm_ops);
-        pr_info("zg01_pcm: Created Game channel (playback only)\n");
+        if (dev->channel_type == 0) {
+            pr_info("zg01_pcm: Created Game channel (playback only)\n");
+        } else {
+            pr_info("zg01_pcm: Created Voice Out channel (playback only)\n");
+            buffer_size = PCM_BUFFER_BYTES_MAX_GAME; /* Voice out uses same buffer size as game */
+        }
     } else {
-        /* Voice channel - capture only */
-        ret = snd_pcm_new(dev->card, "zg01 PCM", 0, 0, 1, &pcm->instance);
+        /* Voice In channel - capture only */
+        ret = snd_pcm_new(dev->card, "ZG01 Voice In", 0, 0, 1, &pcm->instance);
         if (ret < 0) {
-            pr_err("zg01_pcm: Failed to create Voice PCM device: %d\n", ret);
+            pr_err("zg01_pcm: Failed to create Voice In PCM device: %d\n", ret);
             return ret;
         }
         snd_pcm_set_ops(pcm->instance, SNDRV_PCM_STREAM_CAPTURE, &zg01_pcm_ops);
-        pr_info("zg01_pcm: Created Voice channel (capture only)\n");
+        pr_info("zg01_pcm: Created Voice In channel (capture only)\n");
     }
 
     pcm->instance->private_data = dev;  /* Set to main device structure */
@@ -1334,13 +1516,16 @@ int zg01_create_pcm(struct zg01_dev *dev)
     /* Initialize deferred start work and pending flags */
     INIT_DELAYED_WORK(&dev->start_work_game, zg01_pcm_start_work);
     INIT_DELAYED_WORK(&dev->start_work_voice, zg01_pcm_start_work);
+    INIT_DELAYED_WORK(&dev->start_work_voice_out, zg01_pcm_start_work);
     dev->start_pending_game = false;
     dev->start_pending_voice = false;
+    dev->start_pending_voice_out = false;
 
     return 0;
 }
-EXPORT_SYMBOL(zg01_create_pcm);
+
+EXPORT_SYMBOL_GPL(zg01_create_pcm);
 
 MODULE_AUTHOR("Your Name");
-MODULE_DESCRIPTION("Yamaha ZG01 USB Audio Driver");
+MODULE_DESCRIPTION("Yamaha ZG01 USB Audio Driver - PCM Interface");
 MODULE_LICENSE("GPL");

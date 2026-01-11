@@ -230,8 +230,8 @@ int zg01_find_audio_endpoint(struct zg01_dev *dev, u8 *endpoint_addr, u8 *alt_se
     return -ENODEV;
 }
 
-EXPORT_SYMBOL(zg01_discover_usb_config);
-EXPORT_SYMBOL(zg01_find_audio_endpoint);
+EXPORT_SYMBOL_GPL(zg01_discover_usb_config);
+EXPORT_SYMBOL_GPL(zg01_find_audio_endpoint);
 
 MODULE_AUTHOR("ZG01 Driver Team");
 MODULE_DESCRIPTION("USB Hardware Discovery for Yamaha ZG01");

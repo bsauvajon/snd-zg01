@@ -14,9 +14,10 @@ case "$1" in
         dkms build -m $NAME -v $VERSION || true
         dkms install -m $NAME -v $VERSION || true
         
-        # Install udev rule for automatic module loading
-        if [ -f /usr/src/$NAME-$VERSION/src/99-zg01-autoload.rules ]; then
-            cp /usr/src/$NAME-$VERSION/src/99-zg01-autoload.rules /etc/udev/rules.d/
+        # Install and activate udev rules
+        # (DKMS may not reliably handle BUILT_MODULE_UDEV_RULES activation)
+        if [ -f /usr/src/$NAME-$VERSION/src/90-zg01.rules ]; then
+            cp /usr/src/$NAME-$VERSION/src/90-zg01.rules /etc/udev/rules.d/
             udevadm control --reload-rules || true
             udevadm trigger || true
         fi
@@ -26,6 +27,11 @@ case "$1" in
         echo ""
         echo "The driver will automatically load when you connect the ZG01."
         echo "If the device is already connected, unplug and reconnect it."
+        echo ""
+        echo "Three audio devices will appear:"
+        echo "  - Yamaha ZG01 Game (playback)"
+        echo "  - Yamaha ZG01 Voice Out (playback)"
+        echo "  - Yamaha ZG01 Voice In (capture)"
         echo ""
         echo "To manually load the driver, run:"
         echo "  sudo modprobe zg01_usb"
