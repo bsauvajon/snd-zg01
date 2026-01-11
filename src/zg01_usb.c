@@ -121,6 +121,8 @@ static int zg01_probe(struct usb_interface *interface,
         voice_out_dev = dev;
     }
 
+    /* Unlock mutex - critical section complete */
+    mutex_unlock(&devices_mutex);
     usb_set_intfdata(interface, dev);
 
     snd_card_set_dev(card, &interface->dev);
