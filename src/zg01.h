@@ -8,6 +8,11 @@
 
 #define VENDOR_ID_YAMAHA 0x0499
 #define PRODUCT_ID_ZG01  0x1513
+/* Channel type constants */
+#define CHANNEL_TYPE_GAME       0
+#define CHANNEL_TYPE_VOICE_IN   1
+#define CHANNEL_TYPE_VOICE_OUT  2
+
 
 /* Audio streaming parameters based on actual USB descriptor analysis */
 #define ISO_PKTS_GAME   32        /* 32 microframes = 4ms buffer per URB to match Windows driver */
