@@ -67,8 +67,8 @@ int zg01_init_control(struct zg01_dev *dev)
     return 0;
 }
 
-EXPORT_SYMBOL(zg01_init_control);
+EXPORT_SYMBOL_GPL(zg01_init_control);
 
 MODULE_AUTHOR("Your Name");
-MODULE_DESCRIPTION("Yamaha ZG01 USB Audio Driver");
+MODULE_DESCRIPTION("Yamaha ZG01 USB Audio Driver - Control Interface");
 MODULE_LICENSE("GPL");

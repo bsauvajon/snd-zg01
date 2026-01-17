@@ -1,0 +1,46 @@
+# udev rules for Yamaha ZG01 USB Audio Interface
+# VID:0499, PID:1513
+#
+# This file:
+# 1. Automatically loads the zg01_usb driver when device is connected
+# 2. Sets unique device names for each audio channel (Game, Voice Out, Voice In)
+#    so PipeWire/PulseAudio shows distinct names
+#
+# Installation (DKMS does this automatically):
+#   sudo cp 90-zg01.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+
+# ============================================================================
+# Part 1: Driver Loading
+# ============================================================================
+
+# Automatically load zg01_usb driver when Yamaha ZG01 is connected
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0499", ATTRS{idProduct}=="1513", \
+  RUN+="/sbin/modprobe zg01_usb"
+
+# Prevent generic USB Audio driver from claiming the device
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0499", ATTRS{idProduct}=="1513", \
+  RUN+="/bin/sh -c 'echo 0499 1513 > /sys/bus/usb/drivers/snd-usb-audio/unbind 2>/dev/null || true'"
+
+# ============================================================================
+# Part 2: Device Naming (for PipeWire/PulseAudio)
+# ============================================================================
+
+# Set unique name for ZG01 Game channel (playback)
+SUBSYSTEM=="sound", KERNEL=="card*", ATTRS{id}=="zg01game", \
+  ENV{ID_MODEL}="ZG01_Game", \
+  ENV{ID_MODEL_FROM_DATABASE}="Yamaha ZG01 Game", \
+  ENV{SOUND_DESCRIPTION}="Yamaha ZG01 Game"
+
+# Set unique name for ZG01 Voice Out channel (playback)
+SUBSYSTEM=="sound", KERNEL=="card*", ATTRS{id}=="zg01voiceout", \
+  ENV{ID_MODEL}="ZG01_Voice_Out", \
+  ENV{ID_MODEL_FROM_DATABASE}="Yamaha ZG01 Voice Out", \
+  ENV{SOUND_DESCRIPTION}="Yamaha ZG01 Voice Out"
+
+# Set unique name for ZG01 Voice In channel (capture)
+SUBSYSTEM=="sound", KERNEL=="card*", ATTRS{id}=="zg01voice", \
+  ENV{ID_MODEL}="ZG01_Voice_In", \
+  ENV{ID_MODEL_FROM_DATABASE}="Yamaha ZG01 Voice In", \
+  ENV{SOUND_DESCRIPTION}="Yamaha ZG01 Voice In"

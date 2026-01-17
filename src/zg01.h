@@ -8,6 +8,11 @@
 
 #define VENDOR_ID_YAMAHA 0x0499
 #define PRODUCT_ID_ZG01  0x1513
+/* Channel type constants */
+#define CHANNEL_TYPE_GAME       0
+#define CHANNEL_TYPE_VOICE_IN   1
+#define CHANNEL_TYPE_VOICE_OUT  2
+
 
 /* Audio streaming parameters based on actual USB descriptor analysis */
 #define ISO_PKTS_GAME   32        /* 32 microframes = 4ms buffer per URB to match Windows driver */
@@ -38,6 +43,7 @@ struct zg01_dev {
     /* Support for dual audio channels */
     struct snd_pcm_substream *substream_game;
     struct snd_pcm_substream *substream_voice;
+    struct snd_pcm_substream *substream_voice_out;
     
     /* Game channel (high bandwidth) - multiple URBs for stability */
     struct urb *iso_urbs_game[MAX_URBS_PER_CHANNEL];
@@ -51,27 +57,38 @@ struct zg01_dev {
     dma_addr_t iso_dmas_voice[MAX_URBS_PER_CHANNEL];
     int active_urbs_voice;
     
+    /* Voice output channel (playback to voice output) - multiple URBs for stability */
+    struct urb *iso_urbs_voice_out[MAX_URBS_PER_CHANNEL];
+    unsigned char *iso_buffers_voice_out[MAX_URBS_PER_CHANNEL];
+    dma_addr_t iso_dmas_voice_out[MAX_URBS_PER_CHANNEL];
+    int active_urbs_voice_out;
+    
     spinlock_t lock;
     struct mutex pcm_mutex; /* Protect concurrent PCM operations */
     unsigned int pcm_pos_game;
     unsigned int pcm_pos_voice;
+    unsigned int pcm_pos_voice_out;
     
-    /* Channel type identifier (0=game, 1=voice) */
+    /* Channel type identifier (0=game, 1=voice_in/capture, 2=voice_out/playback) */
     int channel_type;
     
     /* State tracking */
     bool game_channel_active;
     bool voice_channel_active;
+    bool voice_out_channel_active;
     bool game_initialized;        /* Track if game channel has been initialized */
     bool voice_initialized;       /* Track if voice channel has been initialized */
+    bool voice_out_initialized;   /* Track if voice output channel has been initialized */
     unsigned long game_startup_frames; /* Count frames during startup to allow buffer fill */
     unsigned long voice_startup_frames;
+    unsigned long voice_out_startup_frames;
     
     unsigned int current_rate;      /* Current sample rate (44100 or 48000) */
     unsigned int rate_residual;     /* Fractional sample accumulator */
     
     bool cleanup_in_progress_game;
     bool cleanup_in_progress_voice;
+    bool cleanup_in_progress_voice_out;
     unsigned long last_trigger_jiffies;
     
     /* Rate limiting for rapid open/close cycles from audio system probing */
@@ -84,8 +101,10 @@ struct zg01_dev {
     /* Deferred start support to debounce user-space probing */
     struct delayed_work start_work_game;
     struct delayed_work start_work_voice;
+    struct delayed_work start_work_voice_out;
     bool start_pending_game;
     bool start_pending_voice;
+    bool start_pending_voice_out;
 };
 
 int zg01_create_pcm(struct zg01_dev *dev);

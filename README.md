@@ -2,44 +2,36 @@
 
 **Status: PRODUCTION READY ✅**
 
-A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0499, PID: 0x1513), providing **excellent quality** 32-bit audio playback and capture with full-duplex support.
+A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0499, PID: 0x1513), providing **excellent quality** 32-bit audio with three independent channels.
 
-## ✨ Latest Updates (January 5, 2026)
+## ✨ Latest Updates (January 11, 2026)
 
-### 📦 DKMS Package Available!
-Professional DKMS packaging now available for easy installation:
-- **Automatic compilation** during package installation
-- **Plug-and-play**: Driver loads automatically when device is connected
-- **Kernel updates**: Modules rebuild automatically on kernel updates
-- **One-command install**: Just `sudo dpkg -i snd-zg01-dkms_*.deb`
+### 🎙️ Three Independent Audio Channels!
+The driver now provides complete access to all ZG01 audio channels:
+- **Game Output**: High-quality playback for gaming/music (96-byte packets)
+- **Voice Output**: Secondary playback channel (240-byte packets)
+- **Voice Input**: Low-latency microphone capture (108-byte packets)
 
-### 🎉 Audio Capture Working!
-The driver now supports **full-duplex audio** - both playback and capture work perfectly! After discovering the voice channel uses a different packet format (108-byte packets with 8-byte header + 6×16-byte frames), capture is now functional.
+Each channel appears as a separate ALSA sound card with distinct names in PipeWire/PulseAudio.
 
-### 🎵 Sample Skipping Bug Fixed
-The driver delivers **crystal-clear audio** with no clicks or distortion after fixing critical buffer management bugs:
-
-1. **Buffer Size Calculation**: Fixed incorrect frame-to-byte conversion (was wrapping 8× too often)
-2. **Bounds Checking**: Fixed byte vs frame comparison that caused kernel panics
-3. **Voice Channel Format**: Discovered and implemented correct 108-byte packet structure
-4. **URB Optimization**: 16 URBs provides optimal 64ms USB buffering
-
-**Result**: Perfect audio quality on both VM and localhost hardware!
-
-### 🎯 Previous Achievements (January 4, 2026)
-- ✅ Memory management fixed (ALSA card lifecycle)
-- ✅ DMA allocation working on xHCI controllers
-- ✅ Driver stable on bare metal hardware (HP EliteBook 850 G6)
+### 📦 DKMS Package Production Ready
+Professional DKMS packaging with full automation:
+- **One-command install**: `sudo dpkg -i snd-zg01-dkms_*.deb`
+- **Automatic driver loading**: udev rules handle device detection
+- **Kernel updates**: Modules rebuild automatically
+- **Proper module structure**: Fixed relocation issues by building from root directory
 
 ## 🎉 Features
 
-- **Game Channel (Output)**: Crystal-clear playback for gaming/music
-- **Voice Channel (Input)**: Low-latency capture from microphone
-- **Full-Duplex**: Simultaneous playback and capture supported
-- **Format**: **32-bit Stereo (S32_LE) @ 48kHz**
-- **Architecture**: Asynchronous USB Audio with 16 URBs per channel (64ms buffer)
+- **Three Independent Channels**:
+  - **Game Output**: Crystal-clear playback for gaming/music
+  - **Voice Output**: Secondary playback channel for communication apps
+  - **Voice Input**: Low-latency microphone capture
+- **Format**: **32-bit Stereo (S32_LE) @ 48kHz** on all channels
+- **Architecture**: Asynchronous USB Audio with proper packet handling per channel
 - **Integration**: Fully compatible with ALSA, PulseAudio, and PipeWire
-- **Quality**: No clicks, no distortion, no sample skipping
+- **Naming**: Distinct device names in audio applications via udev rules
+- **Quality**: Crystal-clear audio with no clicks or distortion
 
 ## 🚀 Quick Start
 
@@ -75,7 +67,7 @@ dkms status snd-zg01
 
 # Verify device is detected
 cat /proc/asound/cards
-# You should see "zg01game" and "zg01voice" cards
+# You should see three cards: "zg01game", "zg01voiceout", and "zg01voice"
 ```
 
 **Benefits of DKMS:**
@@ -98,20 +90,20 @@ cd snd-zg01
 # Build the driver
 make clean && make -j$(nproc)
 
-# Load the modules
-sudo ./load_modules.sh
+# Load the main module (it will load dependencies automatically)
+sudo modprobe zg01_usb
 
 # Verify device is detected
 cat /proc/asound/cards
-# You should see "zg01game" and "zg01voice" cards
+# You should see three cards: "zg01game", "zg01voiceout", and "zg01voice"
 
-# Check kernel logs (should see "Successfully started streaming")
+# Check kernel logs
 sudo dmesg | tail -20 | grep zg01
 ```
 
 ### Unload
 ```bash
-sudo ./scripts/unload_modules.sh
+sudo modprobe -r zg01_usb
 ```
 
 ### Known Platform Compatibility
@@ -122,49 +114,65 @@ sudo ./scripts/unload_modules.sh
 ## 🎧 Usage
 
 ### ALSA Device Names
-The driver creates two distinct ALSA cards:
-1. **Yamaha ZG01 Game**: Playback device (hw:zg01game)
-2. **Yamaha ZG01 Voice**: Capture device (hw:zg01voice)
+The driver creates three distinct ALSA cards:
+1. **Yamaha ZG01 Game**: Primary playback device (hw:zg01game)
+2. **Yamaha ZG01 Voice Out**: Secondary playback device (hw:zg01voiceout)
+3. **Yamaha ZG01 Voice In**: Capture device (hw:zg01voice)
+
+In PipeWire/PulseAudio, these appear with their full descriptive names thanks to udev rules.
 
 ### Testing Audio
-**Quick Playback Test:**
+**Game Output (Primary Playback):**
 ```bash
 # 1-second 440Hz sine wave test
 speaker-test -D hw:zg01game -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
+
+# Play audio file
+aplay -D plughw:zg01game your_audio.wav
 ```
 
-**Playback (Game Channel):**
+**Voice Output (Secondary Playback):**
 ```bash
-# Test with a wav file (ensure your player supports S32_LE or use plughw)
-aplay -D plughw:zg01game -f S32_LE your_audio.wav
+# Test voice output channel
+speaker-test -D hw:zg01voiceout -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
+
+# Play audio file
+aplay -D plughw:zg01voiceout your_audio.wav
 ```
 
-**Recording (Voice Channel):**
+**Voice Input (Microphone Capture):**
 ```bash
-# Record 5 seconds of audio from microphone
+# Record 5 seconds of audio
 arecord -D hw:zg01voice -f S32_LE -r 48000 -c 2 -d 5 test.wav
 
 # Or use plughw for automatic format conversion
 arecord -D plughw:zg01voice -f S16_LE -r 48000 -c 2 -d 5 test.wav
 ```
 
-**Full-Duplex Test:**
+**Multi-Channel Test:**
 ```bash
-# Simultaneous playback and capture (in separate terminals)
-# Terminal 1: Play audio
+# Play simultaneously on both outputs (in separate terminals)
+# Terminal 1: Game output
 aplay -D hw:zg01game -f S32_LE music.wav
 
-# Terminal 2: Record from microphone
+# Terminal 2: Voice output
+aplay -D hw:zg01voiceout -f S32_LE voice.wav
+
+# Terminal 3: Record from microphone
 arecord -D hw:zg01voice -f S32_LE -r 48000 -c 2 recording.wav
 ```
 
 ## 🔧 Technical Details
 
-- **USB Protocol**: Vendor-specific implementation with Magic Sequence initialization.
-- **Data Format**: 32-bit PCM (S32_LE), 40-byte frames (8-byte header + 8 bytes × 2 channels + 24-byte padding).
-- **Packet Structure**: 192 frames per URB = 7680 bytes, 4ms per URB.
-- **Buffering**: 8 URBs per stream (32ms total buffer) with 32 ISO descriptors each.
-- **DMA Requirements**: Requires `GFP_DMA` capable buffers for xHCI controllers.
+- **USB Protocol**: Vendor-specific implementation with interface switching
+- **Three Channel Types**:
+  - **Game Output**: 96-byte packets (Interface 2,0 → 1,1)
+  - **Voice Output**: 240-byte packets (Interface 2,0 → 1,1 → 2,1)
+  - **Voice Input**: 108-byte packets (Interface 2,0 → 1,2)
+- **Data Format**: 32-bit PCM (S32_LE), stereo @ 48kHz
+- **Architecture**: Asynchronous USB Audio with URB-based streaming
+- **DKMS Integration**: Automatic build and module loading via udev rules
+- **Device Naming**: Unique names per channel via udev ID_MODEL_FROM_DATABASE
 
 ## 🐛 Troubleshooting
 
@@ -173,23 +181,39 @@ arecord -D hw:zg01voice -f S32_LE -r 48000 -c 2 recording.wav
 # Check if USB device is visible
 lsusb | grep 0499:1513
 
+# Check if modules are loaded
+lsmod | grep zg01
+
 # Check kernel logs
 sudo dmesg | grep -E "(zg01|0499:1513)"
+
+# Manually load driver if needed
+sudo modprobe zg01_usb
 ```
 
-### "rejecting DMA map" Error
-This error occurs with older driver versions. Update to the latest code which uses `kmalloc(GFP_KERNEL | GFP_DMA)` for ISO buffers.
+### Only Some Channels Appear
+The driver creates three separate sound cards. Check all cards:
+```bash
+cat /proc/asound/cards
+# Should show: zg01game (card 0), zg01voiceout (card 2), zg01voice (card 3)
+# Card 1 is typically the built-in USB-Audio driver (MIDI)
+```
 
-### Audio Clicks/Pops
-- **On VM**: Expected (~2.1% click rate due to emulated USB timing)
-- **On localhost**: Should be minimal. If you experience clicks, please open an issue with your hardware details.
+### Audio Issues
+The driver provides crystal-clear audio on compatible hardware. If you experience issues:
+- Verify correct device selection in your audio application
+- Check sample rate is set to 48kHz
+- Ensure format is S32_LE (or use `plughw:` for automatic conversion)
+- Check `dmesg` for any USB or driver errors
 
 ## 📚 Documentation
 
-See additional markdown files for detailed development information:
-- [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md): Current status and technical details
+See additional markdown files for detailed information:
+- [INSTALLATION.md](INSTALLATION.md): Detailed installation instructions
+- [PACKAGING.md](PACKAGING.md): DKMS package building and release process
 - [TESTING_GUIDE.md](TESTING_GUIDE.md): Comprehensive testing procedures
-- [DEBUGGING_PROGRESS.md](DEBUGGING_PROGRESS.md): Bug fixes and learning notes
+- [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md): Technical details and development notes
+
 
 ## 🤝 Contributing
 
