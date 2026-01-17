@@ -4,9 +4,18 @@
 
 A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0499, PID: 0x1513), providing **excellent quality** 32-bit audio with three independent channels.
 
-## ✨ Latest Updates (January 11, 2026)
+## ✨ Latest Updates
 
-### 🎙️ Three Independent Audio Channels!
+### 🔧 January 17, 2026 - Audio Stream Stability Fix
+**Fixed critical issue where audio would stop when starting/stopping applications:**
+- **Root Cause**: URBs (USB Request Blocks) were not being resubmitted when PCM state wasn't RUNNING, causing USB streaming to stop permanently
+- **Solution**: URBs now always resubmit to maintain continuous USB streaming, sending silence when PCM is stopped
+- **Additional Fixes**:
+  - PCM position is no longer reset when URBs are already streaming (prevents desync)
+  - USB interface setup skipped when streaming is active (prevents disruption)
+- **Result**: Multiple applications can now play audio simultaneously without interference. Starting/stopping apps no longer affects other audio streams.
+
+### 🎙️ January 11, 2026 - Three Independent Audio Channels!
 The driver now provides complete access to all ZG01 audio channels:
 - **Game Output**: High-quality playback for gaming/music (96-byte packets)
 - **Voice Output**: Secondary playback channel (240-byte packets)

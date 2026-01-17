@@ -683,21 +683,41 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
         pr_info("zg01_pcm: prepare called - device already initialized, skipping Magic Sequence\n");
     }
     
-    /* Always restore streaming interface (lightweight operation) */
-    pr_debug("zg01_pcm: Switching Interface %d to Alt 1 for streaming\n", interface_num);
-    ret = usb_set_interface(dev->udev, interface_num, 1);
-    if (ret < 0) {
-        pr_err("zg01_pcm: Failed to set Interface %d Alt 1: %d\n", interface_num, ret);
-        return ret;
+    /* Restore streaming interface only if not already streaming */
+    int active_urbs_count = 0;
+    if (dev->channel_type == CHANNEL_TYPE_GAME) {
+        active_urbs_count = dev->active_urbs_game;
+    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+        active_urbs_count = dev->active_urbs_voice;
+    } else {
+        active_urbs_count = dev->active_urbs_voice_out;
     }
     
-    /* Reset PCM position */
-    if (dev->channel_type == CHANNEL_TYPE_GAME) {
-        dev->pcm_pos_game = 0;
-    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
-        dev->pcm_pos_voice = 0;
+    if (active_urbs_count == 0) {
+        /* Only set interface if not already streaming - avoid disrupting active URBs */
+        pr_debug("zg01_pcm: Switching Interface %d to Alt 1 for streaming\n", interface_num);
+        ret = usb_set_interface(dev->udev, interface_num, 1);
+        if (ret < 0) {
+            pr_err("zg01_pcm: Failed to set Interface %d Alt 1: %d\n", interface_num, ret);
+            return ret;
+        }
     } else {
-        dev->pcm_pos_voice_out = 0;
+        pr_debug("zg01_pcm: Streaming already active, skipping interface setup\n");
+    }
+    
+    /* Reset PCM position only if not already streaming */
+    if (dev->channel_type == CHANNEL_TYPE_GAME) {
+        if (dev->active_urbs_game == 0) {
+            dev->pcm_pos_game = 0;
+        }
+    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+        if (dev->active_urbs_voice == 0) {
+            dev->pcm_pos_voice = 0;
+        }
+    } else {
+        if (dev->active_urbs_voice_out == 0) {
+            dev->pcm_pos_voice_out = 0;
+        }
     }
     
     return 0;
@@ -851,18 +871,30 @@ static void zg01_iso_callback(struct urb *urb)
     runtime = substream->runtime;
     if (!runtime) {
         pr_debug("zg01_pcm: No runtime in callback (stream stopped)\n");
-        return;
+        /* Still resubmit URB to keep USB streaming alive */
+        goto resubmit;
     }
 
-    /* Check if stream is still active before processing */
+    /* Check if stream is still active before processing audio data */
     if (runtime->status->state != SNDRV_PCM_STATE_RUNNING) {
-        pr_debug("zg01_pcm: Stream not running, state: %d\n", runtime->status->state);
-        return;
+        pr_debug("zg01_pcm: Stream not running, state: %d - sending silence\n", runtime->status->state);
+        /* Send silence but keep URBs running */
+        if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+            /* Fill output buffer with silence */
+            for (i = 0; i < urb->number_of_packets; i++) {
+                unsigned char *pkt_buf = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
+                unsigned int pkt_len = urb->iso_frame_desc[i].length;
+                if (pkt_len > 0 && pkt_len <= 8192) {
+                    memset(pkt_buf, 0, pkt_len);
+                }
+            }
+        }
+        goto resubmit;
     }
 
     if (!runtime->dma_area) {
         pr_err("zg01_pcm: No DMA area allocated\n");
-        return;
+        goto resubmit;
     }
     
     pcm_buf = runtime->dma_area;
@@ -1061,22 +1093,21 @@ static void zg01_iso_callback(struct urb *urb)
         }
     }
 
-    /* Resubmit URB only if the stream is still active */
-    if (runtime->status->state == SNDRV_PCM_STATE_RUNNING) {
-        /* Reset all frame descriptors for next transfer */
-        for (i = 0; i < urb->number_of_packets; i++) {
-            urb->iso_frame_desc[i].status = 0;
-            urb->iso_frame_desc[i].actual_length = 0;
-        }
-        
-        resubmit_ret = usb_submit_urb(urb, GFP_ATOMIC);
-        if (resubmit_ret < 0) {
-            pr_warn("zg01_pcm: Failed to resubmit URB: %d\n", resubmit_ret);
-            /* Notify ALSA that streaming has failed */
-            if (substream && runtime && runtime->status->state == SNDRV_PCM_STATE_RUNNING) {
-                pr_info("zg01_pcm: Stopping stream due to URB resubmission failure\n");
-                snd_pcm_stop_xrun(substream);
-            }
+resubmit:
+    /* Always resubmit URB to keep USB streaming active */
+    /* Reset all frame descriptors for next transfer */
+    for (i = 0; i < urb->number_of_packets; i++) {
+        urb->iso_frame_desc[i].status = 0;
+        urb->iso_frame_desc[i].actual_length = 0;
+    }
+    
+    resubmit_ret = usb_submit_urb(urb, GFP_ATOMIC);
+    if (resubmit_ret < 0) {
+        pr_warn("zg01_pcm: Failed to resubmit URB: %d\n", resubmit_ret);
+        /* Only notify ALSA if stream was running */
+        if (substream && runtime && runtime->status->state == SNDRV_PCM_STATE_RUNNING) {
+            pr_info("zg01_pcm: Stopping stream due to URB resubmission failure\n");
+            snd_pcm_stop_xrun(substream);
         }
     }
 }
@@ -1359,14 +1390,15 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         /* Mark channel as inactive (stream continues with silence) */
         if (dev->channel_type == CHANNEL_TYPE_GAME) {
             dev->game_channel_active = false;
-            pr_info("zg01_pcm: Trigger STOP - Game channel sending silence\n");
+            pr_info("zg01_pcm: Trigger STOP - Game channel muted\n");
         } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
             dev->voice_channel_active = false;
-            pr_info("zg01_pcm: Trigger STOP - Voice In channel sending silence\n");
+            pr_info("zg01_pcm: Trigger STOP - Voice In channel muted\n");
         } else {
             dev->voice_out_channel_active = false;
-            pr_info("zg01_pcm: Trigger STOP - Voice Out channel sending silence\n");
+            pr_info("zg01_pcm: Trigger STOP - Voice Out channel muted\n");
         }
+        /* Don't stop URBs - keep USB streaming active to avoid restart overhead */
         break;
 
     default:
