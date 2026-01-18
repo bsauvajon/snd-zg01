@@ -35,6 +35,18 @@ static void zg01_pcm_start_work(struct work_struct *work)
 static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *substream);
 static void zg01_stop_streaming(struct zg01_dev *dev);
 
+/* Helper function to get active URB count based on channel type */
+static inline int zg01_get_active_urbs_count(struct zg01_dev *dev)
+{
+    if (dev->channel_type == CHANNEL_TYPE_GAME) {
+        return dev->active_urbs_game;
+    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+        return dev->active_urbs_voice;
+    } else {
+        return dev->active_urbs_voice_out;
+    }
+}
+
 
 static int zg01_pcm_open(struct snd_pcm_substream *substream)
 {
@@ -684,14 +696,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     }
     
     /* Restore streaming interface only if not already streaming */
-    int active_urbs_count = 0;
-    if (dev->channel_type == CHANNEL_TYPE_GAME) {
-        active_urbs_count = dev->active_urbs_game;
-    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
-        active_urbs_count = dev->active_urbs_voice;
-    } else {
-        active_urbs_count = dev->active_urbs_voice_out;
-    }
+    int active_urbs_count = zg01_get_active_urbs_count(dev);
     
     if (active_urbs_count == 0) {
         /* Only set interface if not already streaming - avoid disrupting active URBs */
@@ -706,16 +711,12 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     }
     
     /* Reset PCM position only if not already streaming */
-    if (dev->channel_type == CHANNEL_TYPE_GAME) {
-        if (dev->active_urbs_game == 0) {
+    if (zg01_get_active_urbs_count(dev) == 0) {
+        if (dev->channel_type == CHANNEL_TYPE_GAME) {
             dev->pcm_pos_game = 0;
-        }
-    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
-        if (dev->active_urbs_voice == 0) {
+        } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
             dev->pcm_pos_voice = 0;
-        }
-    } else {
-        if (dev->active_urbs_voice_out == 0) {
+        } else {
             dev->pcm_pos_voice_out = 0;
         }
     }
@@ -884,7 +885,7 @@ static void zg01_iso_callback(struct urb *urb)
             for (i = 0; i < urb->number_of_packets; i++) {
                 unsigned char *pkt_buf = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
                 unsigned int pkt_len = urb->iso_frame_desc[i].length;
-                if (pkt_len > 0 && pkt_len <= 8192) {
+                if (pkt_len > 0 && pkt_len <= MAX_ISO_PACKET_SIZE) {
                     memset(pkt_buf, 0, pkt_len);
                 }
             }
@@ -916,7 +917,7 @@ static void zg01_iso_callback(struct urb *urb)
             unsigned int pkt_len = urb->iso_frame_desc[i].length;
             unsigned int pkt_offset = 0;
 
-            if (pkt_len == 0 || pkt_len > 8192) {/* Sanity check */
+            if (pkt_len == 0 || pkt_len > MAX_ISO_PACKET_SIZE) {/* Sanity check */
                 continue;
             }
 
@@ -1359,8 +1360,6 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
     struct zg01_dev *dev = snd_pcm_substream_chip(substream);
     int ret = 0;
-    static unsigned long last_trigger_time = 0;
-    static int trigger_count = 0;
     unsigned long now = jiffies;
 
     if (!dev) {
@@ -1369,10 +1368,10 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
     }
 
     /* Detect rapid trigger loop - if more than 5 triggers in 100ms, something is wrong */
-    if (time_before(now, last_trigger_time + msecs_to_jiffies(100))) {
-        trigger_count++;
-        if (trigger_count > 5) {
-            pr_warn("zg01_pcm: Rapid trigger loop detected (%d triggers in 100ms), throttling\n", trigger_count);
+    if (time_before(now, dev->last_trigger_time + msecs_to_jiffies(100))) {
+        dev->trigger_count++;
+        if (dev->trigger_count > 5) {
+            pr_warn("zg01_pcm: Rapid trigger loop detected (%d triggers in 100ms), throttling\n", dev->trigger_count);
             /* Return success but don't process to break the loop */
             if (cmd == SNDRV_PCM_TRIGGER_START) {
                 /* Ensure channel is marked active */
@@ -1387,9 +1386,9 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
             return 0;
         }
     } else {
-        trigger_count = 0;
+        dev->trigger_count = 0;
     }
-    last_trigger_time = now;
+    dev->last_trigger_time = now;
 
     switch (cmd) {
     case SNDRV_PCM_TRIGGER_START:
