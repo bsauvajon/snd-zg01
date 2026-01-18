@@ -4,9 +4,28 @@
 
 A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0499, PID: 0x1513), providing **excellent quality** 32-bit audio with three independent channels.
 
-## ✨ Latest Updates (January 11, 2026)
+## ✨ Latest Updates
 
-### 🎙️ Three Independent Audio Channels!
+### 🔧 January 18, 2026 - PipeWire START/STOP Loop Fix
+**Fixed rapid trigger loop causing audio instability:**
+- **Issue**: PipeWire would enter a rapid START/STOP loop when reconfiguring streams, causing audio to fail or become unstable
+- **Root Cause**: TRIGGER_STOP kept URBs running (only muting), causing state mismatch when TRIGGER_START tried to skip starting already-active URBs
+- **Solution**: 
+  - TRIGGER_STOP now properly stops URBs via `zg01_stop_streaming()`
+  - Each START/STOP cycle is clean with fresh URB allocation
+  - Added trigger loop detection and throttling as safety measure
+- **Result**: Stable audio during app start/stop and stream reconfiguration. Multiple applications work correctly without triggering restart loops.
+
+### 🔧 January 17, 2026 - Audio Stream Stability Fix
+**Fixed critical issue where audio would stop when starting/stopping applications:**
+- **Root Cause**: URBs were not being resubmitted when PCM state wasn't RUNNING, causing USB streaming to stop permanently
+- **Solution**: Modified URB callback to always resubmit URBs (sending silence when PCM not running), ensuring continuous USB streaming between TRIGGER_START and TRIGGER_STOP
+- **Additional Fixes**:
+  - PCM position no longer reset when URBs are already streaming (prevents desync)
+  - USB interface setup skipped when streaming is active (prevents disruption)
+- **Result**: Multiple applications can play audio simultaneously without interference
+
+### 🎙️ January 11, 2026 - Three Independent Audio Channels!
 The driver now provides complete access to all ZG01 audio channels:
 - **Game Output**: High-quality playback for gaming/music (96-byte packets)
 - **Voice Output**: Secondary playback channel (240-byte packets)

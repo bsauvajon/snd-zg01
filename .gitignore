@@ -12,3 +12,9 @@ capture/*
 /.vscode
 /.idea
 tags
+*.mod.c
+*.mod
+*.symvers
+Module.symvers
+.dep
+modules.order

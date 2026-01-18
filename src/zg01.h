@@ -19,6 +19,7 @@
 #define ISO_PKTS_VOICE  32        /* 32 microframes = 4ms buffer per URB */
 #define ISO_PKT_SIZE_GAME  240    /* 240 bytes per microframe as seen in Windows capture */
 #define ISO_PKT_SIZE_VOICE 124    /* Actual max packet size for voice input (alloc size) */
+#define MAX_ISO_PACKET_SIZE 8192  /* Maximum size for isochronous packet sanity checks */
 
 /* USB endpoints from actual device analysis */
 #define ZG01_EP_GAME_OUT   0x01   /* Game audio output endpoint (Interface 1, Alt 1) */
@@ -90,6 +91,10 @@ struct zg01_dev {
     bool cleanup_in_progress_voice;
     bool cleanup_in_progress_voice_out;
     unsigned long last_trigger_jiffies;
+    
+    /* Trigger loop detection - per-device to avoid race conditions */
+    unsigned long last_trigger_time;
+    int trigger_count;
     
     /* Rate limiting for rapid open/close cycles from audio system probing */
     unsigned long last_open_jiffies;
