@@ -1359,11 +1359,37 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
     struct zg01_dev *dev = snd_pcm_substream_chip(substream);
     int ret = 0;
+    static unsigned long last_trigger_time = 0;
+    static int trigger_count = 0;
+    unsigned long now = jiffies;
 
     if (!dev) {
         pr_err("zg01_pcm: No device structure available in trigger\n");
         return -ENODEV;
     }
+
+    /* Detect rapid trigger loop - if more than 5 triggers in 100ms, something is wrong */
+    if (time_before(now, last_trigger_time + msecs_to_jiffies(100))) {
+        trigger_count++;
+        if (trigger_count > 5) {
+            pr_warn("zg01_pcm: Rapid trigger loop detected (%d triggers in 100ms), throttling\n", trigger_count);
+            /* Return success but don't process to break the loop */
+            if (cmd == SNDRV_PCM_TRIGGER_START) {
+                /* Ensure channel is marked active */
+                if (dev->channel_type == CHANNEL_TYPE_GAME) {
+                    dev->game_channel_active = true;
+                } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+                    dev->voice_channel_active = true;
+                } else {
+                    dev->voice_out_channel_active = true;
+                }
+            }
+            return 0;
+        }
+    } else {
+        trigger_count = 0;
+    }
+    last_trigger_time = now;
 
     switch (cmd) {
     case SNDRV_PCM_TRIGGER_START:
@@ -1387,18 +1413,19 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         break;
 
     case SNDRV_PCM_TRIGGER_STOP:
-        /* Mark channel as inactive (stream continues with silence) */
+        /* Stop streaming completely to allow clean restart */
         if (dev->channel_type == CHANNEL_TYPE_GAME) {
             dev->game_channel_active = false;
-            pr_info("zg01_pcm: Trigger STOP - Game channel muted\n");
+            pr_info("zg01_pcm: Trigger STOP - Game channel stopping\n");
         } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
             dev->voice_channel_active = false;
-            pr_info("zg01_pcm: Trigger STOP - Voice In channel muted\n");
+            pr_info("zg01_pcm: Trigger STOP - Voice In channel stopping\n");
         } else {
             dev->voice_out_channel_active = false;
-            pr_info("zg01_pcm: Trigger STOP - Voice Out channel muted\n");
+            pr_info("zg01_pcm: Trigger STOP - Voice Out channel stopping\n");
         }
-        /* Don't stop URBs - keep USB streaming active to avoid restart overhead */
+        /* Stop URBs to ensure clean restart with new parameters */
+        zg01_stop_streaming(dev);
         break;
 
     default:
