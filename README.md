@@ -19,7 +19,7 @@ A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0
 ### 🔧 January 17, 2026 - Audio Stream Stability Fix
 **Fixed critical issue where audio would stop when starting/stopping applications:**
 - **Root Cause**: URBs were not being resubmitted when PCM state wasn't RUNNING, causing USB streaming to stop permanently
-- **Solution**: URBs always resubmit to maintain continuous USB streaming, with proper state handling
+- **Solution**: Modified URB callback to always resubmit URBs (sending silence when PCM not running), ensuring continuous USB streaming between TRIGGER_START and TRIGGER_STOP
 - **Additional Fixes**:
   - PCM position no longer reset when URBs are already streaming (prevents desync)
   - USB interface setup skipped when streaming is active (prevents disruption)

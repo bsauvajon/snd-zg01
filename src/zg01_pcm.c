@@ -618,6 +618,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     struct zg01_dev *dev = snd_pcm_substream_chip(substream);
     int ret = 0;
     int interface_num;
+    int active_urbs_count;
     bool is_first_prepare = false;
     
     /* Determine interface number based on channel type */
@@ -696,7 +697,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     }
     
     /* Restore streaming interface only if not already streaming */
-    int active_urbs_count = zg01_get_active_urbs_count(dev);
+    active_urbs_count = zg01_get_active_urbs_count(dev);
     
     if (active_urbs_count == 0) {
         /* Only set interface if not already streaming - avoid disrupting active URBs */
@@ -1095,7 +1096,7 @@ static void zg01_iso_callback(struct urb *urb)
     }
 
 resubmit:
-    /* Always resubmit URB to keep USB streaming active */
+    /* Resubmit URB to continue streaming until TRIGGER_STOP explicitly stops URBs */
     /* Reset all frame descriptors for next transfer */
     for (i = 0; i < urb->number_of_packets; i++) {
         urb->iso_frame_desc[i].status = 0;
