@@ -6,14 +6,24 @@ A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0
 
 ## ✨ Latest Updates
 
+### 🔧 January 18, 2026 - PipeWire START/STOP Loop Fix
+**Fixed rapid trigger loop causing audio instability:**
+- **Issue**: PipeWire would enter a rapid START/STOP loop when reconfiguring streams, causing audio to fail or become unstable
+- **Root Cause**: TRIGGER_STOP kept URBs running (only muting), causing state mismatch when TRIGGER_START tried to skip starting already-active URBs
+- **Solution**: 
+  - TRIGGER_STOP now properly stops URBs via `zg01_stop_streaming()`
+  - Each START/STOP cycle is clean with fresh URB allocation
+  - Added trigger loop detection and throttling as safety measure
+- **Result**: Stable audio during app start/stop and stream reconfiguration. Multiple applications work correctly without triggering restart loops.
+
 ### 🔧 January 17, 2026 - Audio Stream Stability Fix
 **Fixed critical issue where audio would stop when starting/stopping applications:**
-- **Root Cause**: URBs (USB Request Blocks) were not being resubmitted when PCM state wasn't RUNNING, causing USB streaming to stop permanently
-- **Solution**: URBs now always resubmit to maintain continuous USB streaming, sending silence when PCM is stopped
+- **Root Cause**: URBs were not being resubmitted when PCM state wasn't RUNNING, causing USB streaming to stop permanently
+- **Solution**: URBs always resubmit to maintain continuous USB streaming, with proper state handling
 - **Additional Fixes**:
-  - PCM position is no longer reset when URBs are already streaming (prevents desync)
+  - PCM position no longer reset when URBs are already streaming (prevents desync)
   - USB interface setup skipped when streaming is active (prevents disruption)
-- **Result**: Multiple applications can now play audio simultaneously without interference. Starting/stopping apps no longer affects other audio streams.
+- **Result**: Multiple applications can play audio simultaneously without interference
 
 ### 🎙️ January 11, 2026 - Three Independent Audio Channels!
 The driver now provides complete access to all ZG01 audio channels:
