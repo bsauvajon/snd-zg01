@@ -246,12 +246,18 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
         
         /* Check if Game channel is streaming via global device pointer */
         struct zg01_dev **game_dev_ptr = (struct zg01_dev **)__symbol_get("game_dev");
-        bool game_streaming = (game_dev_ptr && *game_dev_ptr && (*game_dev_ptr)->active_urbs_game > 0);
+        int game_urbs = 0;
+        bool game_streaming = false;
+        
+        if (game_dev_ptr && *game_dev_ptr) {
+            game_urbs = (*game_dev_ptr)->active_urbs_game;
+            game_streaming = game_urbs > 0;
+        }
         if (game_dev_ptr) __symbol_put("game_dev");
         
         if (game_streaming) {
             pr_info("zg01_pcm: Voice Out open - SKIPPING interface setup (Game streaming with %d URBs)\n",
-                    game_dev_ptr && *game_dev_ptr ? (*game_dev_ptr)->active_urbs_game : 0);
+                    game_urbs);
             /* Mark as initialized so prepare() doesn't try either */
             dev->voice_out_initialized = true;
         } else if (!dev->voice_out_initialized) {
@@ -664,8 +670,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
             dev->voice_out_initialized = true;
         }
         
-        /* Just make sure the interface is set correctly for this channel */
-        usb_set_interface(dev->udev, interface_num, 1);
+        /* Do NOT call usb_set_interface() here - it kills active URBs from other channels */
         dev->current_rate = 48000;
         goto skip_magic;
     }
