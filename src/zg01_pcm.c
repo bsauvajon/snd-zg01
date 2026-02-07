@@ -624,6 +624,15 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     int interface_num;
     int active_urbs_count;
     bool is_first_prepare = false;
+    /* Declare streaming check variables at function start for C89 compliance */
+    struct zg01_dev **game_dev_ptr;
+    struct zg01_dev **voice_in_dev_ptr;
+    struct zg01_dev **voice_out_dev_ptr;
+    bool game_streaming;
+    bool voice_in_streaming;
+    bool voice_out_streaming;
+    bool any_channel_streaming;
+    const char *channel_name;
     
     /* Determine interface number based on channel type */
     if (dev->channel_type == CHANNEL_TYPE_GAME || dev->channel_type == CHANNEL_TYPE_VOICE_OUT) {
@@ -636,23 +645,22 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
             dev->channel_type, dev->game_initialized, dev->voice_initialized, dev->voice_out_initialized);
     
     /* CRITICAL: ALWAYS check if any other channel is streaming before ANY interface changes
-     * Magic Sequence resets Interface 1 and 2, which kills ALL active URBs! 
+     * Magic Sequence resets Interface 1 and 2, which kills ALL active URBs!  
      * Must check this BEFORE looking at initialized flags, because each channel has separate dev struct */
-    struct zg01_dev **game_dev_ptr = (struct zg01_dev **)__symbol_get("game_dev");
-    struct zg01_dev **voice_in_dev_ptr = (struct zg01_dev **)__symbol_get("voice_in_dev");
-    struct zg01_dev **voice_out_dev_ptr = (struct zg01_dev **)__symbol_get("voice_out_dev");
+    game_dev_ptr = (struct zg01_dev **)__symbol_get("game_dev");
+    voice_in_dev_ptr = (struct zg01_dev **)__symbol_get("voice_in_dev");
+    voice_out_dev_ptr = (struct zg01_dev **)__symbol_get("voice_out_dev");
     
-    bool game_streaming = (game_dev_ptr && *game_dev_ptr && (*game_dev_ptr)->active_urbs_game > 0);
-    bool voice_in_streaming = (voice_in_dev_ptr && *voice_in_dev_ptr && (*voice_in_dev_ptr)->active_urbs_voice > 0);
-    bool voice_out_streaming = (voice_out_dev_ptr && *voice_out_dev_ptr && (*voice_out_dev_ptr)->active_urbs_voice_out > 0);
-    bool any_channel_streaming = (game_streaming || voice_in_streaming || voice_out_streaming);
+    game_streaming = (game_dev_ptr && *game_dev_ptr && (*game_dev_ptr)->active_urbs_game > 0);
+    voice_in_streaming = (voice_in_dev_ptr && *voice_in_dev_ptr && (*voice_in_dev_ptr)->active_urbs_voice > 0);
+    voice_out_streaming = (voice_out_dev_ptr && *voice_out_dev_ptr && (*voice_out_dev_ptr)->active_urbs_voice_out > 0);
+    any_channel_streaming = (game_streaming || voice_in_streaming || voice_out_streaming);
     
     if (game_dev_ptr) __symbol_put("game_dev");
     if (voice_in_dev_ptr) __symbol_put("voice_in_dev");
     if (voice_out_dev_ptr) __symbol_put("voice_out_dev");
     
     if (any_channel_streaming) {
-        const char *channel_name;
         if (dev->channel_type == CHANNEL_TYPE_GAME) channel_name = "Game";
         else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) channel_name = "Voice In";
         else channel_name = "Voice Out";
@@ -670,9 +678,9 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
             dev->voice_out_initialized = true;
         }
         
-        /* Do NOT call usb_set_interface() here - it kills active URBs from other channels */
+        /* Return early to avoid ANY usb_set_interface() calls that would kill active URBs */
         dev->current_rate = 48000;
-        goto skip_magic;
+        return 0;
     }
     
     /* Check if this is the first prepare (device needs initialization) */
@@ -740,10 +748,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
         pr_info("zg01_pcm: prepare called - device already initialized, skipping Magic Sequence\n");
     }
     
-skip_magic:
-    /* Restore streaming interface only if not already streaming */
-    active_urbs_count = zg01_get_active_urbs_count(dev);
-    
+
     if (active_urbs_count == 0) {
         /* Only set interface if not already streaming - avoid disrupting active URBs */
         pr_debug("zg01_pcm: Switching Interface %d to Alt 1 for streaming\n", interface_num);
