@@ -240,21 +240,51 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
             goto unlock;
         }
 
-        /* According to USB capture: Interface 2 Alt 0, then Interface 1 Alt 1, then Interface 2 Alt 1 */
-        ret = usb_set_interface(dev->udev, 2, 0);
-        if (ret < 0) {
-            pr_warn("zg01_pcm: Failed to set Interface 2 Alt 0 for Voice Out: %d\n", ret);
-        }
+        /* According to USB capture: Interface 2 Alt 0, then Interface 1 Alt 1, then Interface 2 Alt 1 
+         * CRITICAL: Check if Game is already streaming - if so, skip ALL interface changes!
+         * usb_set_interface() kills active URBs, so we must avoid it when other channels are active. */
         
-        ret = usb_set_interface(dev->udev, 1, 1);
-        if (ret < 0) {
-            pr_err("zg01_pcm: Failed to set Interface 1 Alt 1 for Voice Out: %d\n", ret);
-            goto unlock;
-        }
+        /* Check if Game channel is streaming via global device pointer */
+        struct zg01_dev **game_dev_ptr = (struct zg01_dev **)__symbol_get("game_dev");
+        int game_urbs = 0;
+        bool game_streaming = false;
         
-        ret = usb_set_interface(dev->udev, 2, 1);
-        if (ret < 0) {
-            pr_warn("zg01_pcm: Failed to set Interface 2 Alt 1 for Voice Out: %d\n", ret);
+        if (game_dev_ptr && *game_dev_ptr) {
+            game_urbs = (*game_dev_ptr)->active_urbs_game;
+            game_streaming = game_urbs > 0;
+        }
+        if (game_dev_ptr) __symbol_put("game_dev");
+        
+        if (game_streaming) {
+            pr_info("zg01_pcm: Voice Out open - SKIPPING interface setup (Game streaming with %d URBs)\n",
+                    game_urbs);
+            /* Mark as initialized so prepare() doesn't try either */
+            dev->voice_out_initialized = true;
+        } else if (!dev->voice_out_initialized) {
+            ret = usb_set_interface(dev->udev, 2, 0);
+            if (ret < 0) {
+                pr_warn("zg01_pcm: Failed to set Interface 2 Alt 0 for Voice Out: %d\n", ret);
+            }
+            
+            ret = usb_set_interface(dev->udev, 1, 1);
+            if (ret < 0) {
+                pr_err("zg01_pcm: Failed to set Interface 1 Alt 1 for Voice Out: %d\n", ret);
+                goto unlock;
+            }
+            
+            ret = usb_set_interface(dev->udev, 2, 1);
+            if (ret < 0) {
+                pr_warn("zg01_pcm: Failed to set Interface 2 Alt 1 for Voice Out: %d\n", ret);
+            }
+            pr_info("zg01_pcm: Voice Out first initialization - configured interfaces\n");
+        } else {
+            pr_debug("zg01_pcm: Voice Out already initialized - skipping interface setup\n");
+            /* Just ensure Interface 1 is at Alt 1 - but only if Game not streaming */
+            ret = usb_set_interface(dev->udev, 1, 1);
+            if (ret < 0) {
+                pr_err("zg01_pcm: Failed to set Interface 1 Alt 1 for Voice Out: %d\n", ret);
+                goto unlock;
+            }
         }
         
         if (!is_rapid_probe) {
@@ -402,35 +432,9 @@ static int zg01_pcm_hw_params(struct snd_pcm_substream *substream,
         return -EINVAL;
     }
 
-    /* Attempt to read device-reported sampling frequency (GET_CUR) and enforce it.
-     * If we cannot read the device, fall back to accepting the requested rate.
-     */
-    if (dev && dev->udev) {
-        unsigned char cur_rate_buf[4];
-        int rc = usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
-                                 0x01, /* GET_CUR */
-                                 USB_DIR_IN | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-                                 0x0100, /* SAMPLING_FREQ_CONTROL */
-                                 0x0100, /* Index: Entity 1, Intf 0 */
-                                 cur_rate_buf, 4, 500);
-        if (rc == 4) {
-            unsigned int dev_rate = cur_rate_buf[0] | (cur_rate_buf[1] << 8) |
-                                    (cur_rate_buf[2] << 16) | (cur_rate_buf[3] << 24);
-            pr_info("zg01_pcm: Device-reported sampling rate via GET_CUR: %u\n", dev_rate);
-            dev->current_rate = (int)dev_rate;
-            if ((unsigned int)dev->current_rate != rate) {
-                pr_warn("zg01_pcm: Requested rate %u does not match device rate %u; rejecting hw_params\n",
-                        rate, dev->current_rate);
-                return -EINVAL;
-            }
-        } else {
-            pr_warn("zg01_pcm: Could not read device sampling rate (rc=%d); accepting requested rate %u\n", rc, rate);
-            dev->current_rate = rate;
-        }
-    } else {
-        /* No usb_device available; accept requested rate and store it */
-        dev->current_rate = rate;
-    }
+    /* Skip GET_CUR request during hw_params - causes "transfer buffer on stack" warning
+     * and is unreliable during device probing. Rate validation happens in prepare function. */
+    dev->current_rate = rate;
     dev->rate_residual = 0;
     
     if (channels != 2) {
@@ -620,6 +624,15 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     int interface_num;
     int active_urbs_count;
     bool is_first_prepare = false;
+    /* Declare streaming check variables at function start for C89 compliance */
+    struct zg01_dev **game_dev_ptr;
+    struct zg01_dev **voice_in_dev_ptr;
+    struct zg01_dev **voice_out_dev_ptr;
+    bool game_streaming;
+    bool voice_in_streaming;
+    bool voice_out_streaming;
+    bool any_channel_streaming;
+    const char *channel_name;
     
     /* Determine interface number based on channel type */
     if (dev->channel_type == CHANNEL_TYPE_GAME || dev->channel_type == CHANNEL_TYPE_VOICE_OUT) {
@@ -630,6 +643,45 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     
     pr_info("zg01_pcm: prepare called - channel_type=%d, game_init=%d, voice_init=%d, voice_out_init=%d\n",
             dev->channel_type, dev->game_initialized, dev->voice_initialized, dev->voice_out_initialized);
+    
+    /* CRITICAL: ALWAYS check if any other channel is streaming before ANY interface changes
+     * Magic Sequence resets Interface 1 and 2, which kills ALL active URBs!  
+     * Must check this BEFORE looking at initialized flags, because each channel has separate dev struct */
+    game_dev_ptr = (struct zg01_dev **)__symbol_get("game_dev");
+    voice_in_dev_ptr = (struct zg01_dev **)__symbol_get("voice_in_dev");
+    voice_out_dev_ptr = (struct zg01_dev **)__symbol_get("voice_out_dev");
+    
+    game_streaming = (game_dev_ptr && *game_dev_ptr && (*game_dev_ptr)->active_urbs_game > 0);
+    voice_in_streaming = (voice_in_dev_ptr && *voice_in_dev_ptr && (*voice_in_dev_ptr)->active_urbs_voice > 0);
+    voice_out_streaming = (voice_out_dev_ptr && *voice_out_dev_ptr && (*voice_out_dev_ptr)->active_urbs_voice_out > 0);
+    any_channel_streaming = (game_streaming || voice_in_streaming || voice_out_streaming);
+    
+    if (game_dev_ptr) __symbol_put("game_dev");
+    if (voice_in_dev_ptr) __symbol_put("voice_in_dev");
+    if (voice_out_dev_ptr) __symbol_put("voice_out_dev");
+    
+    if (any_channel_streaming) {
+        if (dev->channel_type == CHANNEL_TYPE_GAME) channel_name = "Game";
+        else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) channel_name = "Voice In";
+        else channel_name = "Voice Out";
+        
+        pr_info("zg01_pcm: %s prepare - SKIPPING all initialization (other channels streaming)\n", channel_name);
+        pr_info("zg01_pcm:   game=%d, voice_in=%d, voice_out=%d\n",
+                game_streaming, voice_in_streaming, voice_out_streaming);
+        
+        /* Mark as initialized so we don't try again */
+        if (dev->channel_type == CHANNEL_TYPE_GAME) {
+            dev->game_initialized = true;
+        } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+            dev->voice_initialized = true;
+        } else {
+            dev->voice_out_initialized = true;
+        }
+        
+        /* Return early to avoid ANY usb_set_interface() calls that would kill active URBs */
+        dev->current_rate = 48000;
+        return 0;
+    }
     
     /* Check if this is the first prepare (device needs initialization) */
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
@@ -696,9 +748,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
         pr_info("zg01_pcm: prepare called - device already initialized, skipping Magic Sequence\n");
     }
     
-    /* Restore streaming interface only if not already streaming */
-    active_urbs_count = zg01_get_active_urbs_count(dev);
-    
+
     if (active_urbs_count == 0) {
         /* Only set interface if not already streaming - avoid disrupting active URBs */
         pr_debug("zg01_pcm: Switching Interface %d to Alt 1 for streaming\n", interface_num);

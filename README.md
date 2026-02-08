@@ -6,6 +6,13 @@ A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0
 
 ## ✨ Latest Updates
 
+### 🎉 February 7, 2026 - Full Multi-Channel Support!
+**All three channels work simultaneously!**
+- **Fixed**: Game + Voice Out + Voice In can all operate together without interference
+- **Fixed**: Kernel crash when opening control device (card->module not set)
+- **Fixed**: Voice Out opening no longer kills Game channel playback
+- **Result**: Discord (Voice Out) + Music (Game) + Audacity (Voice In) all work at the same time!
+
 ### 🔧 January 18, 2026 - PipeWire START/STOP Loop Fix
 **Fixed rapid trigger loop causing audio instability:**
 - **Issue**: PipeWire would enter a rapid START/STOP loop when reconfiguring streams, causing audio to fail or become unstable

@@ -20,6 +20,7 @@ The driver delivers **crystal-clear playback** on both VM and localhost. After f
 - ✅ **No Kernel Crashes**: All memory safety issues resolved
 - ✅ **Device Initialization**: Magic Sequence executes cleanly
 - ✅ **Full-Duplex**: Simultaneous playback and capture supported
+- ✅ **Multi-Channel Playback**: Game + Voice Out channels work simultaneously
 
 ### VM (ubuntu25.10) - **EXCELLENT** ✅ 
 - ✅ **Audio Playback**: Perfect quality, no clicks
@@ -312,6 +313,19 @@ make clean && make
 ```
 
 ## 📊 Progress Timeline
+
+### February 7, 2026 - Full Multi-Channel Support! 🎉
+- ✅ **Fixed multi-channel interference**: Game + Voice Out + Voice In can all operate simultaneously
+- ✅ **Fixed kernel crash**: Set card->module to prevent crash when opening control device (try_module_get)
+- ✅ **Fixed Voice Out interference**: Added streaming check in open() to prevent Interface 1 reset killing Game URBs
+- ✅ **Result**: Discord (Voice Out) + Music (Game) + Audacity (Voice In) all work together
+
+### January 18, 2026 - Audio Stream Stability Fix
+- ✅ **Root cause identified**: URBs stopped resubmitting when PCM state != RUNNING, causing permanent stream death
+- ✅ **Fixed URB lifecycle**: URBs now continuously resubmit (sending silence when not RUNNING) until TRIGGER_STOP
+- ✅ **Fixed TRIGGER_STOP**: Now properly calls zg01_stop_streaming() to actually stop URBs
+- ✅ **Fixed START/STOP loops**: Added trigger loop detection to prevent PipeWire restart cascades
+- ✅ **Result**: Multiple applications can play audio simultaneously without interference
 
 ### January 5, 2026 - Audio Capture Working! 🎉
 - ✅ **Discovered voice channel packet format**: 108-byte packets with different structure than playback

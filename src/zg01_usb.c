@@ -16,9 +16,12 @@ static DEFINE_MUTEX(devices_mutex);
 DECLARE_BITMAP(devices_used, SNDRV_CARDS);
 
 /* Track which cards have been created for this device */
-static struct zg01_dev *game_dev = NULL;
-static struct zg01_dev *voice_in_dev = NULL;
-static struct zg01_dev *voice_out_dev = NULL;
+struct zg01_dev *game_dev = NULL;
+struct zg01_dev *voice_in_dev = NULL;
+struct zg01_dev *voice_out_dev = NULL;
+EXPORT_SYMBOL_GPL(game_dev);
+EXPORT_SYMBOL_GPL(voice_in_dev);
+EXPORT_SYMBOL_GPL(voice_out_dev);
 
 static int zg01_probe(struct usb_interface *interface,
                       const struct usb_device_id *id)
@@ -84,6 +87,10 @@ static int zg01_probe(struct usb_interface *interface,
         dev_err(&interface->dev, "Failed to create sound card: %d\n", err);
         return err;
     }
+    
+    /* CRITICAL: Ensure module owner is set to prevent kernel crash when opening control device
+     * The kernel's try_module_get() needs a valid module pointer */
+    card->module = THIS_MODULE;
 
     /* Use the dev structure embedded in the card - this is critical! */
     dev = card->private_data;

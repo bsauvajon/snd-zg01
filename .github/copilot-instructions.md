@@ -77,6 +77,42 @@ sudo dpkg -i ../snd-zg01-dkms_*.deb
 
 ## Common Bugs and Pitfalls
 
+### Multi-Channel Interference (Fixed Feb 7, 2026)
+**Bug**: Opening Voice Out (Discord) kills Game channel playback
+```c
+// WRONG - Voice Out open() calls usb_set_interface(1,1) even if Game is streaming
+if (!dev->voice_out_initialized) {
+    usb_set_interface(dev->udev, 1, 1);  // Kills Game's Interface 1 URBs!
+}
+
+// CORRECT - Check if Game is streaming before ANY interface changes
+struct zg01_dev **game_dev_ptr = (struct zg01_dev **)__symbol_get("game_dev");
+bool game_streaming = (game_dev_ptr && *game_dev_ptr && (*game_dev_ptr)->active_urbs_game > 0);
+if (game_dev_ptr) __symbol_put("game_dev");
+
+if (game_streaming) {
+    pr_info("Voice Out open - SKIPPING interface setup (Game streaming)");
+    dev->voice_out_initialized = true;  // Skip in prepare() too
+} else if (!dev->voice_out_initialized) {
+    usb_set_interface(dev->udev, 1, 1);  // Safe to change
+}
+```
+**Impact**: Game + Voice Out + Voice In can all operate simultaneously without interference
+
+### Kernel Crash on Control Device Open (Fixed Feb 7, 2026)
+**Bug**: Kernel crashes with "unable to handle page fault" in try_module_get when wireplumber opens control device
+```c
+// WRONG - snd_card_new() doesn't automatically set card->module for all configurations
+ret = snd_card_new(&interface->dev, -1, card_id, THIS_MODULE,
+                   sizeof(struct zg01_dev), &card);
+
+// CORRECT - Explicitly set module owner after card creation
+ret = snd_card_new(&interface->dev, -1, card_id, THIS_MODULE,
+                   sizeof(struct zg01_dev), &card);
+card->module = THIS_MODULE;  // Prevents crash in try_module_get
+```
+**Impact**: Driver stable when PipeWire/wireplumber probes control interface
+
 ### Buffer Position Calculation
 **Bug**: `runtime->buffer_size` is **already in frames**, not bytes. Do NOT divide by `bytes_per_frame`.
 ```c
