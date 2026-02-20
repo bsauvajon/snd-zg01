@@ -29,6 +29,12 @@ case "$1" in
             udevadm control --reload-rules || true
             udevadm trigger || true
         fi
+
+        # Install modules-load.d file so snd-zg01 is pre-loaded at boot
+        # before snd-usb-audio claims the ZG01 via its generic wildcard alias.
+        if [ -f /usr/src/$NAME-$VERSION/src/snd-zg01.conf ]; then
+            cp /usr/src/$NAME-$VERSION/src/snd-zg01.conf /etc/modules-load.d/
+        fi
         
         echo "Yamaha ZG01 driver installed via DKMS"
         echo "The module has been built and installed for your kernel"

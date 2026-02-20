@@ -18,6 +18,7 @@ case "$1" in
         
         # Remove udev rules
         rm -f /etc/udev/rules.d/90-zg01.rules || true
+        rm -f /etc/modules-load.d/snd-zg01.conf || true
         udevadm control --reload-rules || true
         udevadm trigger || true
         
@@ -27,8 +28,9 @@ case "$1" in
         # Remove source directory on purge
         rm -rf /usr/src/$NAME-$VERSION || true
         
-        # Remove udev rules
+        # Remove udev rules and modules-load config
         rm -f /etc/udev/rules.d/90-zg01.rules || true
+        rm -f /etc/modules-load.d/snd-zg01.conf || true
         udevadm control --reload-rules || true
         udevadm trigger || true
         
