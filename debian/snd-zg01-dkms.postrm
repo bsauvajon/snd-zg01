@@ -9,6 +9,10 @@ VERSION=1.0.0
 
 case "$1" in
     remove)
+        # Unload the module before removing so that ALSA cards are freed
+        # cleanly and don't leave dangling card->module pointers.
+        modprobe -r snd-zg01 2>/dev/null || true
+
         # Uninstall from DKMS
         dkms remove -m $NAME -v $VERSION --all || true
         

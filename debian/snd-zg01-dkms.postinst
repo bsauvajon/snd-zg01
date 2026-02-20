@@ -9,6 +9,14 @@ VERSION=1.0.0
 
 case "$1" in
     configure)
+        # Unload any currently running version of the module to avoid
+        # stale ALSA cards surviving across an upgrade (old cards hold a
+        # dangling card->module pointer once the old .ko is replaced).
+        modprobe -r snd-zg01 2>/dev/null || true
+        # Also remove old split-module names that may be loaded from a
+        # previous installation.
+        modprobe -r zg01_usb zg01_pcm zg01_control zg01_usb_discovery 2>/dev/null || true
+
         # Register with DKMS
         dkms add -m $NAME -v $VERSION || true
         dkms build -m $NAME -v $VERSION || true
