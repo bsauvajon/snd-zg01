@@ -34,7 +34,7 @@ case "$1" in
         echo "  - Yamaha ZG01 Voice In (capture)"
         echo ""
         echo "To manually load the driver, run:"
-        echo "  sudo modprobe zg01_usb"
+        echo "  sudo modprobe snd-zg01"
         echo ""
         echo "Check audio devices with:"
         echo "  cat /proc/asound/cards"
