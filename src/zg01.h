@@ -37,7 +37,6 @@ struct zg01_dev {
     struct usb_interface *interface;
     int card_index;
 
-    struct zg01_midi *midi;
     struct zg01_pcm pcm;
     struct zg01_control control;
 
@@ -80,12 +79,7 @@ struct zg01_dev {
     bool game_initialized;        /* Track if game channel has been initialized */
     bool voice_initialized;       /* Track if voice channel has been initialized */
     bool voice_out_initialized;   /* Track if voice output channel has been initialized */
-    unsigned long game_startup_frames; /* Count frames during startup to allow buffer fill */
-    unsigned long voice_startup_frames;
-    unsigned long voice_out_startup_frames;
-    
     unsigned int current_rate;      /* Current sample rate (44100 or 48000) */
-    unsigned int rate_residual;     /* Fractional sample accumulator */
     
     bool cleanup_in_progress_game;
     bool cleanup_in_progress_voice;
@@ -100,17 +94,15 @@ struct zg01_dev {
     unsigned long last_open_jiffies;
     unsigned int open_count;
 
-    /* Workqueue for deferred URB cleanup to avoid sleeping in atomic contexts */
-    struct workqueue_struct *wq;
-
-    /* Deferred start support to debounce user-space probing */
-    struct delayed_work start_work_game;
-    struct delayed_work start_work_voice;
-    struct delayed_work start_work_voice_out;
-    bool start_pending_game;
-    bool start_pending_voice;
-    bool start_pending_voice_out;
 };
+
+/* Global device pointers — defined in zg01_usb.c, accessed from zg01_pcm.c */
+extern struct zg01_dev *game_dev;
+extern struct zg01_dev *voice_in_dev;
+extern struct zg01_dev *voice_out_dev;
+
+/* Private workqueue — defined in zg01_usb.c */
+extern struct workqueue_struct *zg01_wq;
 
 int zg01_create_pcm(struct zg01_dev *dev);
 int zg01_set_streaming_interface(struct zg01_dev *dev, int interface, int alt_setting);

@@ -6,13 +6,6 @@
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
 
-/* Minimal delayed work handler placeholder. Detailed deferred start logic
- * can be implemented later; this avoids undefined symbol at build time. */
-static void zg01_pcm_start_work(struct work_struct *work)
-{
-    pr_info("zg01_pcm: delayed start work executed (placeholder)\n");
-}
-
 /* Audio streaming parameters based on USB capture analysis */
 /* Each URB contains 32 ISO descriptors of 240 bytes = 7680 bytes USB data */
 /* Each ISO descriptor contains 6 audio frames = 192 frames per URB */
@@ -101,8 +94,8 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
     }
     dev->last_open_jiffies = now;
     
-    runtime->hw.info = SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
-                       SNDRV_PCM_INFO_BLOCK_TRANSFER;
+    runtime->hw.info = SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_MMAP_VALID |
+                       SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_BLOCK_TRANSFER;
 
     runtime->hw.formats = SNDRV_PCM_FMTBIT_S32_LE;  /* 32-bit samples (device uses lower 24 bits) */
         /* Default to 48kHz; voice channel may operate at 16kHz on some devices */
@@ -245,15 +238,13 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
          * usb_set_interface() kills active URBs, so we must avoid it when other channels are active. */
         
         /* Check if Game channel is streaming via global device pointer */
-        struct zg01_dev **game_dev_ptr = (struct zg01_dev **)__symbol_get("game_dev");
         int game_urbs = 0;
         bool game_streaming = false;
-        
-        if (game_dev_ptr && *game_dev_ptr) {
-            game_urbs = (*game_dev_ptr)->active_urbs_game;
+
+        if (game_dev) {
+            game_urbs = game_dev->active_urbs_game;
             game_streaming = game_urbs > 0;
         }
-        if (game_dev_ptr) __symbol_put("game_dev");
         
         if (game_streaming) {
             pr_info("zg01_pcm: Voice Out open - SKIPPING interface setup (Game streaming with %d URBs)\n",
@@ -401,6 +392,8 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
         }
     }
     
+    if (dev->open_count > 0)
+        dev->open_count--;
     mutex_unlock(&dev->pcm_mutex);
     return 0;
 }
@@ -435,8 +428,7 @@ static int zg01_pcm_hw_params(struct snd_pcm_substream *substream,
     /* Skip GET_CUR request during hw_params - causes "transfer buffer on stack" warning
      * and is unreliable during device probing. Rate validation happens in prepare function. */
     dev->current_rate = rate;
-    dev->rate_residual = 0;
-    
+
     if (channels != 2) {
         pr_warn("zg01_pcm: Unsupported channel count: %u\n", channels);
         return -EINVAL;
@@ -489,30 +481,31 @@ static int zg01_set_rate(struct zg01_dev *dev, int rate)
     
     /* 1. Early Vendor Reads (Initialization/State discovery) */
     /* Many Yamaha devices require these reads to move out of standby */
-    usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
+    pr_debug("zg01_pcm: vendor read 0x07 rc=%d\n",
+        usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
                     0x07, USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-                    0x0000, 0x0000, large_data, 3, 1000);
-    usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
+                    0x0000, 0x0000, large_data, 3, 1000));
+    pr_debug("zg01_pcm: vendor read 0x04 rc=%d\n",
+        usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
                     0x04, USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-                    0x0000, 0x0000, large_data, 1, 1000);
-    usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
+                    0x0000, 0x0000, large_data, 1, 1000));
+    pr_debug("zg01_pcm: vendor read 0x0a rc=%d\n",
+        usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
                     0x0a, USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-                    0x0000, 0x0000, large_data, 4, 1000);
-    usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
+                    0x0000, 0x0000, large_data, 4, 1000));
+    pr_debug("zg01_pcm: vendor read 0x0c/0x8000 rc=%d\n",
+        usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
                     0x0c, USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-                    0x8000, 0x0000, large_data, 72, 1000);
-    usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
+                    0x8000, 0x0000, large_data, 72, 1000));
+    pr_debug("zg01_pcm: vendor read 0x0c/0x0000 rc=%d\n",
+        usb_control_msg(dev->udev, usb_rcvctrlpipe(dev->udev, 0),
                     0x0c, USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-                    0x0000, 0x0000, large_data, 72, 1000);
+                    0x0000, 0x0000, large_data, 72, 1000));
 
     /* 2. Set Interfaces 1 and 2 to Alt 0 */
     pr_info("zg01_pcm: Resetting interfaces to Alt 0\n");
-    if (dev->udev) {
-        usb_set_interface(dev->udev, 1, 0);
-        usb_set_interface(dev->udev, 2, 0);
-    } else {
-        pr_warn("zg01_pcm: Skipping interface reset; missing udev\n");
-    }
+    usb_set_interface(dev->udev, 1, 0);
+    usb_set_interface(dev->udev, 2, 0);
 
     /* 3. Set UAC2 Rate on Clock Source 1 */
     data[0] = rate & 0xff;
@@ -548,8 +541,10 @@ static int zg01_set_rate(struct zg01_dev *dev, int rate)
                                          large_data, 4, 1000);
 
             if (verify_ret == 4) {
-                unsigned int ret_rate = large_data[0] | (large_data[1] << 8) |
-                                         (large_data[2] << 16) | (large_data[3] << 24);
+                unsigned int ret_rate = (u32)large_data[0] |
+                                        ((u32)large_data[1] << 8) |
+                                        ((u32)large_data[2] << 16) |
+                                        ((u32)large_data[3] << 24);
                 pr_info("zg01_pcm: GET_CUR reported rate: %u (requested %d)\n", ret_rate, rate);
                 /* Treat the device-reported rate as authoritative */
                 dev->current_rate = (int)ret_rate;
@@ -625,9 +620,6 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     int active_urbs_count;
     bool is_first_prepare = false;
     /* Declare streaming check variables at function start for C89 compliance */
-    struct zg01_dev **game_dev_ptr;
-    struct zg01_dev **voice_in_dev_ptr;
-    struct zg01_dev **voice_out_dev_ptr;
     bool game_streaming;
     bool voice_in_streaming;
     bool voice_out_streaming;
@@ -645,20 +637,12 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
             dev->channel_type, dev->game_initialized, dev->voice_initialized, dev->voice_out_initialized);
     
     /* CRITICAL: ALWAYS check if any other channel is streaming before ANY interface changes
-     * Magic Sequence resets Interface 1 and 2, which kills ALL active URBs!  
+     * Magic Sequence resets Interface 1 and 2, which kills ALL active URBs!
      * Must check this BEFORE looking at initialized flags, because each channel has separate dev struct */
-    game_dev_ptr = (struct zg01_dev **)__symbol_get("game_dev");
-    voice_in_dev_ptr = (struct zg01_dev **)__symbol_get("voice_in_dev");
-    voice_out_dev_ptr = (struct zg01_dev **)__symbol_get("voice_out_dev");
-    
-    game_streaming = (game_dev_ptr && *game_dev_ptr && (*game_dev_ptr)->active_urbs_game > 0);
-    voice_in_streaming = (voice_in_dev_ptr && *voice_in_dev_ptr && (*voice_in_dev_ptr)->active_urbs_voice > 0);
-    voice_out_streaming = (voice_out_dev_ptr && *voice_out_dev_ptr && (*voice_out_dev_ptr)->active_urbs_voice_out > 0);
+    game_streaming = (game_dev && game_dev->active_urbs_game > 0);
+    voice_in_streaming = (voice_in_dev && voice_in_dev->active_urbs_voice > 0);
+    voice_out_streaming = (voice_out_dev && voice_out_dev->active_urbs_voice_out > 0);
     any_channel_streaming = (game_streaming || voice_in_streaming || voice_out_streaming);
-    
-    if (game_dev_ptr) __symbol_put("game_dev");
-    if (voice_in_dev_ptr) __symbol_put("voice_in_dev");
-    if (voice_out_dev_ptr) __symbol_put("voice_out_dev");
     
     if (any_channel_streaming) {
         if (dev->channel_type == CHANNEL_TYPE_GAME) channel_name = "Game";
@@ -706,15 +690,15 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     
     /* Only do full initialization on first prepare */
     if (is_first_prepare) {
-        const char *channel_name;
-        if (dev->channel_type == CHANNEL_TYPE_GAME) channel_name = "Game";
-        else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) channel_name = "Voice In";
-        else channel_name = "Voice Out";
+        const char *ch_name;
+        if (dev->channel_type == CHANNEL_TYPE_GAME) ch_name = "Game";
+        else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) ch_name = "Voice In";
+        else ch_name = "Voice Out";
         
-        pr_info("zg01_pcm: First prepare for %s channel - running initialization\n", channel_name);
+        pr_info("zg01_pcm: First prepare for %s channel - running initialization\n", ch_name);
 
         /* Voice Out does NOT send SET_CUR control message according to USB capture */
-        if (dev->channel_type != 2) {
+        if (dev->channel_type != CHANNEL_TYPE_VOICE_OUT) {
             /* Game and Voice In: Prefer previously negotiated rate if available, otherwise request 48000 */
             if (dev->current_rate == 16000 || dev->current_rate == 48000) {
                 pr_info("zg01_pcm: Using existing current_rate=%d\n", dev->current_rate);
@@ -749,6 +733,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     }
     
 
+    active_urbs_count = zg01_get_active_urbs_count(dev);
     if (active_urbs_count == 0) {
         /* Only set interface if not already streaming - avoid disrupting active URBs */
         pr_debug("zg01_pcm: Switching Interface %d to Alt 1 for streaming\n", interface_num);
@@ -825,6 +810,14 @@ static void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
             usb_kill_urb(iso_urbs[i]);
         }
     }
+
+    /* Active URB count is now zero — update before freeing resources */
+    if (cw->channel_type == CHANNEL_TYPE_GAME)
+        dev->active_urbs_game = 0;
+    else if (cw->channel_type == CHANNEL_TYPE_VOICE_IN)
+        dev->active_urbs_voice = 0;
+    else
+        dev->active_urbs_voice_out = 0;
 
     /* Free all resources */
     for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
@@ -928,7 +921,7 @@ static void zg01_iso_callback(struct urb *urb)
     }
 
     /* Check if stream is still active before processing audio data */
-    if (runtime->status->state != SNDRV_PCM_STATE_RUNNING) {
+    if (!snd_pcm_running(substream)) {
         pr_debug("zg01_pcm: Stream not running, state: %d - sending silence\n", runtime->status->state);
         /* Send silence but keep URBs running */
         if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
@@ -960,6 +953,11 @@ static void zg01_iso_callback(struct urb *urb)
     if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
         /* PLAYBACK: Copy audio data FROM PCM buffer TO USB device WITH PADDING */
         unsigned int total_frames_processed = 0; /* Track frames processed in this URB */
+        unsigned int old_pos;
+
+        /* Acquire spinlock once for the entire URB — not once per packet */
+        spin_lock_irqsave(&dev->lock, flags);
+        old_pos = *pcm_pos;
 
         /* For playback, packet sizes are already set during URB initialization */
         /* Process each packet and copy audio data */
@@ -979,8 +977,6 @@ static void zg01_iso_callback(struct urb *urb)
             const unsigned int frames_per_packet = 6;
             
             if (pkt_len == 240) {
-                spin_lock_irqsave(&dev->lock, flags);
-
                 /* Get current HW position in frames - use the pcm_pos we already determined */
                 unsigned int hw_pos_frames = *pcm_pos;
                 
@@ -1052,19 +1048,18 @@ static void zg01_iso_callback(struct urb *urb)
                 }
 
                 total_frames_processed += frames_copied;
-
-                spin_unlock_irqrestore(&dev->lock, flags);
             }
         }
             
-            /* Update global position once per URB for all processed frames */
-            if (total_frames_processed > 0) {
-                spin_lock_irqsave(&dev->lock, flags);
-                *pcm_pos += total_frames_processed;
-                if (period_size > 0 && (*pcm_pos % period_size) == 0)
-                    period_elapsed = true;
-                spin_unlock_irqrestore(&dev->lock, flags);
-            }
+        /* Update global position once for all processed frames in this URB */
+        if (total_frames_processed > 0) {
+            *pcm_pos += total_frames_processed;
+            /* Period elapsed if we crossed a period boundary (quotient changed) */
+            if (period_size > 0 &&
+                (*pcm_pos / period_size) != (old_pos / period_size))
+                period_elapsed = true;
+        }
+        spin_unlock_irqrestore(&dev->lock, flags);
         } else {
             /* CAPTURE: Copy audio data FROM USB device TO PCM buffer */
             for (i = 0; i < urb->number_of_packets; i++) {
@@ -1072,8 +1067,10 @@ static void zg01_iso_callback(struct urb *urb)
                 unsigned int pkt_len;
 
                 pkt_len = urb->iso_frame_desc[i].actual_length;
-                if (pkt_len != 108) /* Voice channel expects 108 bytes per packet */
+                if (pkt_len != 108) { /* Voice channel expects 108 bytes per packet */
+                    pr_debug("zg01_pcm: unexpected capture packet size %u\n", pkt_len);
                     continue;
+                }
 
                 pkt_buf = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
                 
@@ -1088,8 +1085,10 @@ static void zg01_iso_callback(struct urb *urb)
                     const unsigned int usb_frame_size = 16;
                     const unsigned int frames_per_packet = 6;
                     unsigned int buffer_bytes = runtime->buffer_size * bytes_per_frame;
+                    unsigned int old_pos_cap;
 
                     spin_lock_irqsave(&dev->lock, flags);
+                    old_pos_cap = *pcm_pos;
 
                     unsigned int write_frame = (*pcm_pos) % runtime->buffer_size;
                     unsigned int write_byte_pos = write_frame * bytes_per_frame;
@@ -1097,32 +1096,19 @@ static void zg01_iso_callback(struct urb *urb)
 
                     for (int f = 0; f < frames_per_packet; f++) {
                         unsigned char *usb_frame = pkt_buf + header_size + (f * usb_frame_size);
-                        int32_t sample_l, sample_r;
+                        unsigned char tmp[8]; /* Stage both samples before writing */
                         
-                        /* Extract samples (already in S32_LE format, no shift needed for voice) */
-                        memcpy(&sample_l, usb_frame, 4);      /* Left at offset 0 */
-                        memcpy(&sample_r, usb_frame + 4, 4);  /* Right at offset 4 */
+                        /* Extract samples into staging buffer */
+                        memcpy(tmp, usb_frame, 8);
 
-                        /* Write to DMA buffer */
+                        /* Write to DMA buffer, handling wraparound safely */
                         if (write_byte_pos + bytes_per_frame <= buffer_bytes) {
-                            memcpy(pcm_buf + write_byte_pos, &sample_l, 4);
-                            memcpy(pcm_buf + write_byte_pos + 4, &sample_r, 4);
+                            memcpy(pcm_buf + write_byte_pos, tmp, 8);
                         } else {
-                            /* Handle wraparound */
+                            /* Wraparound: split copy using the staged tmp buffer */
                             unsigned int first_part = buffer_bytes - write_byte_pos;
-                            if (first_part >= 4) {
-                                memcpy(pcm_buf + write_byte_pos, &sample_l, 4);
-                                if (first_part >= 8) {
-                                    memcpy(pcm_buf + write_byte_pos + 4, &sample_r, 4);
-                                } else {
-                                    memcpy(pcm_buf + write_byte_pos + 4, &sample_r, first_part - 4);
-                                    memcpy(pcm_buf, ((unsigned char*)&sample_r) + (first_part - 4), 8 - first_part);
-                                }
-                            } else {
-                                memcpy(pcm_buf + write_byte_pos, &sample_l, first_part);
-                                memcpy(pcm_buf, ((unsigned char*)&sample_l) + first_part, 4 - first_part);
-                                memcpy(pcm_buf + (4 - first_part), &sample_r, 4);
-                            }
+                            memcpy(pcm_buf + write_byte_pos, tmp, first_part);
+                            memcpy(pcm_buf, tmp + first_part, 8 - first_part);
                         }
 
                         frames_written++;
@@ -1131,7 +1117,9 @@ static void zg01_iso_callback(struct urb *urb)
                     }
 
                     *pcm_pos += frames_written;
-                    if (period_size > 0 && ((*pcm_pos % period_size) == 0))
+                    /* Period elapsed if quotient changed */
+                    if (period_size > 0 &&
+                        (*pcm_pos / period_size) != (old_pos_cap / period_size))
                         period_elapsed = true;
 
                     spin_unlock_irqrestore(&dev->lock, flags);
@@ -1149,6 +1137,7 @@ resubmit:
     /* Resubmit URB to continue streaming until TRIGGER_STOP explicitly stops URBs */
     /* Reset all frame descriptors for next transfer */
     for (i = 0; i < urb->number_of_packets; i++) {
+        WARN_ON(urb->iso_frame_desc[i].length > urb->transfer_buffer_length);
         urb->iso_frame_desc[i].status = 0;
         urb->iso_frame_desc[i].actual_length = 0;
     }
@@ -1157,14 +1146,15 @@ resubmit:
     if (resubmit_ret < 0) {
         pr_warn("zg01_pcm: Failed to resubmit URB: %d\n", resubmit_ret);
         /* Only notify ALSA if stream was running */
-        if (substream && runtime && runtime->status->state == SNDRV_PCM_STATE_RUNNING) {
+        if (substream && runtime && snd_pcm_running(substream)) {
+            unsigned long lock_flags;
             pr_info("zg01_pcm: Stopping stream due to URB resubmission failure\n");
+            snd_pcm_stream_lock_irqsave(substream, lock_flags);
             snd_pcm_stop_xrun(substream);
+            snd_pcm_stream_unlock_irqrestore(substream, lock_flags);
         }
     }
 }
-
-void zg01_pcm_start_work_fn(struct work_struct *work);
 
 /* Helper function to start streaming with multiple URBs */
 static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *substream)
@@ -1258,8 +1248,8 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
             goto cleanup_urbs;
         }
 
-        /* Allocate coherent buffer - try GFP_KERNEL first for xHCI compatibility */
-        iso_buffers[urb_idx] = kmalloc(iso_pkts * iso_pkt_size, GFP_KERNEL | GFP_DMA);
+        /* Allocate coherent buffer - GFP_KERNEL is sufficient for xHCI */
+        iso_buffers[urb_idx] = kmalloc(iso_pkts * iso_pkt_size, GFP_KERNEL);
         if (!iso_buffers[urb_idx]) {
             usb_free_urb(iso_urbs[urb_idx]);
             iso_urbs[urb_idx] = NULL;
@@ -1327,8 +1317,8 @@ cleanup_submitted_urbs:
     }
 
 cleanup_urbs:
-    /* Clean up only the URBs we actually allocated (up to urb_idx) */
-    for (j = 0; j <= urb_idx && j < MAX_URBS_PER_CHANNEL; j++) {
+    /* Clean up only the URBs we actually allocated (up to but not including urb_idx) */
+    for (j = 0; j < urb_idx && j < MAX_URBS_PER_CHANNEL; j++) {
         if (iso_buffers[j]) {
             kfree(iso_buffers[j]);
             iso_buffers[j] = NULL;
@@ -1395,15 +1385,10 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
         INIT_WORK(&cw->work, zg01_cleanup_multi_urb_work_fn);
         cw->dev = dev;
         cw->channel_type = dev->channel_type;
-        
-        if (!queue_work(system_wq, &cw->work)) {
-            pr_warn("zg01_pcm: Failed to queue multi-URB cleanup work\n");
-            kfree(cw);
-            /* Fallback - just unlink, don't try to kill/free in atomic context */
-        }
+        /* queue_work returns false if already queued — that is not an error */
+        queue_work(zg01_wq, &cw->work);
     }
     
-    *active_urbs = 0;
     pr_info("zg01_pcm: URBs unlinked, cleanup deferred\n");
 }
 
@@ -1491,13 +1476,14 @@ static snd_pcm_uframes_t zg01_pcm_pointer(struct snd_pcm_substream *substream)
     struct zg01_dev *dev = snd_pcm_substream_chip(substream);
     struct snd_pcm_runtime *runtime = substream->runtime;
     unsigned long pos;
+    unsigned long flags;
 
     if (!dev) {
         pr_err("zg01_pcm: No device structure available in pointer\n");
         return 0;
     }
 
-    spin_lock(&dev->lock);
+    spin_lock_irqsave(&dev->lock, flags);
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
         pos = dev->pcm_pos_game;
     } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
@@ -1505,7 +1491,7 @@ static snd_pcm_uframes_t zg01_pcm_pointer(struct snd_pcm_substream *substream)
     } else {
         pos = dev->pcm_pos_voice_out;
     }
-    spin_unlock(&dev->lock);
+    spin_unlock_irqrestore(&dev->lock, flags);
 
     /* pos is in frames, return position within buffer (also in frames) */
     return pos % runtime->buffer_size;
@@ -1551,16 +1537,6 @@ int zg01_create_pcm(struct zg01_dev *dev)
         return 0;
     }
 
-    /* Channel type should already be set by probe function, but set defaults if not */
-    if (dev->channel_type < 0) {
-        /* Set channel type based on interface number (legacy fallback) */
-        if (iface_num == 1) {
-            dev->channel_type = CHANNEL_TYPE_GAME; /* Game channel */
-        } else {
-            dev->channel_type = CHANNEL_TYPE_VOICE_IN; /* Voice In channel */  
-        }
-    }
-    
     /* Set channel-specific parameters based on channel type */
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
         channel_name = "Yamaha ZG01 Game PCM";
@@ -1620,21 +1596,11 @@ int zg01_create_pcm(struct zg01_dev *dev)
 
     snd_pcm_set_managed_buffer_all(pcm->instance,
                                   SNDRV_DMA_TYPE_CONTINUOUS, NULL,
-                                  buffer_size, buffer_size);
-
-    /* Initialize deferred start work and pending flags */
-    INIT_DELAYED_WORK(&dev->start_work_game, zg01_pcm_start_work);
-    INIT_DELAYED_WORK(&dev->start_work_voice, zg01_pcm_start_work);
-    INIT_DELAYED_WORK(&dev->start_work_voice_out, zg01_pcm_start_work);
-    dev->start_pending_game = false;
-    dev->start_pending_voice = false;
-    dev->start_pending_voice_out = false;
+                                  buffer_size / 8, buffer_size);
 
     return 0;
 }
 
-EXPORT_SYMBOL_GPL(zg01_create_pcm);
-
-MODULE_AUTHOR("Your Name");
+MODULE_AUTHOR("Yamaha ZG01 Driver Contributors");
 MODULE_DESCRIPTION("Yamaha ZG01 USB Audio Driver - PCM Interface");
 MODULE_LICENSE("GPL");

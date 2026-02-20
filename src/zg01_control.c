@@ -21,13 +21,6 @@ int zg01_init_control(struct zg01_dev *dev)
         return -ENODEV;
     }
 
-    /* Only initialize device-level controls on interface 0 */
-    int iface_num = dev->interface->cur_altsetting->desc.bInterfaceNumber;
-    if (iface_num != 0) {
-        pr_info("zg01_control: Skipping device init on interface %d\n", iface_num);
-        return 0;
-    }
-
     /* Allocate DMA-coherent buffer for USB control message */
     buf = kmalloc(256, GFP_KERNEL);
     if (!buf) {
@@ -60,15 +53,11 @@ int zg01_init_control(struct zg01_dev *dev)
         } else {
             pr_warn("zg01_control: Unexpected ZG01 init response\n");
         }
+    } else {
+        pr_debug("zg01_control: short response (%d bytes)\n", ret);
     }
 
     kfree(buf);
 
     return 0;
 }
-
-EXPORT_SYMBOL_GPL(zg01_init_control);
-
-MODULE_AUTHOR("Your Name");
-MODULE_DESCRIPTION("Yamaha ZG01 USB Audio Driver - Control Interface");
-MODULE_LICENSE("GPL");
