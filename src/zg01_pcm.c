@@ -27,6 +27,7 @@
 /* Forward declarations */
 static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *substream);
 static void zg01_stop_streaming(struct zg01_dev *dev);
+static void zg01_iso_callback(struct urb *urb);
 
 /* Helper function to get active URB count based on channel type */
 static inline int zg01_get_active_urbs_count(struct zg01_dev *dev)
@@ -95,7 +96,8 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
     dev->last_open_jiffies = now;
     
     runtime->hw.info = SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_MMAP_VALID |
-                       SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_BLOCK_TRANSFER;
+                       SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_BLOCK_TRANSFER |
+                       SNDRV_PCM_INFO_BATCH;
 
     runtime->hw.formats = SNDRV_PCM_FMTBIT_S32_LE;  /* 32-bit samples (device uses lower 24 bits) */
         /* Default to 48kHz; voice channel may operate at 16kHz on some devices */
@@ -366,13 +368,16 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
         cancel_work_sync(&dev->cleanup_work_voice_out);
     }
     
+    unsigned long flags;
     mutex_lock(&dev->pcm_mutex);
     
-    /* Clear channel state */
+    /* Clear channel state with spinlock protection for substream pointer */
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
         dev->game_channel_active = false;
         /* Don't reset game_initialized - keep device initialized across opens */
+        spin_lock_irqsave(&dev->lock, flags);
         dev->substream_game = NULL;
+        spin_unlock_irqrestore(&dev->lock, flags);
         /* Reduce logging for rapid probe cycles */
         if (dev->open_count <= 2) {
             pr_info("zg01_pcm: Game channel closed\n");
@@ -382,7 +387,9 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
     } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
         dev->voice_channel_active = false;
         /* Don't reset voice_initialized - keep device initialized across opens */
+        spin_lock_irqsave(&dev->lock, flags);
         dev->substream_voice = NULL;
+        spin_unlock_irqrestore(&dev->lock, flags);
         /* Reduce logging for rapid probe cycles */
         if (dev->open_count <= 2) {
             pr_info("zg01_pcm: Voice In channel closed\n");
@@ -392,7 +399,9 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
     } else {
         dev->voice_out_channel_active = false;
         /* Don't reset voice_out_initialized - keep device initialized across opens */
+        spin_lock_irqsave(&dev->lock, flags);
         dev->substream_voice_out = NULL; /* Voice Out uses dedicated substream pointer */
+        spin_unlock_irqrestore(&dev->lock, flags);
         /* Reduce logging for rapid probe cycles */
         if (dev->open_count <= 2) {
             pr_info("zg01_pcm: Voice Out channel closed\n");
@@ -463,6 +472,9 @@ static int zg01_pcm_hw_params(struct snd_pcm_substream *substream,
 static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
 {
     struct zg01_dev *dev = snd_pcm_substream_chip(substream);
+    struct urb **iso_urbs;
+    unsigned char **iso_buffers;
+    int i;
     
     if (!dev) {
         return 0;
@@ -476,6 +488,32 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
     } else {
         cancel_work_sync(&dev->cleanup_work_voice_out);
     }
+    
+    /* Free pre-allocated URBs and buffers */
+    if (dev->channel_type == CHANNEL_TYPE_GAME) {
+        iso_urbs = dev->iso_urbs_game;
+        iso_buffers = dev->iso_buffers_game;
+    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+        iso_urbs = dev->iso_urbs_voice;
+        iso_buffers = dev->iso_buffers_voice;
+    } else {
+        iso_urbs = dev->iso_urbs_voice_out;
+        iso_buffers = dev->iso_buffers_voice_out;
+    }
+    
+    /* Free all resources */
+    for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
+        if (iso_buffers[i]) {
+            kfree(iso_buffers[i]);
+            iso_buffers[i] = NULL;
+        }
+        if (iso_urbs[i]) {
+            usb_free_urb(iso_urbs[i]);
+            iso_urbs[i] = NULL;
+        }
+    }
+    
+    pr_info("zg01_pcm: Freed pre-allocated URBs in hw_free\n");
     
     return 0;
 }
@@ -649,6 +687,14 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     bool voice_out_streaming;
     bool any_channel_streaming;
     const char *channel_name;
+    /* URB allocation variables */
+    int iso_pkts, iso_pkt_size;
+    unsigned int endpoint;
+    struct urb **iso_urbs;
+    unsigned char **iso_buffers;
+    dma_addr_t *iso_dmas;
+    int urb_idx, i;
+    bool is_playback = (substream->stream == SNDRV_PCM_STREAM_PLAYBACK);
     
     /* Determine interface number based on channel type */
     if (dev->channel_type == CHANNEL_TYPE_GAME || dev->channel_type == CHANNEL_TYPE_VOICE_OUT) {
@@ -688,7 +734,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
         
         /* Return early to avoid ANY usb_set_interface() calls that would kill active URBs */
         dev->current_rate = 48000;
-        return 0;
+        goto allocate_urbs; /* Still need to allocate URBs if not done yet */
     }
     
     /* Check if this is the first prepare (device needs initialization) */
@@ -781,7 +827,106 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
         }
     }
     
+allocate_urbs:
+    /* Pre-allocate URBs and buffers for atomic trigger context */
+    /* Select parameters based on channel type */
+    if (dev->channel_type == CHANNEL_TYPE_GAME) {
+        iso_pkts = ISO_PKTS_GAME;
+        iso_pkt_size = ISO_PKT_SIZE_GAME;
+        endpoint = ZG01_EP_GAME_OUT;
+        iso_urbs = dev->iso_urbs_game;
+        iso_buffers = dev->iso_buffers_game;
+        iso_dmas = dev->iso_dmas_game;
+    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+        iso_pkts = ISO_PKTS_VOICE;
+        iso_pkt_size = ISO_PKT_SIZE_VOICE;
+        endpoint = ZG01_EP_VOICE_IN;
+        iso_urbs = dev->iso_urbs_voice;
+        iso_buffers = dev->iso_buffers_voice;
+        iso_dmas = dev->iso_dmas_voice;
+    } else {
+        iso_pkts = ISO_PKTS_GAME;
+        iso_pkt_size = 240; /* Voice Out uses 240-byte packets */
+        endpoint = ZG01_EP_GAME_OUT;
+        iso_urbs = dev->iso_urbs_voice_out;
+        iso_buffers = dev->iso_buffers_voice_out;
+        iso_dmas = dev->iso_dmas_voice_out;
+    }
+    
+    /* Check if URBs already allocated (prepare called twice) */
+    if (iso_urbs[0]) {
+        pr_debug("zg01_pcm: URBs already allocated, skipping allocation\n");
+        return 0;
+    }
+    
+    pr_info("zg01_pcm: Allocating %d URBs (%d packets × %d bytes each)\n",
+            MAX_URBS_PER_CHANNEL, iso_pkts, iso_pkt_size);
+    
+    /* Allocate and prepare multiple URBs for smooth streaming */
+    for (urb_idx = 0; urb_idx < MAX_URBS_PER_CHANNEL; urb_idx++) {
+        /* Allocate URB - CAN SLEEP, use GFP_KERNEL */
+        iso_urbs[urb_idx] = usb_alloc_urb(iso_pkts, GFP_KERNEL);
+        if (!iso_urbs[urb_idx]) {
+            ret = -ENOMEM;
+            goto cleanup_urbs;
+        }
+
+        /* Allocate buffer - CAN SLEEP, use GFP_KERNEL */
+        iso_buffers[urb_idx] = kmalloc(iso_pkts * iso_pkt_size, GFP_KERNEL);
+        if (!iso_buffers[urb_idx]) {
+            usb_free_urb(iso_urbs[urb_idx]);
+            iso_urbs[urb_idx] = NULL;
+            ret = -ENOMEM;
+            goto cleanup_urbs;
+        }
+        /* For kmalloc'd memory, we don't have a separate DMA address */
+        iso_dmas[urb_idx] = 0;
+
+        /* Configure URB */
+        iso_urbs[urb_idx]->dev = dev->udev;
+        if (endpoint & USB_DIR_IN) {
+            iso_urbs[urb_idx]->pipe = usb_rcvisocpipe(dev->udev, endpoint & 0x0F);
+        } else {
+            iso_urbs[urb_idx]->pipe = usb_sndisocpipe(dev->udev, endpoint & 0x0F);
+        }
+        iso_urbs[urb_idx]->transfer_buffer = iso_buffers[urb_idx];
+        iso_urbs[urb_idx]->transfer_buffer_length = iso_pkts * iso_pkt_size;
+        iso_urbs[urb_idx]->complete = zg01_iso_callback;
+        iso_urbs[urb_idx]->context = dev;
+        iso_urbs[urb_idx]->interval = 1;
+        iso_urbs[urb_idx]->start_frame = -1;
+        iso_urbs[urb_idx]->number_of_packets = iso_pkts;
+        iso_urbs[urb_idx]->transfer_flags = URB_ISO_ASAP;
+
+        /* Setup isochronous frame descriptors */
+        for (i = 0; i < iso_pkts; i++) {
+            iso_urbs[urb_idx]->iso_frame_desc[i].offset = i * iso_pkt_size;
+            iso_urbs[urb_idx]->iso_frame_desc[i].length = iso_pkt_size;
+        }
+
+        /* For playback, pre-fill with silence */
+        if (is_playback) {
+            memset(iso_buffers[urb_idx], 0, iso_pkts * iso_pkt_size);
+        }
+    }
+    
+    pr_info("zg01_pcm: Successfully pre-allocated %d URBs\n", MAX_URBS_PER_CHANNEL);
     return 0;
+
+cleanup_urbs:
+    /* Clean up partially allocated URBs */
+    pr_err("zg01_pcm: URB allocation failed, cleaning up\n");
+    for (i = 0; i < urb_idx && i < MAX_URBS_PER_CHANNEL; i++) {
+        if (iso_buffers[i]) {
+            kfree(iso_buffers[i]);
+            iso_buffers[i] = NULL;
+        }
+        if (iso_urbs[i]) {
+            usb_free_urb(iso_urbs[i]);
+            iso_urbs[i] = NULL;
+        }
+    }
+    return ret;
 }
 
 /* Forward declaration for cleanup work function */
@@ -1187,13 +1332,9 @@ resubmit:
 static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *substream)
 {
     int ret = 0;
-    int iso_pkts, iso_pkt_size;
-    unsigned int endpoint;
     struct urb **iso_urbs;
-    unsigned char **iso_buffers;
-    dma_addr_t *iso_dmas;
     int *active_urbs;
-    int urb_idx, i, j;
+    int urb_idx, j;
     bool is_game_channel = (dev->channel_type == CHANNEL_TYPE_GAME);
     bool is_voice_in_channel = (dev->channel_type == CHANNEL_TYPE_VOICE_IN);
 
@@ -1205,16 +1346,10 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
             return -EBUSY;
         }
         
-        iso_pkts = ISO_PKTS_GAME;
-        iso_pkt_size = ISO_PKT_SIZE_GAME;
-        endpoint = ZG01_EP_GAME_OUT;
         iso_urbs = dev->iso_urbs_game;
-        iso_buffers = dev->iso_buffers_game;
-        iso_dmas = dev->iso_dmas_game;
         active_urbs = &dev->active_urbs_game;
         dev->substream_game = substream;
-        pr_info("zg01_pcm: Starting Game channel (EP 0x%02x, %d URBs, %d bytes each)\n", 
-                endpoint, MAX_URBS_PER_CHANNEL, iso_pkt_size);
+        pr_info("zg01_pcm: Starting Game channel streaming\n");
     } else if (is_voice_in_channel) {
         /* Double-check cleanup is complete */
         if (dev->cleanup_in_progress_voice) {
@@ -1222,12 +1357,7 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
             return -EBUSY;
         }
         
-        iso_pkts = ISO_PKTS_VOICE;
-        iso_pkt_size = ISO_PKT_SIZE_VOICE;
-        endpoint = ZG01_EP_VOICE_IN;
         iso_urbs = dev->iso_urbs_voice;
-        iso_buffers = dev->iso_buffers_voice;
-        iso_dmas = dev->iso_dmas_voice;
         active_urbs = &dev->active_urbs_voice;
         dev->substream_voice = substream;
         
@@ -1236,8 +1366,7 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
             pr_warn("zg01_pcm: Voice In channel only supports capture (IN endpoint)\n");
             return -ENODEV;
         }
-        pr_info("zg01_pcm: Starting Voice In channel (EP 0x%02x, %d URBs, %d bytes each)\n", 
-                endpoint, MAX_URBS_PER_CHANNEL, iso_pkt_size);
+        pr_info("zg01_pcm: Starting Voice In channel streaming\n");
     } else {
         /* Voice Out channel - uses same parameters as game */
         /* Double-check cleanup is complete */
@@ -1246,16 +1375,10 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
             return -EBUSY;
         }
         
-        iso_pkts = ISO_PKTS_GAME;
-        iso_pkt_size = 240; /* Voice Out uses 240-byte packets */
-        endpoint = ZG01_EP_GAME_OUT; /* Same endpoint as game */
         iso_urbs = dev->iso_urbs_voice_out;
-        iso_buffers = dev->iso_buffers_voice_out;
-        iso_dmas = dev->iso_dmas_voice_out;
         active_urbs = &dev->active_urbs_voice_out;
         dev->substream_voice_out = substream; /* CRITICAL: Voice Out needs its own substream */
-        pr_info("zg01_pcm: Starting Voice Out channel (EP 0x%02x, %d URBs, %d bytes each)\n", 
-                endpoint, MAX_URBS_PER_CHANNEL, iso_pkt_size);
+        pr_info("zg01_pcm: Starting Voice Out channel streaming\n");
     }
 
     /* Check if streaming is already active */
@@ -1264,71 +1387,27 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         return 0;  /* Return success since streaming is already running */
     }
 
-    *active_urbs = 0;
-
-    /* Allocate and prepare multiple URBs for smooth streaming */
-    for (urb_idx = 0; urb_idx < MAX_URBS_PER_CHANNEL; urb_idx++) {
-        /* Allocate URB */
-        iso_urbs[urb_idx] = usb_alloc_urb(iso_pkts, GFP_KERNEL);
-        if (!iso_urbs[urb_idx]) {
-            ret = -ENOMEM;
-            goto cleanup_urbs;
-        }
-
-        /* Allocate coherent buffer - GFP_KERNEL is sufficient for xHCI */
-        iso_buffers[urb_idx] = kmalloc(iso_pkts * iso_pkt_size, GFP_KERNEL);
-        if (!iso_buffers[urb_idx]) {
-            usb_free_urb(iso_urbs[urb_idx]);
-            iso_urbs[urb_idx] = NULL;
-            ret = -ENOMEM;
-            goto cleanup_urbs;
-        }
-        /* For kmalloc'd memory, we don't have a separate DMA address */
-        iso_dmas[urb_idx] = 0;
-
-        /* Configure URB */
-        iso_urbs[urb_idx]->dev = dev->udev;
-        if (endpoint & USB_DIR_IN) {
-            iso_urbs[urb_idx]->pipe = usb_rcvisocpipe(dev->udev, endpoint & 0x0F);
-        } else {
-            iso_urbs[urb_idx]->pipe = usb_sndisocpipe(dev->udev, endpoint & 0x0F);
-        }
-        iso_urbs[urb_idx]->transfer_buffer = iso_buffers[urb_idx];
-        iso_urbs[urb_idx]->transfer_buffer_length = iso_pkts * iso_pkt_size;
-        iso_urbs[urb_idx]->complete = zg01_iso_callback;
-        iso_urbs[urb_idx]->context = dev;
-        iso_urbs[urb_idx]->interval = 1;  /* Back to 1ms interval with 1 packet per URB */
-        iso_urbs[urb_idx]->start_frame = -1;
-        iso_urbs[urb_idx]->number_of_packets = iso_pkts;
-        iso_urbs[urb_idx]->transfer_flags = URB_ISO_ASAP;
-
-        /* Setup isochronous frame descriptors */
-        for (i = 0; i < iso_pkts; i++) {
-            iso_urbs[urb_idx]->iso_frame_desc[i].offset = i * iso_pkt_size;
-            iso_urbs[urb_idx]->iso_frame_desc[i].length = iso_pkt_size;
-        }
-
-        /* For playback, pre-fill with silence */
-        if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-            memset(iso_buffers[urb_idx], 0, iso_pkts * iso_pkt_size);
-        }
+    /* Verify URBs were pre-allocated in prepare() */
+    if (!iso_urbs[0]) {
+        pr_err("zg01_pcm: URBs not pre-allocated! Call prepare() first.\n");
+        return -ENOMEM;
     }
 
-    /* Submit all URBs */
+    *active_urbs = 0;
+
+    /* Submit all pre-allocated URBs with GFP_ATOMIC (atomic context safe) */
     for (urb_idx = 0; urb_idx < MAX_URBS_PER_CHANNEL; urb_idx++) {
-        ret = usb_submit_urb(iso_urbs[urb_idx], GFP_KERNEL);
-        if (ret) {
-            pr_err("zg01_pcm: Failed to submit URB %d: %d (EAGAIN=%d, ENODEV=%d, ENOMEM=%d)\n",
-                   urb_idx, ret, -EAGAIN, -ENODEV, -ENOMEM);
-            pr_err("zg01_pcm: URB details - EP: 0x%02x, interval: %d, num_packets: %d\n",
-                   usb_pipeendpoint(iso_urbs[urb_idx]->pipe),
-                   iso_urbs[urb_idx]->interval,
-                   iso_urbs[urb_idx]->number_of_packets);
+        if (!iso_urbs[urb_idx]) {
+            pr_err("zg01_pcm: URB %d not allocated!\n", urb_idx);
+            ret = -ENOMEM;
             goto cleanup_submitted_urbs;
         }
-         /* Log successful submission for debugging (limited info) */
-         pr_info("zg01_pcm: Submitted URB %d -> EP: 0x%02x, num_pkts: %d, pkt_size: %d\n",
-              urb_idx, usb_pipeendpoint(iso_urbs[urb_idx]->pipe), iso_urbs[urb_idx]->number_of_packets, iso_pkt_size);
+        
+        ret = usb_submit_urb(iso_urbs[urb_idx], GFP_ATOMIC);
+        if (ret) {
+            pr_err("zg01_pcm: Failed to submit URB %d: %d\n", urb_idx, ret);
+            goto cleanup_submitted_urbs;
+        }
         (*active_urbs)++;
     }
 
@@ -1337,22 +1416,10 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
 
 cleanup_submitted_urbs:
     /* Kill any already submitted URBs */
+    pr_err("zg01_pcm: Submission failed, killing %d submitted URBs\n", urb_idx);
     for (j = 0; j < urb_idx; j++) {
         if (iso_urbs[j]) {
             usb_kill_urb(iso_urbs[j]);
-        }
-    }
-
-cleanup_urbs:
-    /* Clean up only the URBs we actually allocated (up to but not including urb_idx) */
-    for (j = 0; j < urb_idx && j < MAX_URBS_PER_CHANNEL; j++) {
-        if (iso_buffers[j]) {
-            kfree(iso_buffers[j]);
-            iso_buffers[j] = NULL;
-        }
-        if (iso_urbs[j]) {
-            usb_free_urb(iso_urbs[j]);
-            iso_urbs[j] = NULL;
         }
     }
     *active_urbs = 0;
