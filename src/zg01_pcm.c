@@ -360,27 +360,19 @@ unlock:
 static int zg01_pcm_close(struct snd_pcm_substream *substream)
 {
     struct zg01_dev *dev = snd_pcm_substream_chip(substream);
+    unsigned long flags;
     
     if (!dev) {
         return 0;
     }
     
-    /* Stop continuous streaming */
-    zg01_stop_streaming(dev);
-    
-    /* Cancel any pending cleanup work to ensure it completes before clearing state */
-    if (dev->channel_type == CHANNEL_TYPE_GAME) {
-        cancel_work_sync(&dev->cleanup_work_game);
-    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
-        cancel_work_sync(&dev->cleanup_work_voice);
-    } else {
-        cancel_work_sync(&dev->cleanup_work_voice_out);
-    }
-    
-    unsigned long flags;
+    /* 1. Acquire mutex to atomically update channel state and stop URBs */
     mutex_lock(&dev->pcm_mutex);
     
-    /* Clear channel state with spinlock protection for substream pointer */
+    /* 2. Stop continuous streaming while holding mutex */
+    zg01_stop_streaming(dev);
+    
+    /* 3. Clear channel state with spinlock protection for substream pointer */
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
         dev->game_channel_active = false;
         /* Don't reset game_initialized - keep device initialized across opens */
@@ -421,7 +413,20 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
     
     if (dev->open_count > 0)
         dev->open_count--;
+    
+    /* 4. Release mutex BEFORE draining work queue */
     mutex_unlock(&dev->pcm_mutex);
+    
+    /* 5. CRITICAL: Cancel pending cleanup work OUTSIDE mutex to prevent deadlock */
+    /* Work function does NOT take pcm_mutex, but this ensures clean teardown ordering */
+    if (dev->channel_type == CHANNEL_TYPE_GAME) {
+        cancel_work_sync(&dev->cleanup_work_game);
+    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+        cancel_work_sync(&dev->cleanup_work_voice);
+    } else {
+        cancel_work_sync(&dev->cleanup_work_voice_out);
+    }
+    
     return 0;
 }
 
@@ -1485,10 +1490,12 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
     *cleanup_in_progress = true;
     spin_unlock_irqrestore(&dev->lock, flags);
 
-    /* First unlink all URBs (non-blocking) */
+    /* Kill all URBs synchronously - usb_kill_urb waits for callbacks to complete
+     * This guarantees no URB callbacks are running when this function returns,
+     * making it safe to free URB memory in subsequent cleanup work. */
     for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
         if (iso_urbs[i]) {
-            usb_unlink_urb(iso_urbs[i]);
+            usb_kill_urb(iso_urbs[i]);  /* Synchronous - waits for callback completion */
         }
     }
 
