@@ -9,8 +9,6 @@
 #include "zg01_pcm.h"
 #include "zg01_control.h"
 
-/* Forward declaration for cleanup work function defined in zg01_pcm.c */
-extern void zg01_cleanup_multi_urb_work_fn(struct work_struct *work);
 
 DEFINE_MUTEX(devices_mutex);  /* Non-static: accessed from zg01_pcm.c */
 
@@ -22,6 +20,15 @@ struct zg01_dev *voice_out_dev;
 /* Private workqueue — avoids flush_workqueue(system_wq) warning */
 struct workqueue_struct *zg01_wq;
 
+static void zg01_card_private_free(struct snd_card *card)
+{
+    struct zg01_dev *dev = card->private_data;
+
+    if (dev->udev) {
+        usb_put_dev(dev->udev);
+        dev->udev = NULL;
+    }
+}
 /*
  * zg01_create_one_card - allocate and register a single ALSA card for one
  * channel type.  Called by zg01_probe; devices_mutex must NOT be held on
@@ -63,6 +70,7 @@ static int zg01_create_one_card(struct usb_interface *interface,
     dev->card = card;
     dev->channel_type = channel_type;
     dev->udev = usb_get_dev(interface_to_usbdev(interface));
+    card->private_free = zg01_card_private_free;
     dev->interface = interface;
 
     spin_lock_init(&dev->lock);
@@ -83,9 +91,9 @@ static int zg01_create_one_card(struct usb_interface *interface,
     atomic_set(&dev->active_urbs_voice_out, 0);
 
     /* Initialize embedded cleanup work structs - prevents GFP_ATOMIC allocation failures */
-    INIT_WORK(&dev->cleanup_work_game, zg01_cleanup_multi_urb_work_fn);
-    INIT_WORK(&dev->cleanup_work_voice, zg01_cleanup_multi_urb_work_fn);
-    INIT_WORK(&dev->cleanup_work_voice_out, zg01_cleanup_multi_urb_work_fn);
+    INIT_WORK(&dev->cleanup_work_game, zg01_cleanup_work_game_fn);
+    INIT_WORK(&dev->cleanup_work_voice, zg01_cleanup_work_voice_fn);
+    INIT_WORK(&dev->cleanup_work_voice_out, zg01_cleanup_work_voice_out_fn);
 
     snd_card_set_dev(card, &interface->dev);
     strncpy(card->driver, "zg01_usb", sizeof(card->driver));
@@ -162,7 +170,6 @@ static int zg01_create_one_card(struct usb_interface *interface,
     return 0;
 
 err_free_card:
-    usb_put_dev(dev->udev);
     snd_card_free(card);
     return err;
 }
@@ -185,21 +192,23 @@ static int zg01_probe(struct usb_interface *interface,
          * Interface 1 hosts both Game (playback) and Voice Out (playback).
          * Create them in sequence — no recursion (USB-8).
          */
+        bool need_game, need_voice_out;
+
         mutex_lock(&devices_mutex);
-        if (game_dev && voice_out_dev) {
-            /* Both already created, nothing to do */
-            mutex_unlock(&devices_mutex);
-            return 0;
-        }
+        need_game      = (game_dev == NULL);
+        need_voice_out = (voice_out_dev == NULL);
         mutex_unlock(&devices_mutex);
 
-        if (!game_dev) {
+        if (!need_game && !need_voice_out)
+            return 0;
+
+        if (need_game) {
             err = zg01_create_one_card(interface, id, CHANNEL_TYPE_GAME);
             if (err)
                 return err;
         }
 
-        if (!voice_out_dev) {
+        if (need_voice_out) {
             err = zg01_create_one_card(interface, id, CHANNEL_TYPE_VOICE_OUT);
             if (err)
                 return err;
@@ -286,10 +295,9 @@ static void zg01_disconnect_one(struct zg01_dev *dev)
     if (dev->card) {
         snd_card_disconnect(dev->card);
         snd_card_free_when_closed(dev->card);
-}
+    }
 
-    /* USB device reference is released by ALSA when card is freed */
-    usb_put_dev(dev->udev);
+    /* USB device reference is released by ALSA when card is freed (via private_free) */
 }
 
 static void zg01_disconnect(struct usb_interface *interface)
@@ -359,10 +367,20 @@ static struct usb_driver zg01_driver = {
 
 static int __init zg01_init(void)
 {
+    int ret;
+
     zg01_wq = alloc_ordered_workqueue("zg01", WQ_MEM_RECLAIM);
     if (!zg01_wq)
         return -ENOMEM;
-    return usb_register(&zg01_driver);
+
+    ret = usb_register(&zg01_driver);
+    if (ret) {
+        destroy_workqueue(zg01_wq);
+        zg01_wq = NULL;
+        return ret;
+    }
+
+    return 0;
 }
 
 static void __exit zg01_exit(void)

@@ -957,45 +957,32 @@ cleanup_urbs:
     return ret;
 }
 
-/* Forward declaration for cleanup work function */
-void zg01_cleanup_multi_urb_work_fn(struct work_struct *work);
-
-/* Multi-URB cleanup function that can safely sleep */
-void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
+/* Internal helper — called by the channel-specific wrappers below */
+static void zg01_do_cleanup_urbs(struct zg01_dev *dev, int channel_type)
 {
-    struct zg01_dev *dev = container_of(work, struct zg01_dev, cleanup_work_game);
-    int channel_type;
     struct urb **iso_urbs;
     unsigned char **iso_buffers;
     dma_addr_t *iso_dmas;
     int iso_pkts, iso_pkt_size;
     int i;
-    /* Determine which channel type based on which work struct this is */
-    if (work == &dev->cleanup_work_game) {
-        channel_type = CHANNEL_TYPE_GAME;
-    } else if (work == &dev->cleanup_work_voice) {
-        channel_type = CHANNEL_TYPE_VOICE_IN;
-    } else {
-        channel_type = CHANNEL_TYPE_VOICE_OUT;
-    }
 
     if (channel_type == CHANNEL_TYPE_GAME) {
-        iso_urbs = dev->iso_urbs_game;
+        iso_urbs    = dev->iso_urbs_game;
         iso_buffers = dev->iso_buffers_game;
-        iso_dmas = dev->iso_dmas_game;
-        iso_pkts = ISO_PKTS_GAME;
+        iso_dmas    = dev->iso_dmas_game;
+        iso_pkts    = ISO_PKTS_GAME;
         iso_pkt_size = ISO_PKT_SIZE_GAME;
     } else if (channel_type == CHANNEL_TYPE_VOICE_IN) {
-        iso_urbs = dev->iso_urbs_voice;
+        iso_urbs    = dev->iso_urbs_voice;
         iso_buffers = dev->iso_buffers_voice;
-        iso_dmas = dev->iso_dmas_voice;
-        iso_pkts = ISO_PKTS_VOICE;
+        iso_dmas    = dev->iso_dmas_voice;
+        iso_pkts    = ISO_PKTS_VOICE;
         iso_pkt_size = ISO_PKT_SIZE_VOICE;
     } else {
-        iso_urbs = dev->iso_urbs_voice_out;
+        iso_urbs    = dev->iso_urbs_voice_out;
         iso_buffers = dev->iso_buffers_voice_out;
-        iso_dmas = dev->iso_dmas_voice_out;
-        iso_pkts = ISO_PKTS_GAME;
+        iso_dmas    = dev->iso_dmas_voice_out;
+        iso_pkts    = ISO_PKTS_GAME;
         iso_pkt_size = ISO_PKT_SIZE_GAME;
     }
 
@@ -1036,6 +1023,25 @@ void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
     }
 
     pr_info("zg01_pcm: Multi-URB cleanup completed\n");
+}
+
+/* Three separate work functions — each uses the correct container_of member */
+void zg01_cleanup_work_game_fn(struct work_struct *work)
+{
+    struct zg01_dev *dev = container_of(work, struct zg01_dev, cleanup_work_game);
+    zg01_do_cleanup_urbs(dev, CHANNEL_TYPE_GAME);
+}
+
+void zg01_cleanup_work_voice_fn(struct work_struct *work)
+{
+    struct zg01_dev *dev = container_of(work, struct zg01_dev, cleanup_work_voice);
+    zg01_do_cleanup_urbs(dev, CHANNEL_TYPE_VOICE_IN);
+}
+
+void zg01_cleanup_work_voice_out_fn(struct work_struct *work)
+{
+    struct zg01_dev *dev = container_of(work, struct zg01_dev, cleanup_work_voice_out);
+    zg01_do_cleanup_urbs(dev, CHANNEL_TYPE_VOICE_OUT);
 }
 
 static void zg01_iso_callback(struct urb *urb)
@@ -1126,7 +1132,7 @@ static void zg01_iso_callback(struct urb *urb)
     /* Check if stream is still active before processing audio data */
     if (!snd_pcm_running(substream)) {
         spin_unlock_irqrestore(&dev->lock, flags);
-        pr_debug("zg01_pcm: Stream not running, state: %d - sending silence\n", runtime->status->state);
+        pr_debug("zg01_pcm: Stream not running, sending silence\n");
         /* Send silence but keep URBs running */
         if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
             /* Fill output buffer with silence */
@@ -1343,7 +1349,9 @@ resubmit:
     /* Resubmit URB to continue streaming until TRIGGER_STOP explicitly stops URBs */
     /* Reset all frame descriptors for next transfer */
     for (i = 0; i < urb->number_of_packets; i++) {
-        WARN_ON(urb->iso_frame_desc[i].length > urb->transfer_buffer_length);
+        WARN_ON_ONCE(urb->iso_frame_desc[i].offset > urb->transfer_buffer_length ||
+                     urb->iso_frame_desc[i].length >
+                     urb->transfer_buffer_length - urb->iso_frame_desc[i].offset);
         urb->iso_frame_desc[i].status = 0;
         urb->iso_frame_desc[i].actual_length = 0;
     }
@@ -1492,6 +1500,7 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
     dma_addr_t *iso_dmas;
     bool *cleanup_in_progress;
     int i;
+    struct work_struct *cleanup_work;
     bool is_game_channel = (dev->channel_type == CHANNEL_TYPE_GAME);
     bool is_voice_in_channel = (dev->channel_type == CHANNEL_TYPE_VOICE_IN);
     unsigned long flags;
@@ -1530,7 +1539,6 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
     }
 
     /* Queue cleanup work - uses embedded work_struct (no allocation needed) */
-    struct work_struct *cleanup_work;
     if (is_game_channel) {
         cleanup_work = &dev->cleanup_work_game;
     } else if (is_voice_in_channel) {

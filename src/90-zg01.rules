@@ -45,25 +45,3 @@ SUBSYSTEM=="sound", KERNEL=="card*", ATTRS{id}=="zg01voice", \
   ENV{ID_MODEL_FROM_DATABASE}="Yamaha ZG01 Voice In", \
   ENV{SOUND_DESCRIPTION}="Yamaha ZG01 Voice In"
 
-
-# ============================================================================
-# Part 2: Device Naming (for PipeWire/PulseAudio)
-# ============================================================================
-
-# Set unique name for ZG01 Game channel (playback)
-SUBSYSTEM=="sound", KERNEL=="card*", ATTRS{id}=="zg01game", \
-  ENV{ID_MODEL}="ZG01_Game", \
-  ENV{ID_MODEL_FROM_DATABASE}="Yamaha ZG01 Game", \
-  ENV{SOUND_DESCRIPTION}="Yamaha ZG01 Game"
-
-# Set unique name for ZG01 Voice Out channel (playback)
-SUBSYSTEM=="sound", KERNEL=="card*", ATTRS{id}=="zg01voiceout", \
-  ENV{ID_MODEL}="ZG01_Voice_Out", \
-  ENV{ID_MODEL_FROM_DATABASE}="Yamaha ZG01 Voice Out", \
-  ENV{SOUND_DESCRIPTION}="Yamaha ZG01 Voice Out"
-
-# Set unique name for ZG01 Voice In channel (capture)
-SUBSYSTEM=="sound", KERNEL=="card*", ATTRS{id}=="zg01voice", \
-  ENV{ID_MODEL}="ZG01_Voice_In", \
-  ENV{ID_MODEL_FROM_DATABASE}="Yamaha ZG01 Voice In", \
-  ENV{SOUND_DESCRIPTION}="Yamaha ZG01 Voice In"

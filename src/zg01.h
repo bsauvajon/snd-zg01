@@ -35,7 +35,6 @@ struct zg01_dev {
     struct usb_device *udev;
     struct snd_card *card;
     struct usb_interface *interface;
-    int card_index;
 
     struct zg01_pcm pcm;
     struct zg01_control control;
@@ -112,6 +111,11 @@ extern struct workqueue_struct *zg01_wq;
 
 int zg01_create_pcm(struct zg01_dev *dev);
 int zg01_set_streaming_interface(struct zg01_dev *dev, int interface, int alt_setting);
+
+/* Cleanup work functions — defined in zg01_pcm.c, registered in zg01_usb.c */
+void zg01_cleanup_work_game_fn(struct work_struct *work);
+void zg01_cleanup_work_voice_fn(struct work_struct *work);
+void zg01_cleanup_work_voice_out_fn(struct work_struct *work);
 
 /* USB Hardware Discovery Functions */
 int zg01_discover_usb_config(struct zg01_dev *dev);
