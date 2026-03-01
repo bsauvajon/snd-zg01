@@ -1369,6 +1369,8 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
     struct urb **iso_urbs;
     atomic_t *active_urbs_ptr;
     int urb_idx, j;
+    int submitted_count = 0;
+    unsigned long flags;
     bool is_game_channel = (dev->channel_type == CHANNEL_TYPE_GAME);
     bool is_voice_in_channel = (dev->channel_type == CHANNEL_TYPE_VOICE_IN);
 
@@ -1382,7 +1384,6 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         
         iso_urbs = dev->iso_urbs_game;
         active_urbs_ptr = &dev->active_urbs_game;
-        dev->substream_game = substream;
         pr_info("zg01_pcm: Starting Game channel streaming\n");
     } else if (is_voice_in_channel) {
         /* Double-check cleanup is complete */
@@ -1393,7 +1394,6 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         
         iso_urbs = dev->iso_urbs_voice;
         active_urbs_ptr = &dev->active_urbs_voice;
-        dev->substream_voice = substream;
         
         /* Voice In channel only supports capture */
         if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
@@ -1411,13 +1411,22 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         
         iso_urbs = dev->iso_urbs_voice_out;
         active_urbs_ptr = &dev->active_urbs_voice_out;
-        dev->substream_voice_out = substream; /* CRITICAL: Voice Out needs its own substream */
         pr_info("zg01_pcm: Starting Voice Out channel streaming\n");
     }
 
     /* Check if streaming is already active */
     if (atomic_read(active_urbs_ptr) > 0) {
         pr_info("zg01_pcm: Streaming already active (%d URBs), skipping start\n", atomic_read(active_urbs_ptr));
+        /* Assign substream under spinlock protection even if already streaming */
+        spin_lock_irqsave(&dev->lock, flags);
+        if (is_game_channel) {
+            dev->substream_game = substream;
+        } else if (is_voice_in_channel) {
+            dev->substream_voice = substream;
+        } else {
+            dev->substream_voice_out = substream;
+        }
+        spin_unlock_irqrestore(&dev->lock, flags);
         return 0;  /* Return success since streaming is already running */
     }
 
@@ -1439,23 +1448,38 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         
         ret = usb_submit_urb(iso_urbs[urb_idx], GFP_ATOMIC);
         if (ret) {
-            pr_err("zg01_pcm: Failed to submit URB %d: %d\n", urb_idx, ret);
+            pr_err("zg01_pcm: Failed to submit URB %d: %d, cleaning up %d submitted URBs\n",
+                   urb_idx, ret, submitted_count);
             goto cleanup_submitted_urbs;
         }
         atomic_inc(active_urbs_ptr);
+        submitted_count++;
     }
+
+    /* Assign substream under spinlock protection AFTER successful URB submission */
+    spin_lock_irqsave(&dev->lock, flags);
+    if (is_game_channel) {
+        dev->substream_game = substream;
+    } else if (is_voice_in_channel) {
+        dev->substream_voice = substream;
+    } else {
+        dev->substream_voice_out = substream;
+    }
+    spin_unlock_irqrestore(&dev->lock, flags);
 
     pr_info("zg01_pcm: Successfully started streaming with %d URBs\n", atomic_read(active_urbs_ptr));
     return 0;
 
 cleanup_submitted_urbs:
-    /* Kill any already submitted URBs */
-    pr_err("zg01_pcm: Submission failed, killing %d submitted URBs\n", urb_idx);
-    for (j = 0; j < urb_idx; j++) {
+    /* Kill any already submitted URBs (synchronous - waits for callbacks) */
+    pr_err("zg01_pcm: Submission failed, killing %d submitted URBs\n", submitted_count);
+    for (j = 0; j < submitted_count; j++) {
         if (iso_urbs[j]) {
             usb_kill_urb(iso_urbs[j]);
         }
     }
+    
+    /* Reset atomic counter to zero */
     atomic_set(active_urbs_ptr, 0);
     return ret;
 }
