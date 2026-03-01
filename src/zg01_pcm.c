@@ -6,6 +6,9 @@
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
 
+/* devices_mutex protects global device pointers from concurrent probe/disconnect */
+extern struct mutex devices_mutex;
+
 /* Audio streaming parameters based on USB capture analysis */
 /* Each URB contains 32 ISO descriptors of 240 bytes = 7680 bytes USB data */
 /* Each ISO descriptor contains 6 audio frames = 192 frames per URB */
@@ -239,12 +242,18 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
          * CRITICAL: Check if Game is already streaming - if so, skip ALL interface changes!
          * usb_set_interface() kills active URBs, so we must avoid it when other channels are active. */
         
-        /* Check if Game channel is streaming via global device pointer */
+        /* Check if Game channel is streaming via global device pointer
+         * Protected by devices_mutex to prevent race with probe/disconnect */
         int game_urbs = 0;
         bool game_streaming = false;
+        struct zg01_dev *local_game_dev;
 
-        if (game_dev) {
-            game_urbs = atomic_read(&game_dev->active_urbs_game);
+        mutex_lock(&devices_mutex);
+        local_game_dev = game_dev;
+        mutex_unlock(&devices_mutex);
+
+        if (local_game_dev) {
+            game_urbs = atomic_read(&local_game_dev->active_urbs_game);
             game_streaming = game_urbs > 0;
         }
         
@@ -708,10 +717,21 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     
     /* CRITICAL: ALWAYS check if any other channel is streaming before ANY interface changes
      * Magic Sequence resets Interface 1 and 2, which kills ALL active URBs!
-     * Must check this BEFORE looking at initialized flags, because each channel has separate dev struct */
-    game_streaming = (game_dev && atomic_read(&game_dev->active_urbs_game) > 0);
-    voice_in_streaming = (voice_in_dev && atomic_read(&voice_in_dev->active_urbs_voice) > 0);
-    voice_out_streaming = (voice_out_dev && atomic_read(&voice_out_dev->active_urbs_voice_out) > 0);
+     * Must check this BEFORE looking at initialized flags, because each channel has separate dev struct
+     * Protected by devices_mutex to prevent race with probe/disconnect */
+    struct zg01_dev *local_game_dev;
+    struct zg01_dev *local_voice_in_dev;
+    struct zg01_dev *local_voice_out_dev;
+
+    mutex_lock(&devices_mutex);
+    local_game_dev = game_dev;
+    local_voice_in_dev = voice_in_dev;
+    local_voice_out_dev = voice_out_dev;
+    mutex_unlock(&devices_mutex);
+
+    game_streaming = (local_game_dev && atomic_read(&local_game_dev->active_urbs_game) > 0);
+    voice_in_streaming = (local_voice_in_dev && atomic_read(&local_voice_in_dev->active_urbs_voice) > 0);
+    voice_out_streaming = (local_voice_out_dev && atomic_read(&local_voice_out_dev->active_urbs_voice_out) > 0);
     any_channel_streaming = (game_streaming || voice_in_streaming || voice_out_streaming);
     
     if (any_channel_streaming) {

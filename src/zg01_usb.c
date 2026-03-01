@@ -12,7 +12,7 @@
 /* Forward declaration for cleanup work function defined in zg01_pcm.c */
 extern void zg01_cleanup_multi_urb_work_fn(struct work_struct *work);
 
-static DEFINE_MUTEX(devices_mutex);
+DEFINE_MUTEX(devices_mutex);  /* Non-static: accessed from zg01_pcm.c */
 
 /* Global device pointers — also declared extern in zg01.h for zg01_pcm.c */
 struct zg01_dev *game_dev;
@@ -78,6 +78,9 @@ static int zg01_create_one_card(struct usb_interface *interface,
     dev->cleanup_in_progress_voice = false;
     dev->cleanup_in_progress_voice_out = false;
     atomic_set(&dev->disconnecting, 0);
+    atomic_set(&dev->active_urbs_game, 0);
+    atomic_set(&dev->active_urbs_voice, 0);
+    atomic_set(&dev->active_urbs_voice_out, 0);
 
     /* Initialize embedded cleanup work structs - prevents GFP_ATOMIC allocation failures */
     INIT_WORK(&dev->cleanup_work_game, zg01_cleanup_multi_urb_work_fn);
