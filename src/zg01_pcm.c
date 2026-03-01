@@ -33,11 +33,11 @@ static void zg01_iso_callback(struct urb *urb);
 static inline int zg01_get_active_urbs_count(struct zg01_dev *dev)
 {
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
-        return dev->active_urbs_game;
+        return atomic_read(&dev->active_urbs_game);
     } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
-        return dev->active_urbs_voice;
+        return atomic_read(&dev->active_urbs_voice);
     } else {
-        return dev->active_urbs_voice_out;
+        return atomic_read(&dev->active_urbs_voice_out);
     }
 }
 
@@ -244,7 +244,7 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
         bool game_streaming = false;
 
         if (game_dev) {
-            game_urbs = game_dev->active_urbs_game;
+            game_urbs = atomic_read(&game_dev->active_urbs_game);
             game_streaming = game_urbs > 0;
         }
         
@@ -709,9 +709,9 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     /* CRITICAL: ALWAYS check if any other channel is streaming before ANY interface changes
      * Magic Sequence resets Interface 1 and 2, which kills ALL active URBs!
      * Must check this BEFORE looking at initialized flags, because each channel has separate dev struct */
-    game_streaming = (game_dev && game_dev->active_urbs_game > 0);
-    voice_in_streaming = (voice_in_dev && voice_in_dev->active_urbs_voice > 0);
-    voice_out_streaming = (voice_out_dev && voice_out_dev->active_urbs_voice_out > 0);
+    game_streaming = (game_dev && atomic_read(&game_dev->active_urbs_game) > 0);
+    voice_in_streaming = (voice_in_dev && atomic_read(&voice_in_dev->active_urbs_voice) > 0);
+    voice_out_streaming = (voice_out_dev && atomic_read(&voice_out_dev->active_urbs_voice_out) > 0);
     any_channel_streaming = (game_streaming || voice_in_streaming || voice_out_streaming);
     
     if (any_channel_streaming) {
@@ -980,11 +980,11 @@ void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
 
     /* Active URB count is now zero — update before freeing resources */
     if (channel_type == CHANNEL_TYPE_GAME)
-        dev->active_urbs_game = 0;
+        atomic_set(&dev->active_urbs_game, 0);
     else if (channel_type == CHANNEL_TYPE_VOICE_IN)
-        dev->active_urbs_voice = 0;
+        atomic_set(&dev->active_urbs_voice, 0);
     else
-        dev->active_urbs_voice_out = 0;
+        atomic_set(&dev->active_urbs_voice_out, 0);
 
     /* Free all resources */
     for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
@@ -1032,7 +1032,7 @@ static void zg01_iso_callback(struct urb *urb)
     }
 
     /* Check disconnecting flag - if USB disconnect started, stop resubmitting URBs */
-    if (dev->disconnecting) {
+    if (atomic_read(&dev->disconnecting)) {
         pr_debug("zg01_pcm: URB callback during disconnect, not resubmitting\n");
         return;
     }
@@ -1333,7 +1333,7 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
 {
     int ret = 0;
     struct urb **iso_urbs;
-    int *active_urbs;
+    atomic_t *active_urbs_ptr;
     int urb_idx, j;
     bool is_game_channel = (dev->channel_type == CHANNEL_TYPE_GAME);
     bool is_voice_in_channel = (dev->channel_type == CHANNEL_TYPE_VOICE_IN);
@@ -1347,7 +1347,7 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         }
         
         iso_urbs = dev->iso_urbs_game;
-        active_urbs = &dev->active_urbs_game;
+        active_urbs_ptr = &dev->active_urbs_game;
         dev->substream_game = substream;
         pr_info("zg01_pcm: Starting Game channel streaming\n");
     } else if (is_voice_in_channel) {
@@ -1358,7 +1358,7 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         }
         
         iso_urbs = dev->iso_urbs_voice;
-        active_urbs = &dev->active_urbs_voice;
+        active_urbs_ptr = &dev->active_urbs_voice;
         dev->substream_voice = substream;
         
         /* Voice In channel only supports capture */
@@ -1376,14 +1376,14 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         }
         
         iso_urbs = dev->iso_urbs_voice_out;
-        active_urbs = &dev->active_urbs_voice_out;
+        active_urbs_ptr = &dev->active_urbs_voice_out;
         dev->substream_voice_out = substream; /* CRITICAL: Voice Out needs its own substream */
         pr_info("zg01_pcm: Starting Voice Out channel streaming\n");
     }
 
     /* Check if streaming is already active */
-    if (*active_urbs > 0) {
-        pr_info("zg01_pcm: Streaming already active (%d URBs), skipping start\n", *active_urbs);
+    if (atomic_read(active_urbs_ptr) > 0) {
+        pr_info("zg01_pcm: Streaming already active (%d URBs), skipping start\n", atomic_read(active_urbs_ptr));
         return 0;  /* Return success since streaming is already running */
     }
 
@@ -1393,7 +1393,7 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         return -ENOMEM;
     }
 
-    *active_urbs = 0;
+    atomic_set(active_urbs_ptr, 0);
 
     /* Submit all pre-allocated URBs with GFP_ATOMIC (atomic context safe) */
     for (urb_idx = 0; urb_idx < MAX_URBS_PER_CHANNEL; urb_idx++) {
@@ -1408,10 +1408,10 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
             pr_err("zg01_pcm: Failed to submit URB %d: %d\n", urb_idx, ret);
             goto cleanup_submitted_urbs;
         }
-        (*active_urbs)++;
+        atomic_inc(active_urbs_ptr);
     }
 
-    pr_info("zg01_pcm: Successfully started streaming with %d URBs\n", *active_urbs);
+    pr_info("zg01_pcm: Successfully started streaming with %d URBs\n", atomic_read(active_urbs_ptr));
     return 0;
 
 cleanup_submitted_urbs:
@@ -1422,7 +1422,7 @@ cleanup_submitted_urbs:
             usb_kill_urb(iso_urbs[j]);
         }
     }
-    *active_urbs = 0;
+    atomic_set(active_urbs_ptr, 0);
     return ret;
 }
 
@@ -1432,7 +1432,6 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
     struct urb **iso_urbs;
     unsigned char **iso_buffers;
     dma_addr_t *iso_dmas;
-    int *active_urbs;
     bool *cleanup_in_progress;
     int i;
     bool is_game_channel = (dev->channel_type == CHANNEL_TYPE_GAME);
@@ -1443,21 +1442,18 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
         iso_urbs = dev->iso_urbs_game;
         iso_buffers = dev->iso_buffers_game;
         iso_dmas = dev->iso_dmas_game;
-        active_urbs = &dev->active_urbs_game;
         cleanup_in_progress = &dev->cleanup_in_progress_game;
         pr_info("zg01_pcm: Stopping Game channel\n");
     } else if (is_voice_in_channel) {
         iso_urbs = dev->iso_urbs_voice;
         iso_buffers = dev->iso_buffers_voice;
         iso_dmas = dev->iso_dmas_voice;
-        active_urbs = &dev->active_urbs_voice;
         cleanup_in_progress = &dev->cleanup_in_progress_voice;
         pr_info("zg01_pcm: Stopping Voice In channel\n");
     } else {
         iso_urbs = dev->iso_urbs_voice_out;
         iso_buffers = dev->iso_buffers_voice_out;
         iso_dmas = dev->iso_dmas_voice_out;
-        active_urbs = &dev->active_urbs_voice_out;
         cleanup_in_progress = &dev->cleanup_in_progress_voice_out;
         pr_info("zg01_pcm: Stopping Voice Out channel\n");
     }

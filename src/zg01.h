@@ -49,19 +49,19 @@ struct zg01_dev {
     struct urb *iso_urbs_game[MAX_URBS_PER_CHANNEL];
     unsigned char *iso_buffers_game[MAX_URBS_PER_CHANNEL];
     dma_addr_t iso_dmas_game[MAX_URBS_PER_CHANNEL];
-    int active_urbs_game;
+    atomic_t active_urbs_game;
     
     /* Voice channel (low bandwidth) - multiple URBs for stability */  
     struct urb *iso_urbs_voice[MAX_URBS_PER_CHANNEL];
     unsigned char *iso_buffers_voice[MAX_URBS_PER_CHANNEL];
     dma_addr_t iso_dmas_voice[MAX_URBS_PER_CHANNEL];
-    int active_urbs_voice;
+    atomic_t active_urbs_voice;
     
     /* Voice output channel (playback to voice output) - multiple URBs for stability */
     struct urb *iso_urbs_voice_out[MAX_URBS_PER_CHANNEL];
     unsigned char *iso_buffers_voice_out[MAX_URBS_PER_CHANNEL];
     dma_addr_t iso_dmas_voice_out[MAX_URBS_PER_CHANNEL];
-    int active_urbs_voice_out;
+    atomic_t active_urbs_voice_out;
     
     spinlock_t lock;
     struct mutex pcm_mutex; /* Protect concurrent PCM operations */
@@ -84,7 +84,7 @@ struct zg01_dev {
     bool cleanup_in_progress_game;
     bool cleanup_in_progress_voice;
     bool cleanup_in_progress_voice_out;
-    bool disconnecting;           /* Set when USB disconnect starts, prevents URB resubmission */
+    atomic_t disconnecting;           /* Set when USB disconnect starts, prevents URB resubmission */
 
     /* Embedded work structs for URB cleanup - prevents GFP_ATOMIC allocation failures */
     struct work_struct cleanup_work_game;

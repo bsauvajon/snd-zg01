@@ -77,7 +77,7 @@ static int zg01_create_one_card(struct usb_interface *interface,
     dev->cleanup_in_progress_game = false;
     dev->cleanup_in_progress_voice = false;
     dev->cleanup_in_progress_voice_out = false;
-    dev->disconnecting = false;
+    atomic_set(&dev->disconnecting, 0);
 
     /* Initialize embedded cleanup work structs - prevents GFP_ATOMIC allocation failures */
     INIT_WORK(&dev->cleanup_work_game, zg01_cleanup_multi_urb_work_fn);
@@ -232,7 +232,7 @@ static void zg01_disconnect_one(struct zg01_dev *dev)
         return;
 
     /* Set disconnecting flag to prevent URB resubmission (USB-10) */
-    dev->disconnecting = true;
+    atomic_set(&dev->disconnecting, 1);
 
     /*
      * Flush any pending deferred cleanup work before we inline-free
