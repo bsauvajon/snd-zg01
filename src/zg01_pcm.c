@@ -417,14 +417,20 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
     /* 4. Release mutex BEFORE draining work queue */
     mutex_unlock(&dev->pcm_mutex);
     
-    /* 5. CRITICAL: Cancel pending cleanup work OUTSIDE mutex to prevent deadlock */
-    /* Work function does NOT take pcm_mutex, but this ensures clean teardown ordering */
+    /* 5. CRITICAL: Flush pending cleanup work OUTSIDE mutex to prevent deadlock
+     *
+     * zg01_stop_streaming() sets cleanup_in_progress_* = true and queues
+     * cleanup_work_* to clear the flag and free URBs/buffers. Using
+     * cancel_work_sync() could cancel that queued work, leaving the
+     * cleanup_in_progress_* flag stuck true and leaking resources, which
+     * would block subsequent starts with -EBUSY. flush_work() instead waits
+     * for any pending work to complete without cancelling it. */
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
-        cancel_work_sync(&dev->cleanup_work_game);
+        flush_work(&dev->cleanup_work_game);
     } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
-        cancel_work_sync(&dev->cleanup_work_voice);
+        flush_work(&dev->cleanup_work_voice);
     } else {
-        cancel_work_sync(&dev->cleanup_work_voice_out);
+        flush_work(&dev->cleanup_work_voice_out);
     }
     
     return 0;
@@ -497,13 +503,16 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
     /* 1. STOP URBs first - prevents new callbacks from accessing memory we're about to free */
     zg01_stop_streaming(dev);
     
-    /* 2. DRAIN work queue - waits for any pending cleanup work to complete */
+    /* 2. DRAIN work queue - waits for any in-progress or pending cleanup work to complete.
+     * Use flush_work() not cancel_work_sync(): stop_streaming queued the work to clear
+     * cleanup_in_progress_* and free URBs. Cancelling it would leak resources and leave
+     * the flag stuck, blocking subsequent hw_params with -EBUSY. */
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
-        cancel_work_sync(&dev->cleanup_work_game);
+        flush_work(&dev->cleanup_work_game);
     } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
-        cancel_work_sync(&dev->cleanup_work_voice);
+        flush_work(&dev->cleanup_work_voice);
     } else {
-        cancel_work_sync(&dev->cleanup_work_voice_out);
+        flush_work(&dev->cleanup_work_voice_out);
     }
     
     /* Free pre-allocated URBs and buffers */
