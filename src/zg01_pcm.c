@@ -489,7 +489,10 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
         return 0;
     }
     
-    /* Cancel any pending cleanup work before freeing hw resources */
+    /* 1. STOP URBs first - prevents new callbacks from accessing memory we're about to free */
+    zg01_stop_streaming(dev);
+    
+    /* 2. DRAIN work queue - waits for any pending cleanup work to complete */
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
         cancel_work_sync(&dev->cleanup_work_game);
     } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
