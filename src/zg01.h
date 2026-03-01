@@ -85,6 +85,11 @@ struct zg01_dev {
     bool cleanup_in_progress_voice;
     bool cleanup_in_progress_voice_out;
     bool disconnecting;           /* Set when USB disconnect starts, prevents URB resubmission */
+
+    /* Embedded work structs for URB cleanup - prevents GFP_ATOMIC allocation failures */
+    struct work_struct cleanup_work_game;
+    struct work_struct cleanup_work_voice;
+    struct work_struct cleanup_work_voice_out;
     unsigned long last_trigger_jiffies;
     
     /* Trigger loop detection - per-device to avoid race conditions */

@@ -357,6 +357,15 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
     /* Stop continuous streaming */
     zg01_stop_streaming(dev);
     
+    /* Cancel any pending cleanup work to ensure it completes before clearing state */
+    if (dev->channel_type == CHANNEL_TYPE_GAME) {
+        cancel_work_sync(&dev->cleanup_work_game);
+    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+        cancel_work_sync(&dev->cleanup_work_voice);
+    } else {
+        cancel_work_sync(&dev->cleanup_work_voice_out);
+    }
+    
     mutex_lock(&dev->pcm_mutex);
     
     /* Clear channel state */
@@ -453,6 +462,21 @@ static int zg01_pcm_hw_params(struct snd_pcm_substream *substream,
 
 static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
 {
+    struct zg01_dev *dev = snd_pcm_substream_chip(substream);
+    
+    if (!dev) {
+        return 0;
+    }
+    
+    /* Cancel any pending cleanup work before freeing hw resources */
+    if (dev->channel_type == CHANNEL_TYPE_GAME) {
+        cancel_work_sync(&dev->cleanup_work_game);
+    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+        cancel_work_sync(&dev->cleanup_work_voice);
+    } else {
+        cancel_work_sync(&dev->cleanup_work_voice_out);
+    }
+    
     return 0;
 }
 
@@ -760,37 +784,35 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     return 0;
 }
 
-struct zg01_cleanup_work {
-    struct work_struct work;
-    struct urb *urb;
-    unsigned char *buf;
-    dma_addr_t dma;
-    struct usb_device *udev;
-    int total_size;
-    
-    /* For multi-URB cleanup */
-    struct zg01_dev *dev;
-    int channel_type; /* 0=game, 1=voice_in, 2=voice_out */
-};
+/* Forward declaration for cleanup work function */
+void zg01_cleanup_multi_urb_work_fn(struct work_struct *work);
 
 /* Multi-URB cleanup function that can safely sleep */
-static void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
+void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
 {
-    struct zg01_cleanup_work *cw = container_of(work, struct zg01_cleanup_work, work);
-    struct zg01_dev *dev = cw->dev;
+    struct zg01_dev *dev = container_of(work, struct zg01_dev, cleanup_work_game);
+    int channel_type;
     struct urb **iso_urbs;
     unsigned char **iso_buffers;
     dma_addr_t *iso_dmas;
     int iso_pkts, iso_pkt_size;
     int i;
+    /* Determine which channel type based on which work struct this is */
+    if (work == &dev->cleanup_work_game) {
+        channel_type = CHANNEL_TYPE_GAME;
+    } else if (work == &dev->cleanup_work_voice) {
+        channel_type = CHANNEL_TYPE_VOICE_IN;
+    } else {
+        channel_type = CHANNEL_TYPE_VOICE_OUT;
+    }
 
-    if (cw->channel_type == CHANNEL_TYPE_GAME) {
+    if (channel_type == CHANNEL_TYPE_GAME) {
         iso_urbs = dev->iso_urbs_game;
         iso_buffers = dev->iso_buffers_game;
         iso_dmas = dev->iso_dmas_game;
         iso_pkts = ISO_PKTS_GAME;
         iso_pkt_size = ISO_PKT_SIZE_GAME;
-    } else if (cw->channel_type == CHANNEL_TYPE_VOICE_IN) {
+    } else if (channel_type == CHANNEL_TYPE_VOICE_IN) {
         iso_urbs = dev->iso_urbs_voice;
         iso_buffers = dev->iso_buffers_voice;
         iso_dmas = dev->iso_dmas_voice;
@@ -812,9 +834,9 @@ static void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
     }
 
     /* Active URB count is now zero — update before freeing resources */
-    if (cw->channel_type == CHANNEL_TYPE_GAME)
+    if (channel_type == CHANNEL_TYPE_GAME)
         dev->active_urbs_game = 0;
-    else if (cw->channel_type == CHANNEL_TYPE_VOICE_IN)
+    else if (channel_type == CHANNEL_TYPE_VOICE_IN)
         dev->active_urbs_voice = 0;
     else
         dev->active_urbs_voice_out = 0;
@@ -832,16 +854,15 @@ static void zg01_cleanup_multi_urb_work_fn(struct work_struct *work)
     }
 
     /* Clear cleanup flag - new streams can now start */
-    if (cw->channel_type == CHANNEL_TYPE_GAME) {
+    if (channel_type == CHANNEL_TYPE_GAME) {
         dev->cleanup_in_progress_game = false;
-    } else if (cw->channel_type == CHANNEL_TYPE_VOICE_IN) {
+    } else if (channel_type == CHANNEL_TYPE_VOICE_IN) {
         dev->cleanup_in_progress_voice = false;
     } else {
         dev->cleanup_in_progress_voice_out = false;
     }
 
     pr_info("zg01_pcm: Multi-URB cleanup completed\n");
-    kfree(cw);
 }
 
 static void zg01_iso_callback(struct urb *urb)
@@ -1385,15 +1406,18 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
         }
     }
 
-    /* Create cleanup work for deferred cleanup (can sleep) */
-    struct zg01_cleanup_work *cw = kzalloc(sizeof(*cw), GFP_ATOMIC);
-    if (cw) {
-        INIT_WORK(&cw->work, zg01_cleanup_multi_urb_work_fn);
-        cw->dev = dev;
-        cw->channel_type = dev->channel_type;
-        /* queue_work returns false if already queued — that is not an error */
-        queue_work(zg01_wq, &cw->work);
+    /* Queue cleanup work - uses embedded work_struct (no allocation needed) */
+    struct work_struct *cleanup_work;
+    if (is_game_channel) {
+        cleanup_work = &dev->cleanup_work_game;
+    } else if (is_voice_in_channel) {
+        cleanup_work = &dev->cleanup_work_voice;
+    } else {
+        cleanup_work = &dev->cleanup_work_voice_out;
     }
+    
+    /* queue_work returns false if already queued — that is not an error */
+    queue_work(zg01_wq, cleanup_work);
     
     pr_info("zg01_pcm: URBs unlinked, cleanup deferred\n");
 }

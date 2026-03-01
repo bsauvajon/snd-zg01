@@ -9,6 +9,9 @@
 #include "zg01_pcm.h"
 #include "zg01_control.h"
 
+/* Forward declaration for cleanup work function defined in zg01_pcm.c */
+extern void zg01_cleanup_multi_urb_work_fn(struct work_struct *work);
+
 static DEFINE_MUTEX(devices_mutex);
 
 /* Global device pointers — also declared extern in zg01.h for zg01_pcm.c */
@@ -75,6 +78,11 @@ static int zg01_create_one_card(struct usb_interface *interface,
     dev->cleanup_in_progress_voice = false;
     dev->cleanup_in_progress_voice_out = false;
     dev->disconnecting = false;
+
+    /* Initialize embedded cleanup work structs - prevents GFP_ATOMIC allocation failures */
+    INIT_WORK(&dev->cleanup_work_game, zg01_cleanup_multi_urb_work_fn);
+    INIT_WORK(&dev->cleanup_work_voice, zg01_cleanup_multi_urb_work_fn);
+    INIT_WORK(&dev->cleanup_work_voice_out, zg01_cleanup_multi_urb_work_fn);
 
     snd_card_set_dev(card, &interface->dev);
     strncpy(card->driver, "zg01_usb", sizeof(card->driver));
