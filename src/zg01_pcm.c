@@ -1473,7 +1473,10 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         submitted_count++;
     }
 
-    /* Assign substream under spinlock protection AFTER successful URB submission */
+    /* Assign substream under spinlock BEFORE submitting URBs.
+     * If we assign after, a URB that completes during submission will see
+     * substream == NULL in the callback, skip resubmission, and permanently
+     * drop that URB — killing the stream. */
     spin_lock_irqsave(&dev->lock, flags);
     if (is_game_channel) {
         dev->substream_game = substream;
@@ -1484,6 +1487,24 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
     }
     spin_unlock_irqrestore(&dev->lock, flags);
 
+    /* Submit all pre-allocated URBs with GFP_ATOMIC (atomic context safe) */
+    for (urb_idx = 0; urb_idx < MAX_URBS_PER_CHANNEL; urb_idx++) {
+        if (!iso_urbs[urb_idx]) {
+            pr_err("zg01_pcm: URB %d not allocated!\n", urb_idx);
+            ret = -ENOMEM;
+            goto cleanup_submitted_urbs;
+        }
+        
+        ret = usb_submit_urb(iso_urbs[urb_idx], GFP_ATOMIC);
+        if (ret) {
+            pr_err("zg01_pcm: Failed to submit URB %d: %d, cleaning up %d submitted URBs\n",
+                   urb_idx, ret, submitted_count);
+            goto cleanup_submitted_urbs;
+        }
+        atomic_inc(active_urbs_ptr);
+        submitted_count++;
+    }
+
     pr_info("zg01_pcm: Successfully started streaming with %d URBs\n", atomic_read(active_urbs_ptr));
     return 0;
 
@@ -1491,11 +1512,19 @@ cleanup_submitted_urbs:
     /* Kill any already submitted URBs (synchronous - waits for callbacks) */
     pr_err("zg01_pcm: Submission failed, killing %d submitted URBs\n", submitted_count);
     for (j = 0; j < submitted_count; j++) {
-        if (iso_urbs[j]) {
+        if (iso_urbs[j])
             usb_kill_urb(iso_urbs[j]);
-        }
     }
-    
+    /* Clear substream pointer so callback doesn't try to use it */
+    spin_lock_irqsave(&dev->lock, flags);
+    if (is_game_channel) {
+        dev->substream_game = NULL;
+    } else if (is_voice_in_channel) {
+        dev->substream_voice = NULL;
+    } else {
+        dev->substream_voice_out = NULL;
+    }
+    spin_unlock_irqrestore(&dev->lock, flags);
     /* Reset atomic counter to zero */
     atomic_set(active_urbs_ptr, 0);
     return ret;
@@ -1538,13 +1567,14 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
     *cleanup_in_progress = true;
     spin_unlock_irqrestore(&dev->lock, flags);
 
-    /* Kill all URBs synchronously - usb_kill_urb waits for callbacks to complete
-     * This guarantees no URB callbacks are running when this function returns,
-     * making it safe to free URB memory in subsequent cleanup work. */
+    /* Unlink all URBs asynchronously (non-sleeping, safe from atomic/trigger context).
+     * usb_kill_urb() can sleep and must NOT be called from the PCM .trigger() path,
+     * which ALSA may invoke in atomic context. usb_unlink_urb() signals the URBs to
+     * stop; the actual synchronous kill happens in zg01_do_cleanup_urbs() which runs
+     * in workqueue (sleepable) context. */
     for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
-        if (iso_urbs[i]) {
-            usb_kill_urb(iso_urbs[i]);  /* Synchronous - waits for callback completion */
-        }
+        if (iso_urbs[i])
+            usb_unlink_urb(iso_urbs[i]);
     }
 
     /* Queue cleanup work - uses embedded work_struct (no allocation needed) */
