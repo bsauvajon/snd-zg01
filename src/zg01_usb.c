@@ -74,6 +74,7 @@ static int zg01_create_one_card(struct usb_interface *interface,
     dev->cleanup_in_progress_game = false;
     dev->cleanup_in_progress_voice = false;
     dev->cleanup_in_progress_voice_out = false;
+    dev->disconnecting = false;
 
     snd_card_set_dev(card, &interface->dev);
     strncpy(card->driver, "zg01_usb", sizeof(card->driver));
@@ -222,6 +223,9 @@ static void zg01_disconnect_one(struct zg01_dev *dev)
     if (!dev)
         return;
 
+    /* Set disconnecting flag to prevent URB resubmission (USB-10) */
+    dev->disconnecting = true;
+
     /*
      * Flush any pending deferred cleanup work before we inline-free
      * the buffers, to avoid double-free (PCM-22).
@@ -262,9 +266,19 @@ static void zg01_disconnect_one(struct zg01_dev *dev)
         voice_out_dev = NULL;
     mutex_unlock(&devices_mutex);
 
-    /* Free the card — also frees the embedded dev structure */
-    if (dev->card)
-        snd_card_free(dev->card);
+    /*
+     * Use asynchronous disconnect pattern to prevent blocking USB hub thread.
+     * snd_card_disconnect() notifies userspace and prevents new opens.
+     * snd_card_free_when_closed() defers actual free until all file descriptors close.
+     * This prevents hanging the entire USB subsystem if PipeWire/apps still have the device open.
+     */
+    if (dev->card) {
+        snd_card_disconnect(dev->card);
+        snd_card_free_when_closed(dev->card);
+}
+
+    /* USB device reference is released by ALSA when card is freed */
+    usb_put_dev(dev->udev);
 }
 
 static void zg01_disconnect(struct usb_interface *interface)

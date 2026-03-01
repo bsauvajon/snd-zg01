@@ -865,6 +865,12 @@ static void zg01_iso_callback(struct urb *urb)
         return;
     }
 
+    /* Check disconnecting flag - if USB disconnect started, stop resubmitting URBs */
+    if (dev->disconnecting) {
+        pr_debug("zg01_pcm: URB callback during disconnect, not resubmitting\n");
+        return;
+    }
+
     if (urb->status && urb->status != -EXDEV) {
         pr_warn("zg01_pcm: URB error: %d\n", urb->status);
         /* Still try to resubmit for recoverable errors */
