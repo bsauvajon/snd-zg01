@@ -1053,15 +1053,15 @@ static void zg01_iso_callback(struct urb *urb)
     bool is_voice_out_channel = false;
     bool found_urb = false;
 
-    /* Early exit for shutdown or critical errors */
-    if (urb->status == -ESHUTDOWN || urb->status == -ENOENT || urb->status == -ECONNRESET) {
-        pr_debug("zg01_pcm: URB stopped: %d\n", urb->status);
+    /* Check disconnecting flag FIRST - if USB disconnect started, stop resubmitting URBs immediately */
+    if (atomic_read(&dev->disconnecting)) {
+        pr_debug("zg01_pcm: URB callback during disconnect, not resubmitting\n");
         return;
     }
 
-    /* Check disconnecting flag - if USB disconnect started, stop resubmitting URBs */
-    if (atomic_read(&dev->disconnecting)) {
-        pr_debug("zg01_pcm: URB callback during disconnect, not resubmitting\n");
+    /* Early exit for shutdown or critical errors */
+    if (urb->status == -ESHUTDOWN || urb->status == -ENOENT || urb->status == -ECONNRESET) {
+        pr_debug("zg01_pcm: URB stopped: %d\n", urb->status);
         return;
     }
 
@@ -1070,10 +1070,11 @@ static void zg01_iso_callback(struct urb *urb)
         /* Still try to resubmit for recoverable errors */
     }
 
-    /* Use spinlock to safely check if this URB is still active */
+    /* CRITICAL: Hold lock during entire substream dereference to prevent race with close() */
+    /* Acquire spinlock BEFORE reading substream pointer */
     spin_lock_irqsave(&dev->lock, flags);
     
-    /* Determine which channel this callback is for */
+    /* Determine which channel this callback is for AND read substream pointer (inside lock) */
     for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
         if (urb == dev->iso_urbs_game[i]) {
             substream = dev->substream_game;
@@ -1099,22 +1100,24 @@ static void zg01_iso_callback(struct urb *urb)
         }
     }
     
-    spin_unlock_irqrestore(&dev->lock, flags);
-    
     if (!found_urb) {
+        spin_unlock_irqrestore(&dev->lock, flags);
         /* This is likely an old URB that was replaced during rapid restart */
         pr_debug("zg01_pcm: Callback for stale URB (stream restarted)\n");
         return;
     }
 
-    /* Validate substream and runtime */
+    /* Validate substream (still holding lock - prevents race with close()) */
     if (!substream) {
+        spin_unlock_irqrestore(&dev->lock, flags);
         pr_debug("zg01_pcm: No substream in callback (stream stopped)\n");
         return;
     }
 
+    /* Dereference runtime (safe - lock held, substream can't be freed by close()) */
     runtime = substream->runtime;
     if (!runtime) {
+        spin_unlock_irqrestore(&dev->lock, flags);
         pr_debug("zg01_pcm: No runtime in callback (stream stopped)\n");
         /* Still resubmit URB to keep USB streaming alive */
         goto resubmit;
@@ -1122,6 +1125,7 @@ static void zg01_iso_callback(struct urb *urb)
 
     /* Check if stream is still active before processing audio data */
     if (!snd_pcm_running(substream)) {
+        spin_unlock_irqrestore(&dev->lock, flags);
         pr_debug("zg01_pcm: Stream not running, state: %d - sending silence\n", runtime->status->state);
         /* Send silence but keep URBs running */
         if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
@@ -1138,6 +1142,7 @@ static void zg01_iso_callback(struct urb *urb)
     }
 
     if (!runtime->dma_area) {
+        spin_unlock_irqrestore(&dev->lock, flags);
         pr_err("zg01_pcm: No DMA area allocated\n");
         goto resubmit;
     }
@@ -1145,7 +1150,7 @@ static void zg01_iso_callback(struct urb *urb)
     pcm_buf = runtime->dma_area;
     period_size = runtime->period_size;
     
-    /* Process audio data based on stream direction */
+    /* Process audio data based on stream direction (lock still held from above) */
     if (urb->status == 0) {
         bool period_elapsed = false;
         unsigned int bytes_per_frame = runtime->frame_bits / 8; /* Should be 8 for S32_LE stereo */
@@ -1155,8 +1160,7 @@ static void zg01_iso_callback(struct urb *urb)
         unsigned int total_frames_processed = 0; /* Track frames processed in this URB */
         unsigned int old_pos;
 
-        /* Acquire spinlock once for the entire URB — not once per packet */
-        spin_lock_irqsave(&dev->lock, flags);
+        /* Spinlock already held from substream dereference above - no need to re-acquire */
         old_pos = *pcm_pos;
 
         /* For playback, packet sizes are already set during URB initialization */
@@ -1287,7 +1291,7 @@ static void zg01_iso_callback(struct urb *urb)
                     unsigned int buffer_bytes = runtime->buffer_size * bytes_per_frame;
                     unsigned int old_pos_cap;
 
-                    spin_lock_irqsave(&dev->lock, flags);
+                    /* Spinlock already held from substream dereference above - no need to re-acquire */
                     old_pos_cap = *pcm_pos;
 
                     unsigned int write_frame = (*pcm_pos) % runtime->buffer_size;
@@ -1321,16 +1325,18 @@ static void zg01_iso_callback(struct urb *urb)
                     if (period_size > 0 &&
                         (*pcm_pos / period_size) != (old_pos_cap / period_size))
                         period_elapsed = true;
-
-                    spin_unlock_irqrestore(&dev->lock, flags);
                 }
             }
+            spin_unlock_irqrestore(&dev->lock, flags);
         }
         
         /* Call period_elapsed outside of spinlock */
         if (period_elapsed) {
             snd_pcm_period_elapsed(substream);
         }
+    } else {
+        /* URB had an error status - release lock without processing audio data */
+        spin_unlock_irqrestore(&dev->lock, flags);
     }
 
 resubmit:
