@@ -1455,28 +1455,10 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
 
     atomic_set(active_urbs_ptr, 0);
 
-    /* Submit all pre-allocated URBs with GFP_ATOMIC (atomic context safe) */
-    for (urb_idx = 0; urb_idx < MAX_URBS_PER_CHANNEL; urb_idx++) {
-        if (!iso_urbs[urb_idx]) {
-            pr_err("zg01_pcm: URB %d not allocated!\n", urb_idx);
-            ret = -ENOMEM;
-            goto cleanup_submitted_urbs;
-        }
-        
-        ret = usb_submit_urb(iso_urbs[urb_idx], GFP_ATOMIC);
-        if (ret) {
-            pr_err("zg01_pcm: Failed to submit URB %d: %d, cleaning up %d submitted URBs\n",
-                   urb_idx, ret, submitted_count);
-            goto cleanup_submitted_urbs;
-        }
-        atomic_inc(active_urbs_ptr);
-        submitted_count++;
-    }
-
-    /* Assign substream under spinlock BEFORE submitting URBs.
-     * If we assign after, a URB that completes during submission will see
-     * substream == NULL in the callback, skip resubmission, and permanently
-     * drop that URB — killing the stream. */
+    /* Assign substream under spinlock BEFORE submitting any URBs.
+     * If we assign after submission, a URB that completes during the loop
+     * will see substream == NULL in the callback, skip resubmission, and
+     * permanently drop that URB — killing the stream. */
     spin_lock_irqsave(&dev->lock, flags);
     if (is_game_channel) {
         dev->substream_game = substream;
