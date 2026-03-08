@@ -970,39 +970,26 @@ cleanup_urbs:
 static void zg01_do_cleanup_urbs(struct zg01_dev *dev, int channel_type)
 {
     struct urb **iso_urbs;
-    unsigned char **iso_buffers;
-    dma_addr_t *iso_dmas;
-    int iso_pkts, iso_pkt_size;
     int i;
 
     if (channel_type == CHANNEL_TYPE_GAME) {
-        iso_urbs    = dev->iso_urbs_game;
-        iso_buffers = dev->iso_buffers_game;
-        iso_dmas    = dev->iso_dmas_game;
-        iso_pkts    = ISO_PKTS_GAME;
-        iso_pkt_size = ISO_PKT_SIZE_GAME;
+        iso_urbs = dev->iso_urbs_game;
     } else if (channel_type == CHANNEL_TYPE_VOICE_IN) {
-        iso_urbs    = dev->iso_urbs_voice;
-        iso_buffers = dev->iso_buffers_voice;
-        iso_dmas    = dev->iso_dmas_voice;
-        iso_pkts    = ISO_PKTS_VOICE;
-        iso_pkt_size = ISO_PKT_SIZE_VOICE;
+        iso_urbs = dev->iso_urbs_voice;
     } else {
-        iso_urbs    = dev->iso_urbs_voice_out;
-        iso_buffers = dev->iso_buffers_voice_out;
-        iso_dmas    = dev->iso_dmas_voice_out;
-        iso_pkts    = ISO_PKTS_GAME;
-        iso_pkt_size = ISO_PKT_SIZE_GAME;
+        iso_urbs = dev->iso_urbs_voice_out;
     }
 
-    /* Kill all URBs (can sleep here) */
+    /* Kill all URBs synchronously (can sleep here — workqueue context).
+     * Do NOT free them: URBs are kept alive across STOP→START cycles so
+     * the next TRIGGER_START can re-submit immediately without waiting for
+     * prepare() to reallocate.  hw_free() owns the actual free path. */
     for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
-        if (iso_urbs[i]) {
+        if (iso_urbs[i])
             usb_kill_urb(iso_urbs[i]);
-        }
     }
 
-    /* Active URB count is now zero — update before freeing resources */
+    /* Active URB count is now zero */
     if (channel_type == CHANNEL_TYPE_GAME)
         atomic_set(&dev->active_urbs_game, 0);
     else if (channel_type == CHANNEL_TYPE_VOICE_IN)
@@ -1010,28 +997,15 @@ static void zg01_do_cleanup_urbs(struct zg01_dev *dev, int channel_type)
     else
         atomic_set(&dev->active_urbs_voice_out, 0);
 
-    /* Free all resources */
-    for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
-        if (iso_buffers[i]) {
-            kfree(iso_buffers[i]);
-            iso_buffers[i] = NULL;
-        }
-        if (iso_urbs[i]) {
-            usb_free_urb(iso_urbs[i]);
-            iso_urbs[i] = NULL;
-        }
-    }
-
-    /* Clear cleanup flag - new streams can now start */
-    if (channel_type == CHANNEL_TYPE_GAME) {
+    /* Clear cleanup flag — new starts are now allowed */
+    if (channel_type == CHANNEL_TYPE_GAME)
         dev->cleanup_in_progress_game = false;
-    } else if (channel_type == CHANNEL_TYPE_VOICE_IN) {
+    else if (channel_type == CHANNEL_TYPE_VOICE_IN)
         dev->cleanup_in_progress_voice = false;
-    } else {
+    else
         dev->cleanup_in_progress_voice_out = false;
-    }
 
-    pr_info("zg01_pcm: Multi-URB cleanup completed\n");
+    pr_info("zg01_pcm: URB drain completed\n");
 }
 
 /* Three separate work functions — each uses the correct container_of member */
