@@ -294,6 +294,13 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
         }
     }
     
+    /* Mark the substream as non-atomic so .trigger is called without the
+     * PCM spinlock held.  This allows start_streaming() to call flush_work()
+     * when a previous cleanup is still in flight, instead of returning
+     * -EBUSY and causing PipeWire to retry in a tight loop.
+     * nonatomic is set on the snd_pcm instance at creation time (see
+     * zg01_pcm_create), so this is just a comment explaining why. */
+
     runtime->hw.periods_min = 2;
     runtime->hw.periods_max = 64; /* Allow more flexibility for PipeWire */
     
@@ -1365,27 +1372,26 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
     bool is_game_channel = (dev->channel_type == CHANNEL_TYPE_GAME);
     bool is_voice_in_channel = (dev->channel_type == CHANNEL_TYPE_VOICE_IN);
 
-    /* Select parameters based on channel type */
+    /* Select parameters based on channel type.
+     *
+     * If a previous TRIGGER_STOP queued cleanup work that has not completed
+     * yet, wait for it here.  This is safe because .trigger is called without
+     * the PCM spinlock when runtime->nonatomic == 1 (set in pcm_open). */
     if (is_game_channel) {
-        /* Double-check cleanup is complete */
         if (dev->cleanup_in_progress_game) {
-            pr_warn("zg01_pcm: Game cleanup still in progress, aborting start\n");
-            return -EBUSY;
+            pr_info("zg01_pcm: Game cleanup in progress, waiting for drain\n");
+            flush_work(&dev->cleanup_work_game);
         }
-        
         iso_urbs = dev->iso_urbs_game;
         active_urbs_ptr = &dev->active_urbs_game;
         pr_info("zg01_pcm: Starting Game channel streaming\n");
     } else if (is_voice_in_channel) {
-        /* Double-check cleanup is complete */
         if (dev->cleanup_in_progress_voice) {
-            pr_warn("zg01_pcm: Voice In cleanup still in progress, aborting start\n");
-            return -EBUSY;
+            pr_info("zg01_pcm: Voice In cleanup in progress, waiting for drain\n");
+            flush_work(&dev->cleanup_work_voice);
         }
-        
         iso_urbs = dev->iso_urbs_voice;
         active_urbs_ptr = &dev->active_urbs_voice;
-        
         /* Voice In channel only supports capture */
         if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
             pr_warn("zg01_pcm: Voice In channel only supports capture (IN endpoint)\n");
@@ -1393,13 +1399,10 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         }
         pr_info("zg01_pcm: Starting Voice In channel streaming\n");
     } else {
-        /* Voice Out channel - uses same parameters as game */
-        /* Double-check cleanup is complete */
         if (dev->cleanup_in_progress_voice_out) {
-            pr_warn("zg01_pcm: Voice Out cleanup still in progress, aborting start\n");
-            return -EBUSY;
+            pr_info("zg01_pcm: Voice Out cleanup in progress, waiting for drain\n");
+            flush_work(&dev->cleanup_work_voice_out);
         }
-        
         iso_urbs = dev->iso_urbs_voice_out;
         active_urbs_ptr = &dev->active_urbs_voice_out;
         pr_info("zg01_pcm: Starting Voice Out channel streaming\n");
@@ -1552,35 +1555,11 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
     struct zg01_dev *dev = snd_pcm_substream_chip(substream);
     int ret = 0;
-    unsigned long now = jiffies;
 
     if (!dev) {
         pr_err("zg01_pcm: No device structure available in trigger\n");
         return -ENODEV;
     }
-
-    /* Detect rapid trigger loop - if more than 5 triggers in 100ms, something is wrong */
-    if (time_before(now, dev->last_trigger_time + msecs_to_jiffies(100))) {
-        dev->trigger_count++;
-        if (dev->trigger_count > 5) {
-            pr_warn("zg01_pcm: Rapid trigger loop detected (%d triggers in 100ms), throttling\n", dev->trigger_count);
-            /* Return success but don't process to break the loop */
-            if (cmd == SNDRV_PCM_TRIGGER_START) {
-                /* Ensure channel is marked active */
-                if (dev->channel_type == CHANNEL_TYPE_GAME) {
-                    dev->game_channel_active = true;
-                } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
-                    dev->voice_channel_active = true;
-                } else {
-                    dev->voice_out_channel_active = true;
-                }
-            }
-            return 0;
-        }
-    } else {
-        dev->trigger_count = 0;
-    }
-    dev->last_trigger_time = now;
 
     switch (cmd) {
     case SNDRV_PCM_TRIGGER_START:
@@ -1749,6 +1728,11 @@ int zg01_create_pcm(struct zg01_dev *dev)
     pcm->instance->private_data = dev;  /* Set to main device structure */
     pcm->instance->private_free = NULL;
     strscpy(pcm->instance->name, channel_name, sizeof(pcm->instance->name));
+
+    /* Non-atomic mode: .trigger is called without the PCM spinlock, so
+     * start_streaming() can call flush_work() to wait for a pending cleanup
+     * workqueue item rather than returning -EBUSY. */
+    pcm->instance->nonatomic = true;
 
     snd_pcm_set_managed_buffer_all(pcm->instance,
                                   SNDRV_DMA_TYPE_CONTINUOUS, NULL,

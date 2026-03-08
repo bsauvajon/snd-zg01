@@ -91,10 +91,6 @@ struct zg01_dev {
     struct work_struct cleanup_work_voice_out;
     unsigned long last_trigger_jiffies;
     
-    /* Trigger loop detection - per-device to avoid race conditions */
-    unsigned long last_trigger_time;
-    int trigger_count;
-    
     /* Rate limiting for rapid open/close cycles from audio system probing */
     unsigned long last_open_jiffies;
     unsigned int open_count;
