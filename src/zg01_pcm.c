@@ -1034,6 +1034,53 @@ void zg01_cleanup_work_voice_out_fn(struct work_struct *work)
     zg01_do_cleanup_urbs(dev, CHANNEL_TYPE_VOICE_OUT);
 }
 
+/*
+ * Period-elapsed work handlers — called from zg01_wq (process context).
+ * snd_pcm_period_elapsed() acquires a sleeping rwsem when PCM nonatomic==true,
+ * so it must not be called directly from the URB callback (softirq context).
+ */
+void zg01_period_work_game_fn(struct work_struct *work)
+{
+    struct zg01_dev *dev = container_of(work, struct zg01_dev, period_work_game);
+    struct snd_pcm_substream *sub;
+    unsigned long flags;
+
+    spin_lock_irqsave(&dev->lock, flags);
+    sub = dev->substream_game;
+    spin_unlock_irqrestore(&dev->lock, flags);
+
+    if (sub && !atomic_read(&dev->disconnecting))
+        snd_pcm_period_elapsed(sub);
+}
+
+void zg01_period_work_voice_fn(struct work_struct *work)
+{
+    struct zg01_dev *dev = container_of(work, struct zg01_dev, period_work_voice);
+    struct snd_pcm_substream *sub;
+    unsigned long flags;
+
+    spin_lock_irqsave(&dev->lock, flags);
+    sub = dev->substream_voice;
+    spin_unlock_irqrestore(&dev->lock, flags);
+
+    if (sub && !atomic_read(&dev->disconnecting))
+        snd_pcm_period_elapsed(sub);
+}
+
+void zg01_period_work_voice_out_fn(struct work_struct *work)
+{
+    struct zg01_dev *dev = container_of(work, struct zg01_dev, period_work_voice_out);
+    struct snd_pcm_substream *sub;
+    unsigned long flags;
+
+    spin_lock_irqsave(&dev->lock, flags);
+    sub = dev->substream_voice_out;
+    spin_unlock_irqrestore(&dev->lock, flags);
+
+    if (sub && !atomic_read(&dev->disconnecting))
+        snd_pcm_period_elapsed(sub);
+}
+
 static void zg01_iso_callback(struct urb *urb)
 {
     struct zg01_dev *dev = urb->context;
@@ -1326,9 +1373,17 @@ static void zg01_iso_callback(struct urb *urb)
             spin_unlock_irqrestore(&dev->lock, flags);
         }
         
-        /* Call period_elapsed outside of spinlock */
+        /* Defer period_elapsed to workqueue: PCM is nonatomic, so
+         * snd_pcm_period_elapsed() acquires a sleeping rwsem internally.
+         * Calling it from softirq (URB callback) context causes
+         * "scheduling while atomic". */
         if (period_elapsed) {
-            snd_pcm_period_elapsed(substream);
+            if (is_game_channel)
+                queue_work(zg01_wq, &dev->period_work_game);
+            else if (is_voice_out_channel)
+                queue_work(zg01_wq, &dev->period_work_voice_out);
+            else
+                queue_work(zg01_wq, &dev->period_work_voice);
         }
     } else {
         /* URB had an error status - release lock without processing audio data */

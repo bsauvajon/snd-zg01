@@ -95,6 +95,11 @@ static int zg01_create_one_card(struct usb_interface *interface,
     INIT_WORK(&dev->cleanup_work_voice, zg01_cleanup_work_voice_fn);
     INIT_WORK(&dev->cleanup_work_voice_out, zg01_cleanup_work_voice_out_fn);
 
+    /* Initialize deferred period-elapsed work structs */
+    INIT_WORK(&dev->period_work_game, zg01_period_work_game_fn);
+    INIT_WORK(&dev->period_work_voice, zg01_period_work_voice_fn);
+    INIT_WORK(&dev->period_work_voice_out, zg01_period_work_voice_out_fn);
+
     snd_card_set_dev(card, &interface->dev);
     strncpy(card->driver, "zg01_usb", sizeof(card->driver));
 

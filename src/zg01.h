@@ -89,6 +89,12 @@ struct zg01_dev {
     struct work_struct cleanup_work_game;
     struct work_struct cleanup_work_voice;
     struct work_struct cleanup_work_voice_out;
+
+    /* Deferred period-elapsed notification (PCM is nonatomic: snd_pcm_period_elapsed
+     * acquires a sleeping rwsem, unsafe to call from softirq/URB callback context) */
+    struct work_struct period_work_game;
+    struct work_struct period_work_voice;
+    struct work_struct period_work_voice_out;
     unsigned long last_trigger_jiffies;
     
     /* Rate limiting for rapid open/close cycles from audio system probing */
@@ -112,6 +118,11 @@ int zg01_set_streaming_interface(struct zg01_dev *dev, int interface, int alt_se
 void zg01_cleanup_work_game_fn(struct work_struct *work);
 void zg01_cleanup_work_voice_fn(struct work_struct *work);
 void zg01_cleanup_work_voice_out_fn(struct work_struct *work);
+
+/* Period-elapsed deferred work functions — defined in zg01_pcm.c, registered in zg01_usb.c */
+void zg01_period_work_game_fn(struct work_struct *work);
+void zg01_period_work_voice_fn(struct work_struct *work);
+void zg01_period_work_voice_out_fn(struct work_struct *work);
 
 /* USB Hardware Discovery Functions */
 int zg01_discover_usb_config(struct zg01_dev *dev);
