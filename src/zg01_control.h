@@ -1,5 +1,5 @@
-#ifndef CONTROL_H
-#define CONTROL_H
+#ifndef ZG01_CONTROL_H
+#define ZG01_CONTROL_H
 
 struct zg01_dev;
 
@@ -10,6 +10,5 @@ struct zg01_control {
 };
 
 int zg01_init_control(struct zg01_dev *zg01);
-void zg01_free_control(struct zg01_dev *zg01);
 
-#endif
+#endif /* ZG01_CONTROL_H */

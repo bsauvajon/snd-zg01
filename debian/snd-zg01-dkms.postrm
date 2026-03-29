@@ -8,25 +8,105 @@ NAME=snd-zg01
 VERSION=1.0.0
 
 case "$1" in
-    remove)
-        # Uninstall from DKMS
-        dkms remove -m $NAME -v $VERSION --all || true
+    remove|upgrade|deconfigure)
+        # Unload the module before removing so that ALSA cards are freed
+        # cleanly and don't leave dangling card->module pointers.
+        # Note: kernel module names use underscores, not dashes
+        if lsmod | grep -q "^snd_zg01 "; then
+            echo "Unloading snd_zg01 kernel module..."
+            modprobe -r snd_zg01 2>/dev/null || rmmod snd_zg01 2>/dev/null || true
+        fi
+
+        # Only remove from DKMS on actual removal, not on upgrade
+        if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+            # Uninstall from DKMS for all kernels first
+            if dkms status -m $NAME -v $VERSION 2>/dev/null | grep -q "$NAME"; then
+                echo "Uninstalling $NAME/$VERSION from all kernels..."
+                # Uninstall for each kernel where it's installed
+                for kernel in $(dkms status -m $NAME -v $VERSION 2>/dev/null | grep "installed" | cut -d',' -f2 | cut -d':' -f1 | tr -d ' '); do
+                    echo "  Uninstalling from kernel $kernel..."
+                    dkms uninstall -m $NAME -v $VERSION -k $kernel 2>/dev/null || true
+                done
+                
+                echo "Removing $NAME/$VERSION from DKMS..."
+                dkms remove -m $NAME -v $VERSION --all 2>/dev/null || true
+            fi
+            
+            # Clean up any remaining module files manually
+            echo "Cleaning up residual module files..."
+            find /lib/modules/*/updates/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
+            find /lib/modules/*/extra/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
+            find /lib/modules/*/kernel/drivers/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
+            
+            # Update module dependencies
+            for kernel_dir in /lib/modules/*; do
+                if [ -d "$kernel_dir" ]; then
+                    depmod -a "$(basename "$kernel_dir")" 2>/dev/null || true
+                fi
+            done
+            
+            # Remove DKMS state directory
+            echo "Removing DKMS state directory..."
+            rm -rf /var/lib/dkms/$NAME || true
+            
+            # Remove source directory
+            rm -rf /usr/src/$NAME-$VERSION || true
+        fi
         
-        # Remove udev rules
-        rm -f /etc/udev/rules.d/90-zg01.rules || true
-        udevadm control --reload-rules || true
-        udevadm trigger || true
-        
-        echo "Yamaha ZG01 driver removed"
+        # Remove udev rules and modules-load config only on actual removal
+        if [ "$1" = "remove" ]; then
+            rm -f /etc/udev/rules.d/90-zg01.rules || true
+            rm -f /etc/modules-load.d/snd-zg01.conf || true
+            udevadm control --reload-rules 2>/dev/null || true
+            udevadm trigger 2>/dev/null || true
+            
+            echo "Yamaha ZG01 driver removed"
+        fi
         ;;
     purge)
+        # Ensure module is unloaded
+        if lsmod | grep -q "^snd_zg01 "; then
+            echo "Unloading snd_zg01 kernel module..."
+            modprobe -r snd_zg01 2>/dev/null || rmmod snd_zg01 2>/dev/null || true
+        fi
+        
+        # Uninstall from DKMS for all kernels
+        if dkms status -m $NAME -v $VERSION 2>/dev/null | grep -q "$NAME"; then
+            echo "Uninstalling $NAME/$VERSION from all kernels..."
+            for kernel in $(dkms status -m $NAME -v $VERSION 2>/dev/null | grep "installed" | cut -d',' -f2 | cut -d':' -f1 | tr -d ' '); do
+                echo "  Uninstalling from kernel $kernel..."
+                dkms uninstall -m $NAME -v $VERSION -k $kernel 2>/dev/null || true
+            done
+            
+            echo "Removing $NAME/$VERSION from DKMS..."
+            dkms remove -m $NAME -v $VERSION --all 2>/dev/null || true
+        fi
+        
+        # Clean up any remaining module files manually
+        echo "Cleaning up residual module files..."
+        find /lib/modules/*/updates/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
+        find /lib/modules/*/extra/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
+        find /lib/modules/*/kernel/drivers/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
+        
+        # Update DKMS state directory
+        echo "Removing DKMS state directory..."
+        rm -rf /var/lib/dkms/$NAME || true
+        
+        # Remove module dependencies for all kernels
+        for kernel_dir in /lib/modules/*; do
+            if [ -d "$kernel_dir" ]; then
+                depmod -a "$(basename "$kernel_dir")" 2>/dev/null || true
+            fi
+        done
+        
         # Remove source directory on purge
         rm -rf /usr/src/$NAME-$VERSION || true
         
-        # Remove udev rules
+        # Remove udev rules and modules-load config
         rm -f /etc/udev/rules.d/90-zg01.rules || true
-        udevadm control --reload-rules || true
-        udevadm trigger || true
+        rm -f /etc/modules-load.d/snd-zg01.conf || true
+        udevadm control --reload-rules 2>/dev/null || true
+        udevadm trigger 2>/dev/null || true
         
         echo "Yamaha ZG01 driver purged"
         ;;

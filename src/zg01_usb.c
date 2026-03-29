@@ -1,108 +1,81 @@
 #include <linux/module.h>
 #include <linux/usb.h>
 #include <linux/slab.h>
+#include <linux/workqueue.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
-#include <linux/bitmap.h>
-#include "zg01.h" // Include your header for shared structs and defs
+#include "zg01.h"
 #include "zg01_pcm.h"
 #include "zg01_control.h"
 
-#define VENDOR_ID_YAMAHA 0x0499
-#define PRODUCT_ID_ZG01 0x1513
 
-static DEFINE_MUTEX(devices_mutex);
-DECLARE_BITMAP(devices_used, SNDRV_CARDS);
+DEFINE_MUTEX(devices_mutex);  /* Non-static: accessed from zg01_pcm.c */
 
-/* Track which cards have been created for this device */
-struct zg01_dev *game_dev = NULL;
-struct zg01_dev *voice_in_dev = NULL;
-struct zg01_dev *voice_out_dev = NULL;
-EXPORT_SYMBOL_GPL(game_dev);
-EXPORT_SYMBOL_GPL(voice_in_dev);
-EXPORT_SYMBOL_GPL(voice_out_dev);
+/* Global device pointers — also declared extern in zg01.h for zg01_pcm.c */
+struct zg01_dev *game_dev;
+struct zg01_dev *voice_in_dev;
+struct zg01_dev *voice_out_dev;
 
-static int zg01_probe(struct usb_interface *interface,
-                      const struct usb_device_id *id)
+/* Private workqueue — avoids flush_workqueue(system_wq) warning */
+struct workqueue_struct *zg01_wq;
+
+static void zg01_card_private_free(struct snd_card *card)
 {
-    struct zg01_dev *dev;
-    struct snd_card *card;
-    int err;
-    unsigned int card_index;
-    int iface_num;
-    int channel_type; /* 0=game, 1=voice_in, 2=voice_out */
+    struct zg01_dev *dev = card->private_data;
 
-    /* Create sound cards for Game (Interface 1), Voice In (Interface 2), and Voice Out (Interface 1 alt config) */
-    iface_num = interface->cur_altsetting->desc.bInterfaceNumber;
-    /* Lock to protect global device pointer access */
-    mutex_lock(&devices_mutex);
-    if (iface_num != 1 && iface_num != 2) {
-        dev_info(&interface->dev, "ZG01: Skipping interface %d (not Game/Voice)\n", iface_num);
-        mutex_unlock(&devices_mutex); return 0; /* Success but no card created */
+    if (dev->udev) {
+        usb_put_dev(dev->udev);
+        dev->udev = NULL;
     }
-
-    /* Interface 1 creates TWO cards: Game (playback) and Voice Out (playback)
-     * Interface 2 creates ONE card: Voice In (capture) */
-    if (iface_num == 1) {
-        /* Create Game playback card first */
-        if (!game_dev) {
-            channel_type = CHANNEL_TYPE_GAME;
-            dev_info(&interface->dev, "Yamaha ZG01 Game channel detected (interface %d)\n", iface_num);
-        } else if (!voice_out_dev) {
-            /* Create Voice Out playback card second */
-            channel_type = CHANNEL_TYPE_VOICE_OUT;
-            dev_info(&interface->dev, "Yamaha ZG01 Voice Out channel detected (interface %d)\n", iface_num);
-        } else {
-            /* Both cards already created for interface 1 */
-            mutex_unlock(&devices_mutex); return 0;
-        }
-    } else {
-        /* Interface 2 - Voice In capture */
-        if (voice_in_dev) {
-            mutex_unlock(&devices_mutex); return 0; /* Already created */
-        }
-        channel_type = CHANNEL_TYPE_VOICE_IN;
-        dev_info(&interface->dev, "Yamaha ZG01 Voice In channel detected (interface %d)\n", iface_num);
-    }
-
-    for (card_index = 0; card_index < SNDRV_CARDS; ++card_index)
-        if (!test_bit(card_index, devices_used))
-            break;
-    
-    /* Create distinctive card ID based on channel type */
+}
+/*
+ * zg01_create_one_card - allocate and register a single ALSA card for one
+ * channel type.  Called by zg01_probe; devices_mutex must NOT be held on
+ * entry (snd_card_new / snd_card_register may sleep).
+ *
+ * On success the global device pointer (game_dev / voice_in_dev /
+ * voice_out_dev) is set and the card is live.  On error everything is
+ * cleaned up before returning.
+ */
+static int zg01_create_one_card(struct usb_interface *interface,
+                                const struct usb_device_id *id,
+                                int channel_type)
+{
     const char *card_id;
-    if (channel_type == CHANNEL_TYPE_GAME) {
+    struct snd_card *card;
+    struct zg01_dev *dev;
+    int err;
+
+    /* Select ALSA card short-id */
+    if (channel_type == CHANNEL_TYPE_GAME)
         card_id = "zg01game";
-    } else if (channel_type == CHANNEL_TYPE_VOICE_IN) {
-        card_id = "zg01voice";  
-    } else {
+    else if (channel_type == CHANNEL_TYPE_VOICE_IN)
+        card_id = "zg01voice";
+    else
         card_id = "zg01voiceout";
-    }
 
     /* Create card with embedded zg01_dev structure */
     err = snd_card_new(&interface->dev, -1, card_id, THIS_MODULE,
                        sizeof(struct zg01_dev), &card);
     if (err) {
-        dev_err(&interface->dev, "Failed to create sound card: %d\n", err);
+        dev_err(&interface->dev, "ZG01: Failed to create sound card: %d\n", err);
         return err;
     }
-    
-    /* CRITICAL: Ensure module owner is set to prevent kernel crash when opening control device
-     * The kernel's try_module_get() needs a valid module pointer */
+
+    /* Ensure module owner is set — try_module_get() needs a valid pointer */
     card->module = THIS_MODULE;
 
-    /* Use the dev structure embedded in the card - this is critical! */
     dev = card->private_data;
     dev->card = card;
-    dev->card_index = card_index;
     dev->channel_type = channel_type;
-    
-    /* Initialize dev structure */
     dev->udev = usb_get_dev(interface_to_usbdev(interface));
+    card->private_free = zg01_card_private_free;
     dev->interface = interface;
+
     spin_lock_init(&dev->lock);
     mutex_init(&dev->pcm_mutex);
+
     dev->game_channel_active = false;
     dev->voice_channel_active = false;
     dev->voice_out_channel_active = false;
@@ -112,201 +85,322 @@ static int zg01_probe(struct usb_interface *interface,
     dev->cleanup_in_progress_game = false;
     dev->cleanup_in_progress_voice = false;
     dev->cleanup_in_progress_voice_out = false;
-    INIT_DELAYED_WORK(&dev->start_work_game, (void *)0);
-    INIT_DELAYED_WORK(&dev->start_work_voice, (void *)0);
-    INIT_DELAYED_WORK(&dev->start_work_voice_out, (void *)0);
-    dev->start_pending_game = false;
-    dev->start_pending_voice = false;
-    dev->start_pending_voice_out = false;
+    atomic_set(&dev->disconnecting, 0);
+    atomic_set(&dev->active_urbs_game, 0);
+    atomic_set(&dev->active_urbs_voice, 0);
+    atomic_set(&dev->active_urbs_voice_out, 0);
+    atomic_set(&dev->voice_out_mixing, 0);
+    dev->vo_mix_dev = NULL;
+    dev->voice_out_piggybacking = false;
+    dev->piggyback_host = NULL;
 
-    /* Track device pointers globally */
-    if (channel_type == CHANNEL_TYPE_GAME) {
-        game_dev = dev;
-    } else if (channel_type == CHANNEL_TYPE_VOICE_IN) {
-        voice_in_dev = dev;
-    } else {
-        voice_out_dev = dev;
-    }
+    /* Initialize embedded cleanup work structs - prevents GFP_ATOMIC allocation failures */
+    INIT_WORK(&dev->cleanup_work_game, zg01_cleanup_work_game_fn);
+    INIT_WORK(&dev->cleanup_work_voice, zg01_cleanup_work_voice_fn);
+    INIT_WORK(&dev->cleanup_work_voice_out, zg01_cleanup_work_voice_out_fn);
 
-    /* Unlock mutex - critical section complete */
-    mutex_unlock(&devices_mutex);
-    usb_set_intfdata(interface, dev);
+    /* Initialize deferred period-elapsed work structs */
+    INIT_WORK(&dev->period_work_game, zg01_period_work_game_fn);
+    INIT_WORK(&dev->period_work_voice, zg01_period_work_voice_fn);
+    INIT_WORK(&dev->period_work_voice_out, zg01_period_work_voice_out_fn);
 
     snd_card_set_dev(card, &interface->dev);
-
     strncpy(card->driver, "zg01_usb", sizeof(card->driver));
-    
-    /* Set distinctive card names based on channel type immediately */
+
     if (channel_type == CHANNEL_TYPE_GAME) {
-        strncpy(card->shortname, "ZG01 Game", sizeof(card->shortname));
-        strncpy(card->longname, "Yamaha ZG01 Game Channel", sizeof(card->longname));
-        strncpy(card->mixername, "ZG01 Game", sizeof(card->mixername));
-        strncpy(card->components, "USB0499:1513-Game", sizeof(card->components));
+        strncpy(card->shortname,  "ZG01 Game",                    sizeof(card->shortname));
+        strncpy(card->longname,   "Yamaha ZG01 Game Channel",     sizeof(card->longname));
+        strncpy(card->mixername,  "ZG01 Game",                    sizeof(card->mixername));
+        strncpy(card->components, "USB0499:1513-Game",            sizeof(card->components));
+        dev_info(&interface->dev, "ZG01: Creating Game channel\n");
     } else if (channel_type == CHANNEL_TYPE_VOICE_IN) {
-        strncpy(card->shortname, "ZG01 Voice In", sizeof(card->shortname));
-        strncpy(card->longname, "Yamaha ZG01 Voice Input Channel", sizeof(card->longname));
-        strncpy(card->mixername, "ZG01 Voice In", sizeof(card->mixername));
-        strncpy(card->components, "USB0499:1513-VoiceIn", sizeof(card->components));
+        strncpy(card->shortname,  "ZG01 Voice In",                      sizeof(card->shortname));
+        strncpy(card->longname,   "Yamaha ZG01 Voice Input Channel",    sizeof(card->longname));
+        strncpy(card->mixername,  "ZG01 Voice In",                      sizeof(card->mixername));
+        strncpy(card->components, "USB0499:1513-VoiceIn",               sizeof(card->components));
+        dev_info(&interface->dev, "ZG01: Creating Voice In channel\n");
     } else {
-        strncpy(card->shortname, "ZG01 Voice Out", sizeof(card->shortname));
-        strncpy(card->longname, "Yamaha ZG01 Voice Output Channel", sizeof(card->longname));
-        strncpy(card->mixername, "ZG01 Voice Out", sizeof(card->mixername));
-        strncpy(card->components, "USB0499:1513-VoiceOut", sizeof(card->components));
+        strncpy(card->shortname,  "ZG01 Voice Out",                      sizeof(card->shortname));
+        strncpy(card->longname,   "Yamaha ZG01 Voice Output Channel",   sizeof(card->longname));
+        strncpy(card->mixername,  "ZG01 Voice Out",                      sizeof(card->mixername));
+        strncpy(card->components, "USB0499:1513-VoiceOut",               sizeof(card->components));
+        dev_info(&interface->dev, "ZG01: Creating Voice Out channel\n");
     }
 
     err = zg01_init_control(dev);
     if (err) {
-        dev_err(&interface->dev, "Failed to initialize control interface: %d\n", err);
-        snd_card_free(card);
-        return err;
-    }    
-
-    /* Discover USB hardware configuration */
-    err = zg01_discover_usb_config(dev);
-    if (err) {
-        pr_warn("zg01_usb: USB discovery failed, continuing anyway: %d\n", err);
+        dev_err(&interface->dev, "ZG01: Failed to init control: %d\n", err);
+        goto err_free_card;
     }
 
-    /* Set interface alternate settings for audio streaming */
-    err = usb_set_interface(dev->udev, 1, 0);
-    if (err) {
-        dev_err(&interface->dev, "Failed to set interface 1 alt 0: %d\n", err);
-    }
-    
-    err = usb_set_interface(dev->udev, 2, 0);  
-    if (err) {
-        dev_err(&interface->dev, "Failed to set interface 2 alt 0: %d\n", err);
-    }
+    /* USB discovery is best-effort; failures are non-fatal */
+    if (zg01_discover_usb_config(dev))
+        pr_warn("zg01_usb: USB discovery failed, continuing\n");
+
+    /* Reset streaming interfaces to alt 0 before PCM registration */
+    if (usb_set_interface(dev->udev, 1, 0))
+        dev_err(&interface->dev, "ZG01: Failed to set iface 1 alt 0\n");
+    if (usb_set_interface(dev->udev, 2, 0))
+        dev_err(&interface->dev, "ZG01: Failed to set iface 2 alt 0\n");
 
     err = zg01_create_pcm(dev);
     if (err) {
-        dev_err(&interface->dev, "Failed to create PCM device: %d\n", err);
-        snd_card_free(card);
-        return err;
+        dev_err(&interface->dev, "ZG01: Failed to create PCM: %d\n", err);
+        goto err_free_card;
     }
 
     err = snd_card_register(card);
-    if (err < 0) {
-        dev_err(&interface->dev, "Failed to register sound card: %d\n", err);
-        snd_card_free(card);  /* This frees the embedded dev structure */
-        return err;
+    if (err) {
+        dev_err(&interface->dev, "ZG01: Failed to register card: %d\n", err);
+        goto err_free_card;
     }
 
-    /* For interface 1, probe again to create the voice output card */
-    if (iface_num == 1 && channel_type == CHANNEL_TYPE_GAME) {
-        dev_info(&interface->dev, "ZG01: Probing interface 1 again for voice output\n");
-        return zg01_probe(interface, id);
+    /*
+     * Global pointer is set only after successful registration (USB-6).
+     * Protected by devices_mutex in the caller (probe / disconnect).
+     */
+    mutex_lock(&devices_mutex);
+    if (channel_type == CHANNEL_TYPE_GAME)
+        game_dev = dev;
+    else if (channel_type == CHANNEL_TYPE_VOICE_IN)
+        voice_in_dev = dev;
+    else
+        voice_out_dev = dev;
+    mutex_unlock(&devices_mutex);
+
+    /*
+     * Store dev in interface data.  For interface 1 this is called twice
+     * (Game then Voice Out); the second call overwrites the first.
+     * Disconnect retrieves both via the global pointers under devices_mutex
+     * (USB-7).
+     */
+    usb_set_intfdata(interface, dev);
+
+    return 0;
+
+err_free_card:
+    snd_card_free(card);
+    return err;
+}
+
+static int zg01_probe(struct usb_interface *interface,
+                      const struct usb_device_id *id)
+{
+    int iface_num;
+    int err;
+
+    iface_num = interface->cur_altsetting->desc.bInterfaceNumber;
+
+    if (iface_num != 1 && iface_num != 2) {
+        dev_info(&interface->dev, "ZG01: Skipping interface %d\n", iface_num);
+        return 0;
+    }
+
+    if (iface_num == 1) {
+        /*
+         * Interface 1 hosts both Game (playback) and Voice Out (playback).
+         * Create them in sequence — no recursion (USB-8).
+         */
+        bool need_game, need_voice_out;
+
+        mutex_lock(&devices_mutex);
+        need_game      = (game_dev == NULL);
+        need_voice_out = (voice_out_dev == NULL);
+        mutex_unlock(&devices_mutex);
+
+        if (!need_game && !need_voice_out)
+            return 0;
+
+        if (need_game) {
+            err = zg01_create_one_card(interface, id, CHANNEL_TYPE_GAME);
+            if (err)
+                return err;
+        }
+
+        if (need_voice_out) {
+            err = zg01_create_one_card(interface, id, CHANNEL_TYPE_VOICE_OUT);
+            if (err)
+                return err;
+        }
+    } else {
+        /* Interface 2 — Voice In capture */
+        mutex_lock(&devices_mutex);
+        if (voice_in_dev) {
+            mutex_unlock(&devices_mutex);
+            return 0;
+        }
+        mutex_unlock(&devices_mutex);
+
+        err = zg01_create_one_card(interface, id, CHANNEL_TYPE_VOICE_IN);
+        if (err)
+            return err;
     }
 
     return 0;
 }
 
-static void zg01_disconnect(struct usb_interface *interface)
+/*
+ * zg01_disconnect_one - kill URBs, free buffers, free card for a single dev.
+ * May be called for Game, Voice Out, or Voice In.
+ */
+static void zg01_disconnect_one(struct zg01_dev *dev)
 {
-    struct zg01_dev *dev = usb_get_intfdata(interface);
-    int iface_num = interface->cur_altsetting->desc.bInterfaceNumber;
-
-    usb_set_intfdata(interface, NULL);
+    struct urb **iso_urbs;
+    unsigned char **iso_buffers;
+    int i;
 
     if (!dev)
         return;
 
-    /* Clean up all channels for this interface */
-    int i;
-    
-    /* Clean up Game channel URBs */
-    if (dev->channel_type == CHANNEL_TYPE_GAME || iface_num == 1) {
-        for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
-            if (dev->iso_urbs_game[i]) {
-                usb_kill_urb(dev->iso_urbs_game[i]);
-                usb_free_urb(dev->iso_urbs_game[i]);
-                dev->iso_urbs_game[i] = NULL;
-            }
-            if (dev->iso_buffers_game[i]) {
-                dev->iso_buffers_game[i] = NULL;
-            }
-        }
+    /* Set disconnecting flag to prevent URB resubmission (USB-10) */
+    atomic_set(&dev->disconnecting, 1);
+
+    /*
+     * Flush any pending deferred cleanup work before we inline-free
+     * the buffers, to avoid double-free (PCM-22).
+     */
+    flush_workqueue(zg01_wq);
+
+    /* Kill + free URBs and their transfer buffers (USB-9) */
+    if (dev->channel_type == CHANNEL_TYPE_GAME) {
+        iso_urbs    = dev->iso_urbs_game;
+        iso_buffers = dev->iso_buffers_game;
+    } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+        iso_urbs    = dev->iso_urbs_voice;
+        iso_buffers = dev->iso_buffers_voice;
+    } else {
+        iso_urbs    = dev->iso_urbs_voice_out;
+        iso_buffers = dev->iso_buffers_voice_out;
     }
-    
-    /* Clean up Voice In channel URBs */
-    if (dev->channel_type == CHANNEL_TYPE_VOICE_IN || iface_num == 2) {
-        for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
-            if (dev->iso_urbs_voice[i]) {
-                usb_kill_urb(dev->iso_urbs_voice[i]);
-                usb_free_urb(dev->iso_urbs_voice[i]);
-                dev->iso_urbs_voice[i] = NULL;
-            }
-            if (dev->iso_buffers_voice[i]) {
-                dev->iso_buffers_voice[i] = NULL;
-            }
+
+    for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
+        if (iso_urbs[i]) {
+            usb_kill_urb(iso_urbs[i]);
+            usb_free_urb(iso_urbs[i]);
+            iso_urbs[i] = NULL;
         }
-    }
-    
-    /* Clean up Voice Out channel URBs */
-    if (dev->channel_type == CHANNEL_TYPE_VOICE_OUT || iface_num == 1) {
-        for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
-            if (dev->iso_urbs_voice_out[i]) {
-                usb_kill_urb(dev->iso_urbs_voice_out[i]);
-                usb_free_urb(dev->iso_urbs_voice_out[i]);
-                dev->iso_urbs_voice_out[i] = NULL;
-            }
-            if (dev->iso_buffers_voice_out[i]) {
-                dev->iso_buffers_voice_out[i] = NULL;
-            }
+        if (iso_buffers[i]) {
+            kfree(iso_buffers[i]);
+            iso_buffers[i] = NULL;
         }
     }
 
-    /* Clear global device pointers */
-    if (dev == game_dev) {
+    /* Clear global pointer under mutex (USB-3) */
+    mutex_lock(&devices_mutex);
+    if (dev == game_dev)
         game_dev = NULL;
-    } else if (dev == voice_in_dev) {
+    else if (dev == voice_in_dev)
         voice_in_dev = NULL;
-    } else if (dev == voice_out_dev) {
+    else if (dev == voice_out_dev)
         voice_out_dev = NULL;
+    mutex_unlock(&devices_mutex);
+
+    /*
+     * Use asynchronous disconnect pattern to prevent blocking USB hub thread.
+     * snd_card_disconnect() notifies userspace and prevents new opens.
+     * snd_card_free_when_closed() defers actual free until all file descriptors close.
+     * This prevents hanging the entire USB subsystem if PipeWire/apps still have the device open.
+     */
+    if (dev->card) {
+        snd_card_disconnect(dev->card);
+        snd_card_free_when_closed(dev->card);
     }
 
-    /* Free the card - this will also free the embedded dev structure */
-    if (dev->card) {
-        snd_card_free(dev->card);
+    /* USB device reference is released by ALSA when card is freed (via private_free) */
+}
+
+static void zg01_disconnect(struct usb_interface *interface)
+{
+    int iface_num = interface->cur_altsetting->desc.bInterfaceNumber;
+    struct zg01_dev *dev = usb_get_intfdata(interface);
+
+    usb_set_intfdata(interface, NULL);
+
+    if (iface_num == 1) {
+        /*
+         * Interface 1 owns Game and Voice Out.  usb_set_intfdata only stores
+         * one pointer (the last one written by zg01_create_one_card, which is
+         * Voice Out).  Retrieve both via the global pointers (USB-7).
+         */
+        struct zg01_dev *gdev;
+        struct zg01_dev *vodev;
+
+        mutex_lock(&devices_mutex);
+        gdev  = game_dev;
+        vodev = voice_out_dev;
+        mutex_unlock(&devices_mutex);
+
+        zg01_disconnect_one(gdev);
+        zg01_disconnect_one(vodev);
+    } else {
+        /* Interface 2 — Voice In; intfdata is the correct dev */
+        zg01_disconnect_one(dev);
     }
 
     dev_info(&interface->dev, "Yamaha ZG01 device disconnected\n");
 }
 
-int zg01_set_streaming_interface(struct zg01_dev *dev, int interface, int alt_setting)
+int zg01_set_streaming_interface(struct zg01_dev *dev, int interface,
+                                 int alt_setting)
 {
     int ret;
-    
-    if (!dev || !dev->udev) {
+
+    if (!dev || !dev->udev)
         return -ENODEV;
-    }
-    
+
     ret = usb_set_interface(dev->udev, interface, alt_setting);
     if (ret) {
-        dev_err(&dev->udev->dev, "Failed to set interface %d alt %d: %d\n", 
+        dev_err(&dev->udev->dev,
+                "ZG01: Failed to set interface %d alt %d: %d\n",
                 interface, alt_setting, ret);
         return ret;
     }
-    
-    dev_dbg(&dev->udev->dev, "Set interface %d to alternate setting %d\n", 
+
+    dev_dbg(&dev->udev->dev, "ZG01: Set interface %d to alt %d\n",
             interface, alt_setting);
     return 0;
 }
 
 static struct usb_device_id zg01_table[] = {
-    {USB_DEVICE(VENDOR_ID_YAMAHA, PRODUCT_ID_ZG01)},
-    {}};
+    { USB_DEVICE(VENDOR_ID_YAMAHA, PRODUCT_ID_ZG01) },
+    {}
+};
 MODULE_DEVICE_TABLE(usb, zg01_table);
 
 static struct usb_driver zg01_driver = {
-    .name = "zg01_usb",
-    .id_table = zg01_table,
-    .probe = zg01_probe,
+    .name      = "zg01_usb",
+    .id_table  = zg01_table,
+    .probe     = zg01_probe,
     .disconnect = zg01_disconnect,
 };
 
-module_usb_driver(zg01_driver);
+static int __init zg01_init(void)
+{
+    int ret;
 
-MODULE_AUTHOR("Your Name");
+    zg01_wq = alloc_ordered_workqueue("zg01", WQ_MEM_RECLAIM);
+    if (!zg01_wq)
+        return -ENOMEM;
+
+    ret = usb_register(&zg01_driver);
+    if (ret) {
+        destroy_workqueue(zg01_wq);
+        zg01_wq = NULL;
+        return ret;
+    }
+
+    return 0;
+}
+
+static void __exit zg01_exit(void)
+{
+    usb_deregister(&zg01_driver);
+    destroy_workqueue(zg01_wq);
+}
+
+module_init(zg01_init);
+module_exit(zg01_exit);
+
+MODULE_AUTHOR("Yamaha ZG01 Driver Contributors");
 MODULE_DESCRIPTION("Yamaha ZG01 USB Audio Driver");
 MODULE_LICENSE("GPL");

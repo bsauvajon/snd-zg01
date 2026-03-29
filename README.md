@@ -6,6 +6,14 @@ A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0
 
 ## ✨ Latest Updates
 
+### 🎉 March 29, 2026 - Concurrent Output Mixing + Stability Fixes
+**Game + Voice Out simultaneous playback without saccades:**
+- **Fixed**: Opening a second app (e.g. Audacity) while audio is playing no longer cuts the stream
+- **Fixed**: Game + Voice Out playing together caused saccades (two URB chains on the same USB endpoint)
+- **Fixed**: Changing Discord capture device caused a rapid TRIGGER_START/STOP loop crashing the USB device
+- **How**: Voice Out now *piggybacks* onto the Game URB stream when both are active — samples are mixed frame-by-frame in the Game callback, so only a single URB chain occupies EP 0x01
+- **Result**: Chrome (Game) + Discord (Voice Out + Voice In) all work simultaneously without any glitch
+
 ### 🎉 February 7, 2026 - Full Multi-Channel Support!
 **All three channels work simultaneously!**
 - **Fixed**: Game + Voice Out + Voice In can all operate together without interference
@@ -231,6 +239,53 @@ The driver provides crystal-clear audio on compatible hardware. If you experienc
 - Check sample rate is set to 48kHz
 - Ensure format is S32_LE (or use `plughw:` for automatic conversion)
 - Check `dmesg` for any USB or driver errors
+
+### Cleaning Up Older Versions
+
+If you installed an older version of the driver (before March 2026) and `dkms status` shows errors or broken modules after uninstalling, you may need to manually clean up the DKMS state. Older packages had incomplete cleanup scripts.
+
+**Symptoms of incomplete removal:**
+- `dkms status` shows `snd-zg01` with errors
+- `/var/lib/dkms/snd-zg01/` directory still exists after removal
+- Module files (`.ko` or `.ko.zst`) remain in `/lib/modules/*/updates/dkms/`
+
+**Complete manual cleanup:**
+```bash
+# 1. Unload the module if loaded
+sudo modprobe -r snd_zg01 2>/dev/null || sudo rmmod snd_zg01 2>/dev/null || true
+
+# 2. Force DKMS removal (ignore errors from broken state)
+sudo dkms uninstall snd-zg01/1.0.0 --all 2>/dev/null || true
+sudo dkms remove snd-zg01/1.0.0 --all 2>/dev/null || true
+
+# 3. Remove DKMS state and source directories
+sudo rm -rf /var/lib/dkms/snd-zg01
+sudo rm -rf /usr/src/snd-zg01-*
+
+# 4. Remove compiled module files
+sudo find /lib/modules/*/updates/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
+sudo find /lib/modules/*/extra/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
+
+# 5. Update module dependencies
+sudo depmod -a
+
+# 6. Remove udev rules and configs (if package removal didn't do it)
+sudo rm -f /etc/udev/rules.d/90-zg01.rules
+sudo rm -f /etc/modules-load.d/snd-zg01.conf
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+# 7. Verify everything is clean
+dkms status | grep snd-zg01  # Should show nothing
+ls -la /var/lib/dkms/ | grep snd  # Should show nothing
+ls -la /usr/src/ | grep snd  # Should show nothing
+```
+
+After cleanup, you can install the latest version:
+```bash
+sudo apt update
+sudo apt install snd-zg01-dkms
+```
 
 ## 📚 Documentation
 

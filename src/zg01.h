@@ -35,9 +35,7 @@ struct zg01_dev {
     struct usb_device *udev;
     struct snd_card *card;
     struct usb_interface *interface;
-    int card_index;
 
-    struct zg01_midi *midi;
     struct zg01_pcm pcm;
     struct zg01_control control;
 
@@ -50,19 +48,19 @@ struct zg01_dev {
     struct urb *iso_urbs_game[MAX_URBS_PER_CHANNEL];
     unsigned char *iso_buffers_game[MAX_URBS_PER_CHANNEL];
     dma_addr_t iso_dmas_game[MAX_URBS_PER_CHANNEL];
-    int active_urbs_game;
+    atomic_t active_urbs_game;
     
     /* Voice channel (low bandwidth) - multiple URBs for stability */  
     struct urb *iso_urbs_voice[MAX_URBS_PER_CHANNEL];
     unsigned char *iso_buffers_voice[MAX_URBS_PER_CHANNEL];
     dma_addr_t iso_dmas_voice[MAX_URBS_PER_CHANNEL];
-    int active_urbs_voice;
+    atomic_t active_urbs_voice;
     
     /* Voice output channel (playback to voice output) - multiple URBs for stability */
     struct urb *iso_urbs_voice_out[MAX_URBS_PER_CHANNEL];
     unsigned char *iso_buffers_voice_out[MAX_URBS_PER_CHANNEL];
     dma_addr_t iso_dmas_voice_out[MAX_URBS_PER_CHANNEL];
-    int active_urbs_voice_out;
+    atomic_t active_urbs_voice_out;
     
     spinlock_t lock;
     struct mutex pcm_mutex; /* Protect concurrent PCM operations */
@@ -80,40 +78,75 @@ struct zg01_dev {
     bool game_initialized;        /* Track if game channel has been initialized */
     bool voice_initialized;       /* Track if voice channel has been initialized */
     bool voice_out_initialized;   /* Track if voice output channel has been initialized */
-    unsigned long game_startup_frames; /* Count frames during startup to allow buffer fill */
-    unsigned long voice_startup_frames;
-    unsigned long voice_out_startup_frames;
-    
     unsigned int current_rate;      /* Current sample rate (44100 or 48000) */
-    unsigned int rate_residual;     /* Fractional sample accumulator */
     
     bool cleanup_in_progress_game;
     bool cleanup_in_progress_voice;
     bool cleanup_in_progress_voice_out;
-    unsigned long last_trigger_jiffies;
-    
-    /* Trigger loop detection - per-device to avoid race conditions */
-    unsigned long last_trigger_time;
-    int trigger_count;
-    
+    atomic_t disconnecting;           /* Set when USB disconnect starts, prevents URB resubmission */
+
+    /* Embedded work structs for URB cleanup - prevents GFP_ATOMIC allocation failures */
+    struct work_struct cleanup_work_game;
+    struct work_struct cleanup_work_voice;
+    struct work_struct cleanup_work_voice_out;
+
+    /* Deferred period-elapsed notification (PCM is nonatomic: snd_pcm_period_elapsed
+     * acquires a sleeping rwsem, unsafe to call from softirq/URB callback context) */
+    struct work_struct period_work_game;
+    struct work_struct period_work_voice;
+    struct work_struct period_work_voice_out;
+    unsigned long last_trigger_jiffies; /* jiffies at last TRIGGER_START */
+    unsigned int trigger_count;          /* START/STOP cycles within 100ms window */
+
+    /*
+     * EP 0x01 concurrent output mixing
+     *
+     * Game and Voice Out share the same USB endpoint (EP 0x01 OUT on Interface 1).
+     * Having two independent URB chains on the same ISO endpoint causes bandwidth
+     * contention and audio saccades.  Instead, when both channels are active:
+     *   - Voice Out "piggybacks" onto the Game URB stream
+     *   - Game callback reads Voice Out PCM data and mixes it into each packet
+     *   - Voice Out submits no URBs of its own
+     *
+     * Fields in game_dev:
+     *   voice_out_mixing   — 1 while Voice Out is piggybacking (atomic, used in IRQ)
+     *   vo_mix_dev         — pointer to voice_out_dev, valid while mixing == 1
+     *
+     * Fields in voice_out_dev:
+     *   voice_out_piggybacking — true  = no own URBs, relying on game stream
+     *   piggyback_host         — back-pointer to game_dev while piggybacking
+     */
+    atomic_t voice_out_mixing;    /* game_dev field: 1 = VO piggybacking */
+    struct zg01_dev *vo_mix_dev;  /* game_dev field: pointer to voice_out_dev */
+    bool voice_out_piggybacking;  /* voice_out_dev field */
+    struct zg01_dev *piggyback_host; /* voice_out_dev field: pointer to game_dev */
+
     /* Rate limiting for rapid open/close cycles from audio system probing */
     unsigned long last_open_jiffies;
     unsigned int open_count;
 
-    /* Workqueue for deferred URB cleanup to avoid sleeping in atomic contexts */
-    struct workqueue_struct *wq;
-
-    /* Deferred start support to debounce user-space probing */
-    struct delayed_work start_work_game;
-    struct delayed_work start_work_voice;
-    struct delayed_work start_work_voice_out;
-    bool start_pending_game;
-    bool start_pending_voice;
-    bool start_pending_voice_out;
 };
+
+/* Global device pointers — defined in zg01_usb.c, accessed from zg01_pcm.c */
+extern struct zg01_dev *game_dev;
+extern struct zg01_dev *voice_in_dev;
+extern struct zg01_dev *voice_out_dev;
+
+/* Private workqueue — defined in zg01_usb.c */
+extern struct workqueue_struct *zg01_wq;
 
 int zg01_create_pcm(struct zg01_dev *dev);
 int zg01_set_streaming_interface(struct zg01_dev *dev, int interface, int alt_setting);
+
+/* Cleanup work functions — defined in zg01_pcm.c, registered in zg01_usb.c */
+void zg01_cleanup_work_game_fn(struct work_struct *work);
+void zg01_cleanup_work_voice_fn(struct work_struct *work);
+void zg01_cleanup_work_voice_out_fn(struct work_struct *work);
+
+/* Period-elapsed deferred work functions — defined in zg01_pcm.c, registered in zg01_usb.c */
+void zg01_period_work_game_fn(struct work_struct *work);
+void zg01_period_work_voice_fn(struct work_struct *work);
+void zg01_period_work_voice_out_fn(struct work_struct *work);
 
 /* USB Hardware Discovery Functions */
 int zg01_discover_usb_config(struct zg01_dev *dev);

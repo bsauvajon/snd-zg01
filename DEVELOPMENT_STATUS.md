@@ -1,7 +1,7 @@
 # Yamaha ZG01 Driver - Development Status
 
 **Current State: PRODUCTION READY ✅**
-**Last Updated: January 5, 2026**
+**Last Updated: March 29, 2026**
 
 ## 🏆 Major Milestones Achieved!
 
@@ -313,6 +313,12 @@ make clean && make
 ```
 
 ## 📊 Progress Timeline
+
+### March 29, 2026 - Concurrent Output Mixing + Stability Fixes 🎉
+- ✅ **Fixed second-app open killing active stream**: busy check for Game/Voice Out/Voice In channels now happens before any `usb_set_interface()` call in `pcm_open()`, so opening Audacity or any probe can no longer disrupt a running stream
+- ✅ **Fixed rapid TRIGGER_START/STOP loop**: when PipeWire reconfigures (e.g. Discord changes capture device), more than 3 START/STOP cycles within 100ms now keep URBs alive (sending silence) instead of tearing them down — prevents USB device disconnection
+- ✅ **Fixed Game + Voice Out saccades (EP 0x01 contention)**: Voice Out enters *piggyback* mode when Game is active; Game callback reads Voice Out PCM and mixes via saturating 64-bit addition into each 40-byte frame; Voice Out period notifications are forwarded so PipeWire keeps feeding data
+- ✅ **Result**: Chrome (Game Out) + Discord (Voice Out + Voice In) fully simultaneous with no glitches
 
 ### February 7, 2026 - Full Multi-Channel Support! 🎉
 - ✅ **Fixed multi-channel interference**: Game + Voice Out + Voice In can all operate simultaneously
