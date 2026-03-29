@@ -95,8 +95,32 @@ struct zg01_dev {
     struct work_struct period_work_game;
     struct work_struct period_work_voice;
     struct work_struct period_work_voice_out;
-    unsigned long last_trigger_jiffies;
-    
+    unsigned long last_trigger_jiffies; /* jiffies at last TRIGGER_START */
+    unsigned int trigger_count;          /* START/STOP cycles within 100ms window */
+
+    /*
+     * EP 0x01 concurrent output mixing
+     *
+     * Game and Voice Out share the same USB endpoint (EP 0x01 OUT on Interface 1).
+     * Having two independent URB chains on the same ISO endpoint causes bandwidth
+     * contention and audio saccades.  Instead, when both channels are active:
+     *   - Voice Out "piggybacks" onto the Game URB stream
+     *   - Game callback reads Voice Out PCM data and mixes it into each packet
+     *   - Voice Out submits no URBs of its own
+     *
+     * Fields in game_dev:
+     *   voice_out_mixing   — 1 while Voice Out is piggybacking (atomic, used in IRQ)
+     *   vo_mix_dev         — pointer to voice_out_dev, valid while mixing == 1
+     *
+     * Fields in voice_out_dev:
+     *   voice_out_piggybacking — true  = no own URBs, relying on game stream
+     *   piggyback_host         — back-pointer to game_dev while piggybacking
+     */
+    atomic_t voice_out_mixing;    /* game_dev field: 1 = VO piggybacking */
+    struct zg01_dev *vo_mix_dev;  /* game_dev field: pointer to voice_out_dev */
+    bool voice_out_piggybacking;  /* voice_out_dev field */
+    struct zg01_dev *piggyback_host; /* voice_out_dev field: pointer to game_dev */
+
     /* Rate limiting for rapid open/close cycles from audio system probing */
     unsigned long last_open_jiffies;
     unsigned int open_count;

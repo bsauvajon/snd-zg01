@@ -6,6 +6,14 @@ A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0
 
 ## ✨ Latest Updates
 
+### 🎉 March 29, 2026 - Concurrent Output Mixing + Stability Fixes
+**Game + Voice Out simultaneous playback without saccades:**
+- **Fixed**: Opening a second app (e.g. Audacity) while audio is playing no longer cuts the stream
+- **Fixed**: Game + Voice Out playing together caused saccades (two URB chains on the same USB endpoint)
+- **Fixed**: Changing Discord capture device caused a rapid TRIGGER_START/STOP loop crashing the USB device
+- **How**: Voice Out now *piggybacks* onto the Game URB stream when both are active — samples are mixed frame-by-frame in the Game callback, so only a single URB chain occupies EP 0x01
+- **Result**: Chrome (Game) + Discord (Voice Out + Voice In) all work simultaneously without any glitch
+
 ### 🎉 February 7, 2026 - Full Multi-Channel Support!
 **All three channels work simultaneously!**
 - **Fixed**: Game + Voice Out + Voice In can all operate together without interference

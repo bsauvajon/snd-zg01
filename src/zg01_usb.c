@@ -89,6 +89,10 @@ static int zg01_create_one_card(struct usb_interface *interface,
     atomic_set(&dev->active_urbs_game, 0);
     atomic_set(&dev->active_urbs_voice, 0);
     atomic_set(&dev->active_urbs_voice_out, 0);
+    atomic_set(&dev->voice_out_mixing, 0);
+    dev->vo_mix_dev = NULL;
+    dev->voice_out_piggybacking = false;
+    dev->piggyback_host = NULL;
 
     /* Initialize embedded cleanup work structs - prevents GFP_ATOMIC allocation failures */
     INIT_WORK(&dev->cleanup_work_game, zg01_cleanup_work_game_fn);
