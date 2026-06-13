@@ -172,12 +172,13 @@ Based on Windows driver analysis:
 
 ### Audio Frame Formats
 
-#### Playback (Game Channel) - 40 bytes per frame
+#### Playback (Game + Voice Out Channels) - 40 bytes per frame
 ```
 Offset  Size  Content
-0-7     8     Zeros (padding)
-8-11    4     Left sample (S32_LE, upper 24 bits used)
-12-15   4     Right sample (S32_LE, upper 24 bits used)
+0-3     4     Voice Left sample (S32_LE)
+4-7     4     Voice Right sample (S32_LE)
+8-11    4     Game Left sample (S32_LE, upper 24 bits used)
+12-15   4     Game Right sample (S32_LE, upper 24 bits used)
 16-39   24    Zeros (padding)
 ```
 
