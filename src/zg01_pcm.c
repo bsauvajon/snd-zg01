@@ -1224,7 +1224,7 @@ static void zg01_iso_callback(struct urb *urb)
             pkt_buf = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
 
             /* Each USB packet MUST contain exactly 6 frames (240 bytes) */
-            /* Frame format: 8 zeros + L(4) + R(4) + 24 zeros = 40 bytes per frame */
+            /* Frame format: Voice_L(4) + Voice_R(4) + Game_L(4) + Game_R(4) + 24 zeros = 40 bytes per frame */
             const unsigned int frames_per_packet = 6;
             
             if (pkt_len == 240) {
@@ -1241,94 +1241,83 @@ static void zg01_iso_callback(struct urb *urb)
                     unsigned int pcm_frame_offset = frame_pos * bytes_per_frame;
                     unsigned int buffer_size_bytes = buffer_size_frames * bytes_per_frame;
                     
-                    int32_t sample_l, sample_r;
+                    int32_t game_l = 0, game_r = 0;
+                    int32_t voice_l = 0, voice_r = 0;
                     
-                    if (pcm_frame_offset + 8 <= buffer_size_bytes) {
-                        memcpy(&sample_l, pcm_buf + pcm_frame_offset, 4);
-                        memcpy(&sample_r, pcm_buf + pcm_frame_offset + 4, 4);
-                    } else {
-                        /* Wrapped read */
-                        unsigned int first_part = buffer_size_bytes - pcm_frame_offset;
-                        unsigned char tmp_buf[8];
-                        memcpy(tmp_buf, pcm_buf + pcm_frame_offset, first_part);
-                        memcpy(tmp_buf + first_part, pcm_buf, 8 - first_part);
-                        memcpy(&sample_l, tmp_buf, 4);
-                        memcpy(&sample_r, tmp_buf + 4, 4);
-                    }
-                    
-                    /* No shift needed - device expects samples in upper bits like ALSA S32_LE */
+                    if (is_game_channel) {
+                        /* Read Game L/R from current PCM buffer */
+                        if (dev->game_channel_active) {
+                            if (pcm_frame_offset + 8 <= buffer_size_bytes) {
+                                memcpy(&game_l, pcm_buf + pcm_frame_offset, 4);
+                                memcpy(&game_r, pcm_buf + pcm_frame_offset + 4, 4);
+                            } else {
+                                /* Wrapped read */
+                                unsigned int first_part = buffer_size_bytes - pcm_frame_offset;
+                                unsigned char tmp_buf[8];
+                                memcpy(tmp_buf, pcm_buf + pcm_frame_offset, first_part);
+                                memcpy(tmp_buf + first_part, pcm_buf, 8 - first_part);
+                                memcpy(&game_l, tmp_buf, 4);
+                                memcpy(&game_r, tmp_buf + 4, 4);
+                            }
+                        }
 
-                    /*
-                     * EP 0x01 mixing: if Voice Out is piggybacking onto this
-                     * Game stream, add its PCM samples to ours.  We hold
-                     * game_dev->lock, so pcm_pos_voice_out is only modified
-                     * here — no extra lock needed for voice_out_dev fields.
-                     */
-                    if (is_game_channel && atomic_read(&dev->voice_out_mixing)) {
-                        struct zg01_dev *vo = dev->vo_mix_dev;
-                        if (vo && READ_ONCE(vo->voice_out_channel_active)) {
-                            struct snd_pcm_substream *vo_sub =
-                                READ_ONCE(vo->substream_voice_out);
-                            if (vo_sub && vo_sub->runtime &&
-                                vo_sub->runtime->dma_area) {
-                                struct snd_pcm_runtime *vo_rt = vo_sub->runtime;
-                                unsigned int vo_bpf = vo_rt->frame_bits / 8;
-                                unsigned int vo_buf = vo_rt->buffer_size;
-                                unsigned int vo_total =
-                                    total_frames_processed + frames_copied;
-                                unsigned int vo_frame =
-                                    (vo->pcm_pos_voice_out + vo_total) % vo_buf;
-                                unsigned int vo_off = vo_frame * vo_bpf;
-                                unsigned int vo_buf_bytes = vo_buf * vo_bpf;
-                                int32_t vo_l = 0, vo_r = 0;
-                                if (vo_off + 8 <= vo_buf_bytes) {
-                                    memcpy(&vo_l,
-                                           vo_rt->dma_area + vo_off, 4);
-                                    memcpy(&vo_r,
-                                           vo_rt->dma_area + vo_off + 4, 4);
+                        /* Read Voice Out L/R if piggybacking */
+                        if (atomic_read(&dev->voice_out_mixing)) {
+                            struct zg01_dev *vo = dev->vo_mix_dev;
+                            if (vo && READ_ONCE(vo->voice_out_channel_active)) {
+                                struct snd_pcm_substream *vo_sub =
+                                    READ_ONCE(vo->substream_voice_out);
+                                if (vo_sub && snd_pcm_running(vo_sub) &&
+                                    vo_sub->runtime && vo_sub->runtime->dma_area) {
+                                    struct snd_pcm_runtime *vo_rt = vo_sub->runtime;
+                                    unsigned int vo_bpf = vo_rt->frame_bits / 8;
+                                    unsigned int vo_buf = vo_rt->buffer_size;
+                                    unsigned int vo_total =
+                                        total_frames_processed + frames_copied;
+                                    unsigned int vo_frame =
+                                        (vo->pcm_pos_voice_out + vo_total) % vo_buf;
+                                    unsigned int vo_off = vo_frame * vo_bpf;
+                                    unsigned int vo_buf_bytes = vo_buf * vo_bpf;
+                                    if (vo_off + 8 <= vo_buf_bytes) {
+                                        memcpy(&voice_l,
+                                               vo_rt->dma_area + vo_off, 4);
+                                        memcpy(&voice_r,
+                                               vo_rt->dma_area + vo_off + 4, 4);
+                                    }
                                 }
-                                /* Sum with saturation to prevent wrap-around */
-                                int64_t ml = (int64_t)sample_l + vo_l;
-                                int64_t mr = (int64_t)sample_r + vo_r;
-                                sample_l = (int32_t)clamp_t(int64_t, ml,
-                                    (int64_t)S32_MIN, (int64_t)S32_MAX);
-                                sample_r = (int32_t)clamp_t(int64_t, mr,
-                                    (int64_t)S32_MIN, (int64_t)S32_MAX);
+                            }
+                        }
+                    } else if (is_voice_out_channel) {
+                        /* Read Voice Out L/R from current PCM buffer (independent stream) */
+                        if (dev->voice_out_channel_active) {
+                            if (pcm_frame_offset + 8 <= buffer_size_bytes) {
+                                memcpy(&voice_l, pcm_buf + pcm_frame_offset, 4);
+                                memcpy(&voice_r, pcm_buf + pcm_frame_offset + 4, 4);
+                            } else {
+                                /* Wrapped read */
+                                unsigned int first_part = buffer_size_bytes - pcm_frame_offset;
+                                unsigned char tmp_buf[8];
+                                memcpy(tmp_buf, pcm_buf + pcm_frame_offset, first_part);
+                                memcpy(tmp_buf + first_part, pcm_buf, 8 - first_part);
+                                memcpy(&voice_l, tmp_buf, 4);
+                                memcpy(&voice_r, tmp_buf + 4, 4);
                             }
                         }
                     }
-
-                    /* Check if the channel is active */
-                    bool is_active;
-                    if (is_game_channel) {
-                        is_active = dev->game_channel_active;
-                    } else if (is_voice_out_channel) {
-                        is_active = dev->voice_out_channel_active;
-                    } else {
-                        is_active = dev->voice_channel_active;
-                    }
-
-                    /* 40-byte frame format: 8 zeros + L + R + 24 zeros */
-                    memset(pkt_buf + pkt_offset, 0, 8);
-                    pkt_offset += 8;
                     
-                    if (is_active) {
-                        /* Copy Left Channel */
-                        memcpy(pkt_buf + pkt_offset, &sample_l, 4);
-                    } else {
-                        memset(pkt_buf + pkt_offset, 0, 4);
-                    }
+                    /* Copy Voice L/R to offset 0-7 (Channel 0 & 1) */
+                    memcpy(pkt_buf + pkt_offset, &voice_l, 4);
+                    pkt_offset += 4;
+                    memcpy(pkt_buf + pkt_offset, &voice_r, 4);
+                    pkt_offset += 4;
+
+                    /* Copy Game L/R to offset 8-15 (Channel 2 & 3) */
+                    memcpy(pkt_buf + pkt_offset, &game_l, 4);
+                    pkt_offset += 4;
+                    memcpy(pkt_buf + pkt_offset, &game_r, 4);
                     pkt_offset += 4;
                     
-                    if (is_active) {
-                        /* Copy Right Channel */
-                         memcpy(pkt_buf + pkt_offset, &sample_r, 4);
-                    } else {
-                         memset(pkt_buf + pkt_offset, 0, 4);
-                    }
-                    pkt_offset += 4;
-                    
-                    /* 24 bytes of zeros after samples */
+                    /* 24 bytes of zeros after samples (Channel 4 to 9) */
                     memset(pkt_buf + pkt_offset, 0, 24);
                     pkt_offset += 24;
                 }
