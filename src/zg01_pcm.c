@@ -1278,11 +1278,10 @@ static void zg01_iso_callback(struct urb *urb)
                                         (vo->pcm_pos_voice_out + vo_total) % vo_buf;
                                     unsigned int vo_off = vo_frame * vo_bpf;
                                     unsigned int vo_buf_bytes = vo_buf * vo_bpf;
-                                    int32_t vo_l = 0, vo_r = 0;
                                     if (vo_off + 8 <= vo_buf_bytes) {
-                                        memcpy(&vo_l,
+                                        memcpy(&voice_l,
                                                vo_rt->dma_area + vo_off, 4);
-                                        memcpy(&vo_r,
+                                        memcpy(&voice_r,
                                                vo_rt->dma_area + vo_off + 4, 4);
                                     }
                                 }
