@@ -291,6 +291,8 @@ sudo apt install snd-zg01-dkms
 
 See additional markdown files for detailed information:
 - [INSTALLATION.md](INSTALLATION.md): Detailed installation instructions
+- [packaging/arch/README.md](packaging/arch/README.md): Arch Linux and Omarchy packaging, verification, and rollback
+- [docs/PROTOCOL_CAPTURE.md](docs/PROTOCOL_CAPTURE.md): Windows USBPcap workflow for knobs, buttons, routing, and DSP
 - [PACKAGING.md](PACKAGING.md): DKMS package building and release process
 - [TESTING_GUIDE.md](TESTING_GUIDE.md): Comprehensive testing procedures
 - [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md): Technical details and development notes

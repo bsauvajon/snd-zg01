@@ -1,0 +1,15 @@
+pkgbase = snd-zg01-dkms-git
+	pkgdesc = Experimental Yamaha ZG01 USB audio driver (DKMS, git)
+	pkgver = r53.681f867
+	pkgrel = 1
+	url = https://github.com/bsauvajon/snd-zg01
+	arch = any
+	license = GPL-2.0-or-later
+	makedepends = git
+	depends = dkms
+	provides = snd-zg01-dkms
+	conflicts = snd-zg01-dkms
+	source = snd-zg01::git+https://github.com/bsauvajon/snd-zg01.git
+	sha256sums = SKIP
+
+pkgname = snd-zg01-dkms-git

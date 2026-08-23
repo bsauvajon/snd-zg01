@@ -1650,8 +1650,6 @@ cleanup_submitted_urbs:
 static void zg01_stop_streaming(struct zg01_dev *dev)
 {
     struct urb **iso_urbs;
-    unsigned char **iso_buffers;
-    dma_addr_t *iso_dmas;
     bool *cleanup_in_progress;
     int i;
     struct work_struct *cleanup_work;
@@ -1677,14 +1675,10 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
             dev->vo_mix_dev = NULL;
         }
         iso_urbs = dev->iso_urbs_game;
-        iso_buffers = dev->iso_buffers_game;
-        iso_dmas = dev->iso_dmas_game;
         cleanup_in_progress = &dev->cleanup_in_progress_game;
         pr_info("zg01_pcm: Stopping Game channel\n");
     } else if (is_voice_in_channel) {
         iso_urbs = dev->iso_urbs_voice;
-        iso_buffers = dev->iso_buffers_voice;
-        iso_dmas = dev->iso_dmas_voice;
         cleanup_in_progress = &dev->cleanup_in_progress_voice;
         pr_info("zg01_pcm: Stopping Voice In channel\n");
     } else {
@@ -1705,8 +1699,6 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
             return;
         }
         iso_urbs = dev->iso_urbs_voice_out;
-        iso_buffers = dev->iso_buffers_voice_out;
-        iso_dmas = dev->iso_dmas_voice_out;
         cleanup_in_progress = &dev->cleanup_in_progress_voice_out;
         pr_info("zg01_pcm: Stopping Voice Out channel\n");
     }
