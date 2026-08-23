@@ -19,3 +19,5 @@ Module.symvers
 .dep
 modules.order
 /.worktrees/
+__pycache__/
+*.py[cod]
