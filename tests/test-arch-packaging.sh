@@ -78,4 +78,14 @@ dkms build \
 
 test -f "$test_root/dkms/snd-zg01/$pkgver/$(uname -r)/$(uname -m)/module/snd-zg01.ko"
 
+dkms remove \
+  -m snd-zg01 \
+  -v "$pkgver" \
+  --all \
+  --sourcetree "$test_root/root/usr/src" \
+  --dkmstree "$test_root/dkms" \
+  --installtree "$test_root/modules"
+
+test ! -e "$test_root/dkms/snd-zg01/$pkgver"
+
 printf 'Arch DKMS package contract passed: %s\n' "$(basename "$package")"
