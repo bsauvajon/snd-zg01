@@ -36,9 +36,10 @@ def normalize(path: Path):
             except ValueError as error:
                 raise ValueError(f"line {line_number}: capdata is not hexadecimal") from error
             expected_length = integer(length)
-            if len(payload) != expected_length:
+            actual_length = len(payload)
+            if actual_length > expected_length:
                 raise ValueError(
-                    f"line {line_number}: wLength is {expected_length}, capdata is {len(payload)} bytes"
+                    f"line {line_number}: wLength is {expected_length}, capdata is {actual_length} bytes"
                 )
             yield {
                 "frame": integer(frame),
@@ -50,6 +51,7 @@ def normalize(path: Path):
                 "value": integer(value),
                 "index": integer(index),
                 "length": expected_length,
+                "actual_length": actual_length,
                 "data": compact_data,
             }
 

@@ -65,6 +65,11 @@ The normalizer accepts UTF-8 from PowerShell 7 and UTF-16 with a byte-order
 mark from Windows PowerShell 5.1. The explicit UTF-8 writer above keeps files
 portable before they leave Windows.
 
+`length` in normalized output is USB's requested maximum (`wLength`), while
+`actual_length` is the payload present on that record. A smaller actual value is
+a valid short response; an empty value can be the setup half of a split IN
+transfer and must be correlated with its completion during analysis.
+
 Normalize the TSV on Linux into diff-friendly JSON Lines:
 
 ```bash
