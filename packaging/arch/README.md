@@ -77,4 +77,3 @@ reboot
 
 Do not manually delete files under `/usr/src`, `/var/lib/dkms`, or
 `/usr/lib/modules`; the package and DKMS hooks own them.
-
