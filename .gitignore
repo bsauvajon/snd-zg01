@@ -18,3 +18,4 @@ tags
 Module.symvers
 .dep
 modules.order
+/.worktrees/
