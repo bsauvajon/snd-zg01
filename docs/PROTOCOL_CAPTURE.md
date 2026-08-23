@@ -57,8 +57,13 @@ tshark -r 10-volume-up-one.pcapng `
   -e frame.number -e frame.time_relative -e usb.bus_id `
   -e usb.idVendor -e usb.idProduct -e usb.setup.bmRequestType `
   -e usb.setup.bRequest -e usb.setup.wValue -e usb.setup.wIndex `
-  -e usb.setup.wLength -e usb.capdata > 10-volume-up-one.tsv
+  -e usb.setup.wLength -e usb.capdata |
+  Out-File -Encoding utf8 10-volume-up-one.tsv
 ```
+
+The normalizer accepts UTF-8 from PowerShell 7 and UTF-16 with a byte-order
+mark from Windows PowerShell 5.1. The explicit UTF-8 writer above keeps files
+portable before they leave Windows.
 
 Normalize the TSV on Linux into diff-friendly JSON Lines:
 

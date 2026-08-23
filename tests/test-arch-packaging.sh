@@ -26,7 +26,10 @@ cmp "$test_root/.SRCINFO" "$test_root/generated.SRCINFO"
 package=$(find "$test_root/packages" -maxdepth 1 -type f -name 'snd-zg01-dkms-git-*.pkg.tar.zst' -print -quit)
 test -n "$package"
 
-pkgver=$(bash -c 'source "$1/PKGBUILD"; printf "%s" "$pkgver"' _ "$test_root")
+bsdtar -xOf "$package" .PKGINFO > "$test_root/PKGINFO"
+package_version=$(sed -n 's/^pkgver = //p' "$test_root/PKGINFO")
+pkgver=${package_version%-*}
+test -n "$pkgver"
 src_root="usr/src/snd-zg01-$pkgver"
 
 for path in \
@@ -50,8 +53,8 @@ if grep -q '^CLEAN=' "$test_root/dkms.conf"; then
   exit 1
 fi
 
-bsdtar -xOf "$package" .PKGINFO > "$test_root/PKGINFO"
 grep -Fxq 'pkgname = snd-zg01-dkms-git' "$test_root/PKGINFO"
+grep -Fxq 'arch = any' "$test_root/PKGINFO"
 grep -Fxq 'depend = dkms' "$test_root/PKGINFO"
 grep -Fxq 'makedepend = git' "$test_root/PKGINFO"
 grep -Fxq 'provides = snd-zg01-dkms' "$test_root/PKGINFO"

@@ -15,6 +15,6 @@ if grep -Eiq '(^|[^[:alpha:]])(warning|error):' "$build_log"; then
 fi
 
 test -f "$repo_root/snd-zg01.ko"
-modinfo "$repo_root/snd-zg01.ko" | grep -Fq "vermagic:       $(uname -r)"
+test "$(modinfo -F vermagic "$repo_root/snd-zg01.ko" | cut -d' ' -f1)" = "$(uname -r)"
 
 printf 'Strict kernel build passed for %s\n' "$(uname -r)"

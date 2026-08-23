@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+import io
 import json
 from pathlib import Path
 
@@ -15,7 +16,9 @@ def integer(value: str) -> int:
 
 
 def normalize(path: Path):
-    with path.open(newline="", encoding="utf-8") as stream:
+    raw = path.read_bytes()
+    encoding = "utf-16" if raw.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+    with io.StringIO(raw.decode(encoding), newline="") as stream:
         for line_number, row in enumerate(csv.reader(stream, delimiter="\t"), 1):
             if not row or all(not field for field in row):
                 continue
@@ -27,6 +30,16 @@ def normalize(path: Path):
                 continue
 
             request_type_value = integer(request_type)
+            compact_data = data.replace(":", "").replace(" ", "").lower()
+            try:
+                payload = bytes.fromhex(compact_data)
+            except ValueError as error:
+                raise ValueError(f"line {line_number}: capdata is not hexadecimal") from error
+            expected_length = integer(length)
+            if len(payload) != expected_length:
+                raise ValueError(
+                    f"line {line_number}: wLength is {expected_length}, capdata is {len(payload)} bytes"
+                )
             yield {
                 "frame": integer(frame),
                 "time": float(timestamp),
@@ -36,8 +49,8 @@ def normalize(path: Path):
                 "request": integer(request),
                 "value": integer(value),
                 "index": integer(index),
-                "length": integer(length),
-                "data": data.replace(":", "").lower(),
+                "length": expected_length,
+                "data": compact_data,
             }
 
 

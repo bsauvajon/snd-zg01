@@ -3,7 +3,8 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 actual=$(mktemp)
-trap 'rm "$actual"' EXIT
+utf16=$(mktemp)
+trap 'rm "$actual" "$utf16"' EXIT
 
 python3 "$repo_root/tools/normalize-usbpcap.py" \
   "$repo_root/tests/fixtures/usb-control.tsv" > "$actual"
@@ -42,5 +43,17 @@ assert rows == [
     },
 ]
 PY
+
+iconv -f UTF-8 -t UTF-16 "$repo_root/tests/fixtures/usb-control.tsv" > "$utf16"
+python3 "$repo_root/tools/normalize-usbpcap.py" "$utf16" > "$actual"
+test "$(wc -l < "$actual")" -eq 2
+
+for invalid_fixture in usb-control-malformed-hex.tsv usb-control-length-mismatch.tsv; do
+  if python3 "$repo_root/tools/normalize-usbpcap.py" \
+    "$repo_root/tests/fixtures/$invalid_fixture" >/dev/null 2>&1; then
+    printf 'Normalizer accepted invalid fixture: %s\n' "$invalid_fixture" >&2
+    exit 1
+  fi
+done
 
 printf 'USBPcap normalizer contract passed\n'
