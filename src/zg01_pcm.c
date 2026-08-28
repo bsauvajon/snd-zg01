@@ -45,6 +45,35 @@ static inline int zg01_get_active_urbs_count(struct zg01_dev *dev)
 }
 
 
+/*
+ * True if any channel (Game, Voice In, Voice Out) currently has URBs in
+ * flight.
+ *
+ * usb_set_interface() flushes EVERY pending URB on all endpoints of the
+ * target interface — even when the altsetting does not change — so any
+ * interface call while another channel streams kills that channel's URB
+ * chain (completes with -ENOENT, no resubmit). Callers must check this
+ * before touching interface state. prepare() performs the equivalent
+ * check inline with per-channel logging.
+ */
+static bool zg01_any_channel_streaming(void)
+{
+    struct zg01_dev *gdev, *vin, *vout;
+    bool streaming;
+
+    mutex_lock(&devices_mutex);
+    gdev = game_dev;
+    vin = voice_in_dev;
+    vout = voice_out_dev;
+    mutex_unlock(&devices_mutex);
+
+    streaming = (gdev && atomic_read(&gdev->active_urbs_game) > 0) ||
+                (vin && atomic_read(&vin->active_urbs_voice) > 0) ||
+                (vout && atomic_read(&vout->active_urbs_voice_out) > 0);
+
+    return streaming;
+}
+
 static int zg01_pcm_open(struct snd_pcm_substream *substream)
 {
     struct zg01_dev *dev = snd_pcm_substream_chip(substream);
@@ -152,11 +181,20 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
             goto unlock;
         }
 
-        /* Set Interface 1 to Alt Setting 1 to enable isochronous endpoint 0x01 OUT */
-        ret = usb_set_interface(dev->udev, 1, 1);
-        if (ret < 0) {
-            pr_err("zg01_pcm: Failed to set Interface 1 Alt 1: %d\n", ret);
-            goto unlock;
+        /* usb_set_interface() flushes every pending URB on the target
+         * interface's endpoints — even for a same-altsetting request.
+         * If Voice Out is streaming its own URBs on EP 0x01, skip the
+         * call and let start_streaming()'s piggyback logic handle the
+         * transition instead of killing its URB chain. */
+        if (!zg01_any_channel_streaming()) {
+            /* Set Interface 1 to Alt Setting 1 to enable isochronous endpoint 0x01 OUT */
+            ret = usb_set_interface(dev->udev, 1, 1);
+            if (ret < 0) {
+                pr_err("zg01_pcm: Failed to set Interface 1 Alt 1: %d\n", ret);
+                goto unlock;
+            }
+        } else {
+            pr_info("zg01_pcm: Game open - another channel streaming, skipping interface setup\n");
         }
         if (!is_rapid_probe) {
             pr_info("zg01_pcm: Game channel configured Interface 1, Alt 1, EP 0x01 OUT (280 bytes)\n");
@@ -206,11 +244,19 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
             goto unlock;
         }
 
-        /* Set Interface 2 to Alt Setting 1 to enable isochronous endpoint 0x81 IN */
-        ret = usb_set_interface(dev->udev, 2, 1);
-        if (ret < 0) {
-            pr_err("zg01_pcm: Failed to set Interface 2 Alt 1: %d\n", ret);
-            goto unlock;
+        /* Guard against flushing other channels' URBs (see Game open).
+         * usb_set_interface(2, 1) only flushes iface 2 endpoints, so
+         * Game/Voice Out on iface 1 are unaffected, but be consistent
+         * and skip whenever anything streams. */
+        if (!zg01_any_channel_streaming()) {
+            /* Set Interface 2 to Alt Setting 1 to enable isochronous endpoint 0x81 IN */
+            ret = usb_set_interface(dev->udev, 2, 1);
+            if (ret < 0) {
+                pr_err("zg01_pcm: Failed to set Interface 2 Alt 1: %d\n", ret);
+                goto unlock;
+            }
+        } else {
+            pr_info("zg01_pcm: Voice In open - another channel streaming, skipping interface setup\n");
         }
         if (!is_rapid_probe) {
             pr_info("zg01_pcm: Voice In channel configured Interface 2, Alt 1, EP 0x81 IN (124 bytes)\n");
@@ -265,6 +311,7 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
         int game_urbs = 0;
         bool game_streaming = false;
         struct zg01_dev *local_game_dev;
+        bool other_channel_streaming;
 
         mutex_lock(&devices_mutex);
         local_game_dev = game_dev;
@@ -274,24 +321,35 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
             game_urbs = atomic_read(&local_game_dev->active_urbs_game);
             game_streaming = game_urbs > 0;
         }
-        
+
+        /* Voice In captures on Interface 2. usb_set_interface(udev, 2, x)
+         * flushes every pending URB on EP 0x81 — even when the altsetting
+         * does not change — killing the capture URB chain with -ENOENT.
+         * Skip ALL interface changes whenever ANY other channel streams. */
+        other_channel_streaming = zg01_any_channel_streaming();
+
         if (game_streaming) {
             pr_info("zg01_pcm: Voice Out open - SKIPPING interface setup (Game streaming with %d URBs)\n",
                     game_urbs);
             /* Mark as initialized so prepare() doesn't try either */
+            dev->voice_out_initialized = true;
+        } else if (other_channel_streaming) {
+            pr_info("zg01_pcm: Voice Out open - SKIPPING interface setup (Voice In streaming, Interface 2 protected)\n");
+            /* Interface state is already valid for streaming; prepare()
+             * will take its any-channel-streaming early path. */
             dev->voice_out_initialized = true;
         } else if (!dev->voice_out_initialized) {
             ret = usb_set_interface(dev->udev, 2, 0);
             if (ret < 0) {
                 pr_warn("zg01_pcm: Failed to set Interface 2 Alt 0 for Voice Out: %d\n", ret);
             }
-            
+
             ret = usb_set_interface(dev->udev, 1, 1);
             if (ret < 0) {
                 pr_err("zg01_pcm: Failed to set Interface 1 Alt 1 for Voice Out: %d\n", ret);
                 goto unlock;
             }
-            
+
             ret = usb_set_interface(dev->udev, 2, 1);
             if (ret < 0) {
                 pr_warn("zg01_pcm: Failed to set Interface 2 Alt 1 for Voice Out: %d\n", ret);
