@@ -46,6 +46,8 @@ bounded wpctl status >/dev/null
 bounded pactl info >/dev/null
 
 nodes=$(bounded pw-dump)
+log_dir=$(mktemp -d)
+trap 'rm -rf "$log_dir"' EXIT
 
 find_node() {
   local media_class=$1
@@ -85,20 +87,23 @@ start_time=$(date --iso-8601=seconds)
 run_cycle() {
   local game_pid voice_out_pid voice_in_pid
   local game_rc voice_out_rc voice_in_rc
+  local game_log="$log_dir/game.log"
+  local voice_out_log="$log_dir/voice-out.log"
+  local voice_in_log="$log_dir/voice-in.log"
 
-  bounded pw-play --raw --rate 48000 --channels 2 --format s32 \
+  bounded pw-play --verbose --raw --rate 48000 --channels 2 --format s32 \
     --sample-count 4800 --target "$game_node" /dev/zero \
-    >/dev/null 2>&1 &
+    >"$game_log" 2>&1 &
   game_pid=$!
 
-  bounded pw-play --raw --rate 48000 --channels 2 --format s32 \
+  bounded pw-play --verbose --raw --rate 48000 --channels 2 --format s32 \
     --sample-count 4800 --target "$voice_out_node" /dev/zero \
-    >/dev/null 2>&1 &
+    >"$voice_out_log" 2>&1 &
   voice_out_pid=$!
 
-  bounded pw-record --raw --rate 48000 --channels 2 --format s32 \
+  bounded pw-record --verbose --raw --rate 48000 --channels 2 --format s32 \
     --sample-count 4800 --target "$voice_in_node" /dev/null \
-    >/dev/null 2>&1 &
+    >"$voice_in_log" 2>&1 &
   voice_in_pid=$!
 
   set +e
@@ -110,9 +115,15 @@ run_cycle() {
   voice_in_rc=$?
   set -e
 
-  if ((game_rc != 0 || voice_out_rc != 0 || voice_in_rc != 0)); then
+  # pw-cat 1.6.8 exits 1 after a completed --sample-count stream. Accept that
+  # code only when the client proves it reached PipeWire's streaming state.
+  if ! { ((game_rc == 0)) || { ((game_rc == 1)) && grep -q 'paused -> streaming' "$game_log"; }; } ||
+     ! { ((voice_out_rc == 0)) || { ((voice_out_rc == 1)) && grep -q 'paused -> streaming' "$voice_out_log"; }; } ||
+     ! { ((voice_in_rc == 0)) || { ((voice_in_rc == 1)) && grep -q 'paused -> streaming' "$voice_in_log"; }; }
+  then
     printf 'Stream cycle failed: game=%d voice_out=%d voice_in=%d\n' \
       "$game_rc" "$voice_out_rc" "$voice_in_rc" >&2
+    tail -n 10 "$game_log" "$voice_out_log" "$voice_in_log" >&2
     return 1
   fi
 }
