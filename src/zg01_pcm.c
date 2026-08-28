@@ -312,10 +312,10 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
         }
     }
     
-    /* Mark the substream as non-atomic so .trigger is called without the
-     * PCM spinlock held.  This allows start_streaming() to call flush_work()
-     * when a previous cleanup is still in flight, instead of returning
-     * -EBUSY and causing PipeWire to retry in a tight loop.
+    /* Mark the substream as non-atomic so ALSA uses a mutex rather than a
+     * spinlock around PCM operations. Cleanup runs on a dedicated queue, so
+     * start_streaming() can wait for it without blocking period notifications
+     * that need the ALSA stream mutex.
      * nonatomic is set on the snd_pcm instance at creation time (see
      * zg01_pcm_create), so this is just a comment explaining why. */
 
@@ -1039,8 +1039,8 @@ void zg01_cleanup_work_voice_out_fn(struct work_struct *work)
 }
 
 /*
- * Period-elapsed work handlers — called from zg01_wq (process context).
- * snd_pcm_period_elapsed() acquires a sleeping rwsem when PCM nonatomic==true,
+ * Period-elapsed work handlers — called from zg01_period_wq (process context).
+ * snd_pcm_period_elapsed() acquires a sleeping mutex when PCM nonatomic==true,
  * so it must not be called directly from the URB callback (softirq context).
  */
 void zg01_period_work_game_fn(struct work_struct *work)
@@ -1353,7 +1353,7 @@ static void zg01_iso_callback(struct urb *urb)
                         if (vo_period > 0 &&
                             (vo->pcm_pos_voice_out / vo_period) !=
                             (vo_old / vo_period))
-                            queue_work(zg01_wq, &vo->period_work_voice_out);
+                            queue_work(zg01_period_wq, &vo->period_work_voice_out);
                     }
                 }
             }
@@ -1426,16 +1426,16 @@ static void zg01_iso_callback(struct urb *urb)
         }
         
         /* Defer period_elapsed to workqueue: PCM is nonatomic, so
-         * snd_pcm_period_elapsed() acquires a sleeping rwsem internally.
+         * snd_pcm_period_elapsed() acquires a sleeping mutex internally.
          * Calling it from softirq (URB callback) context causes
          * "scheduling while atomic". */
         if (period_elapsed) {
             if (is_game_channel)
-                queue_work(zg01_wq, &dev->period_work_game);
+                queue_work(zg01_period_wq, &dev->period_work_game);
             else if (is_voice_out_channel)
-                queue_work(zg01_wq, &dev->period_work_voice_out);
+                queue_work(zg01_period_wq, &dev->period_work_voice_out);
             else
-                queue_work(zg01_wq, &dev->period_work_voice);
+                queue_work(zg01_period_wq, &dev->period_work_voice);
         }
     } else {
         /* URB had an error status - release lock without processing audio data */
@@ -1482,8 +1482,8 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
     /* Select parameters based on channel type.
      *
      * If a previous TRIGGER_STOP queued cleanup work that has not completed
-     * yet, wait for it here.  This is safe because .trigger is called without
-     * the PCM spinlock when runtime->nonatomic == 1 (set in pcm_open). */
+     * yet, wait for it here. ALSA holds a mutex around nonatomic .trigger
+     * calls, so cleanup must stay on a queue that never calls back into ALSA. */
     if (is_game_channel) {
         if (dev->cleanup_in_progress_game) {
             pr_info("zg01_pcm: Game cleanup in progress, waiting for drain\n");
@@ -1727,7 +1727,7 @@ static void zg01_stop_streaming(struct zg01_dev *dev)
     }
     
     /* queue_work returns false if already queued — that is not an error */
-    queue_work(zg01_wq, cleanup_work);
+    queue_work(zg01_cleanup_wq, cleanup_work);
     
     pr_info("zg01_pcm: URBs unlinked, cleanup deferred\n");
 }
@@ -1951,9 +1951,9 @@ int zg01_create_pcm(struct zg01_dev *dev)
     pcm->instance->private_free = NULL;
     strscpy(pcm->instance->name, channel_name, sizeof(pcm->instance->name));
 
-    /* Non-atomic mode: .trigger is called without the PCM spinlock, so
-     * start_streaming() can call flush_work() to wait for a pending cleanup
-     * workqueue item rather than returning -EBUSY. */
+    /* Non-atomic mode replaces ALSA's PCM spinlock with a mutex. Cleanup uses
+     * a separate workqueue from period notifications, so .trigger can wait
+     * for pending cleanup without creating a circular lock dependency. */
     pcm->instance->nonatomic = true;
 
     snd_pcm_set_managed_buffer_all(pcm->instance,

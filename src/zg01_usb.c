@@ -17,8 +17,9 @@ struct zg01_dev *game_dev;
 struct zg01_dev *voice_in_dev;
 struct zg01_dev *voice_out_dev;
 
-/* Private workqueue — avoids flush_workqueue(system_wq) warning */
-struct workqueue_struct *zg01_wq;
+/* Keep cleanup independent from period notifications that call back into ALSA. */
+struct workqueue_struct *zg01_cleanup_wq;
+struct workqueue_struct *zg01_period_wq;
 
 static void zg01_card_private_free(struct snd_card *card)
 {
@@ -255,11 +256,10 @@ static void zg01_disconnect_one(struct zg01_dev *dev)
     /* Set disconnecting flag to prevent URB resubmission (USB-10) */
     atomic_set(&dev->disconnecting, 1);
 
-    /*
-     * Flush any pending deferred cleanup work before we inline-free
-     * the buffers, to avoid double-free (PCM-22).
-     */
-    flush_workqueue(zg01_wq);
+    /* Stop URB cleanup first, then drain any period notifications queued by
+     * those URBs before freeing the buffers and card. */
+    flush_workqueue(zg01_cleanup_wq);
+    flush_workqueue(zg01_period_wq);
 
     /* Kill + free URBs and their transfer buffers (USB-9) */
     if (dev->channel_type == CHANNEL_TYPE_GAME) {
@@ -378,14 +378,23 @@ static int __init zg01_init(void)
 {
     int ret;
 
-    zg01_wq = alloc_ordered_workqueue("zg01", WQ_MEM_RECLAIM);
-    if (!zg01_wq)
+    zg01_cleanup_wq = alloc_ordered_workqueue("zg01-cleanup", WQ_MEM_RECLAIM);
+    if (!zg01_cleanup_wq)
         return -ENOMEM;
+
+    zg01_period_wq = alloc_ordered_workqueue("zg01-period", WQ_MEM_RECLAIM);
+    if (!zg01_period_wq) {
+        destroy_workqueue(zg01_cleanup_wq);
+        zg01_cleanup_wq = NULL;
+        return -ENOMEM;
+    }
 
     ret = usb_register(&zg01_driver);
     if (ret) {
-        destroy_workqueue(zg01_wq);
-        zg01_wq = NULL;
+        destroy_workqueue(zg01_period_wq);
+        destroy_workqueue(zg01_cleanup_wq);
+        zg01_period_wq = NULL;
+        zg01_cleanup_wq = NULL;
         return ret;
     }
 
@@ -395,7 +404,8 @@ static int __init zg01_init(void)
 static void __exit zg01_exit(void)
 {
     usb_deregister(&zg01_driver);
-    destroy_workqueue(zg01_wq);
+    destroy_workqueue(zg01_period_wq);
+    destroy_workqueue(zg01_cleanup_wq);
 }
 
 module_init(zg01_init);

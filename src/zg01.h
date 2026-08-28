@@ -91,7 +91,7 @@ struct zg01_dev {
     struct work_struct cleanup_work_voice_out;
 
     /* Deferred period-elapsed notification (PCM is nonatomic: snd_pcm_period_elapsed
-     * acquires a sleeping rwsem, unsafe to call from softirq/URB callback context) */
+     * acquires a sleeping mutex, unsafe to call from softirq/URB callback context) */
     struct work_struct period_work_game;
     struct work_struct period_work_voice;
     struct work_struct period_work_voice_out;
@@ -132,8 +132,9 @@ extern struct zg01_dev *game_dev;
 extern struct zg01_dev *voice_in_dev;
 extern struct zg01_dev *voice_out_dev;
 
-/* Private workqueue — defined in zg01_usb.c */
-extern struct workqueue_struct *zg01_wq;
+/* Private workqueues — defined in zg01_usb.c */
+extern struct workqueue_struct *zg01_cleanup_wq;
+extern struct workqueue_struct *zg01_period_wq;
 
 int zg01_create_pcm(struct zg01_dev *dev);
 int zg01_set_streaming_interface(struct zg01_dev *dev, int interface, int alt_setting);
