@@ -113,19 +113,19 @@ static int zg01_create_one_card(struct usb_interface *interface,
         strscpy(card->shortname, "ZG01 Game",                    sizeof(card->shortname));
         strscpy(card->longname, "Yamaha ZG01 Game Channel",     sizeof(card->longname));
         strscpy(card->mixername, "ZG01 Game",                    sizeof(card->mixername));
-        strscpy(card->components, "USB0499:1513-Game",            sizeof(card->components));
+        snd_component_add(card, "USB0499:1513-Game");
         dev_info(&interface->dev, "ZG01: Creating Game channel\n");
     } else if (channel_type == CHANNEL_TYPE_VOICE_IN) {
         strscpy(card->shortname, "ZG01 Voice In",                      sizeof(card->shortname));
         strscpy(card->longname, "Yamaha ZG01 Voice Input Channel",    sizeof(card->longname));
         strscpy(card->mixername, "ZG01 Voice In",                      sizeof(card->mixername));
-        strscpy(card->components, "USB0499:1513-VoiceIn",               sizeof(card->components));
+        snd_component_add(card, "USB0499:1513-VoiceIn");
         dev_info(&interface->dev, "ZG01: Creating Voice In channel\n");
     } else {
         strscpy(card->shortname, "ZG01 Voice Out",                      sizeof(card->shortname));
         strscpy(card->longname, "Yamaha ZG01 Voice Output Channel",   sizeof(card->longname));
         strscpy(card->mixername, "ZG01 Voice Out",                      sizeof(card->mixername));
-        strscpy(card->components, "USB0499:1513-VoiceOut",               sizeof(card->components));
+        snd_component_add(card, "USB0499:1513-VoiceOut");
         dev_info(&interface->dev, "ZG01: Creating Voice Out channel\n");
     }
 
