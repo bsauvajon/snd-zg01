@@ -1716,10 +1716,20 @@ void zg01_stop_streaming(struct zg01_dev *dev)
 
     if (is_game_channel) {
         /*
-         * If Voice Out was piggybacking, clear the mixing relationship before
-         * killing Game URBs.  Voice Out will get its own TRIGGER_STOP shortly
-         * after (PipeWire detects the node stopped) and will re-evaluate
-         * whether to submit its own URBs.
+         * If Voice Out was piggybacking, PROMOTE it to its own URB chain
+         * before killing the Game URBs.  Merely clearing the relationship
+         * (the old behavior) left Voice Out with zero URBs and a frozen
+         * PCM position: its period-elapsed events were only ever produced
+         * by the Game callback's mixing block, so the stream sat in a
+         * permanent XRUN (silence) until userspace fully closed it.
+         *
+         * Promotion keeps Voice Out audible across Game STOP: its own
+         * callback chain resumes advancing pcm_pos_voice_out immediately.
+         * URBs were pre-allocated in Voice Out's prepare(), so submission
+         * from this (nonatomic, may-sleep) trigger context with
+         * GFP_ATOMIC is safe.  If Voice Out already closed
+         * (substream gone) or its cleanup is mid-drain, skip promotion —
+         * its next START takes the normal own-URB path.
          */
         if (atomic_read(&dev->voice_out_mixing)) {
             struct zg01_dev *vo = dev->vo_mix_dev;
@@ -1728,6 +1738,21 @@ void zg01_stop_streaming(struct zg01_dev *dev)
             if (vo) {
                 vo->voice_out_piggybacking = false;
                 vo->piggyback_host = NULL;
+
+                if (vo->substream_voice_out && vo->iso_urbs_voice_out[0] &&
+                    !vo->cleanup_in_progress_voice_out) {
+                    int promoted = 0;
+
+                    for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
+                        if (vo->iso_urbs_voice_out[i] &&
+                            usb_submit_urb(vo->iso_urbs_voice_out[i],
+                                           GFP_ATOMIC) == 0)
+                            promoted++;
+                    }
+                    atomic_set(&vo->active_urbs_voice_out, promoted);
+                    pr_info("zg01_pcm: Game STOP - promoted Voice Out to own URBs (%d submitted)\n",
+                            promoted);
+                }
             }
             dev->vo_mix_dev = NULL;
         }
