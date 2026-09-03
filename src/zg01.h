@@ -121,6 +121,36 @@ struct zg01_dev {
     bool voice_out_piggybacking;  /* voice_out_dev field */
     struct zg01_dev *piggyback_host; /* voice_out_dev field: pointer to game_dev */
 
+    /*
+     * Piggyback appl_ptr clamp (voice_out_dev fields, written under
+     * voice_out_dev->lock, read in the Game URB callback).
+     *
+     * In piggyback mode the Game ISO callback advances pcm_pos_voice_out
+     * at USB packet cadence, but ALSA's appl_ptr only moves when
+     * userspace writes new frames.  PipeWire batches writes, so appl_ptr
+     * can trail the consumed position; the pointer op then reports
+     * hw_ptr > appl_ptr and snd_pcm_playback_avail() goes negative —
+     * the underrun/stutter race seen in simultaneous Game + VO use.
+     *
+     * Fix: clamp the advance so hw_ptr never exceeds appl_ptr.  appl_ptr
+     * is a 64-bit counter modulo runtime->boundary that does NOT restart
+     * at 0 on prepare (snd_pcm_post_prepare sets appl_ptr = hw_ptr) and
+     * can move backwards on RESET, while pcm_pos_voice_out is an absolute
+     * 32-bit frame counter reset to 0 in driver prepare.  Direct
+     * comparison is meaningless; instead keep an epoch base
+     *   vo_appl_base = runtime->status->hw_ptr - pcm_pos_voice_out
+     * (captured at piggyback engage and on prepare), so the frames the
+     * callback may consume total
+     *   budget = appl_ptr - vo_appl_base = queued + pcm_pos
+     * where queued = appl_ptr - status->hw_ptr is userspace's committed
+     * but unplayed prefetch.  The callback may advance pcm_pos_voice_out
+     * only up to budget.  If userspace RESET moves appl_ptr backwards
+     * (budget < 0), rebase to appl_ptr - pcm_pos (RESET implies
+     * queued = 0); the callback tolerates the benign race and the next
+     * callback re-clamps.
+     */
+    u64 vo_appl_base;   /* appl_ptr epoch origin for the VO piggyback clamp */
+
     /* Rate limiting for rapid open/close cycles from audio system probing */
     unsigned long last_open_jiffies;
     unsigned int open_count;

@@ -941,6 +941,12 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
             dev->pcm_pos_voice = 0;
         } else {
             dev->pcm_pos_voice_out = 0;
+            /* Rebase the piggyback appl_ptr epoch: pcm_pos restarts at 0
+             * while ALSA's absolute counters continue.  Driver prepare runs
+             * before post_prepare (which sets appl_ptr = hw_ptr), so base
+             * = current hw_ptr gives budget 0 until userspace writes. */
+            if (substream->runtime && substream->runtime->status)
+                dev->vo_appl_base = substream->runtime->status->hw_ptr;
         }
     }
     
@@ -1414,15 +1420,53 @@ static void zg01_iso_callback(struct urb *urb)
                 struct zg01_dev *vo = dev->vo_mix_dev;
                 if (vo && READ_ONCE(vo->voice_out_channel_active)) {
                     unsigned int vo_old = vo->pcm_pos_voice_out;
-                    vo->pcm_pos_voice_out += total_frames_processed;
+                    unsigned int advance = total_frames_processed;
                     struct snd_pcm_substream *vo_sub =
                         READ_ONCE(vo->substream_voice_out);
-                    if (vo_sub && vo_sub->runtime) {
-                        unsigned int vo_period = vo_sub->runtime->period_size;
-                        if (vo_period > 0 &&
-                            (vo->pcm_pos_voice_out / vo_period) !=
-                            (vo_old / vo_period))
-                            queue_work(zg01_period_wq, &vo->period_work_voice_out);
+                    struct snd_pcm_runtime *vo_rt =
+                        vo_sub ? vo_sub->runtime : NULL;
+
+                    /* Clamp to appl_ptr: hw_ptr must never pass the last
+                     * frame userspace committed.  In piggyback mode this
+                     * callback drives VO's position at USB packet cadence
+                     * while PipeWire commits writes in batches, so without
+                     * the clamp hw_ptr outruns appl_ptr and
+                     * snd_pcm_playback_avail() underflows — the XRUN and
+                     * stutter race in simultaneous Game + VO use.
+                     *
+                     * vo_appl_base is the appl_ptr epoch captured at
+                     * piggyback engage (and on prepare).  appl_ptr and the
+                     * base are 64-bit; pcm_pos_voice_out is 32-bit, and the
+                     * (u32) budget wraps in lockstep with the position, so
+                     * the clamp stays correct across pcm_pos wrap (~24.8h).
+                     */
+                    if (vo_rt && vo_rt->control) {
+                        u64 appl = READ_ONCE(vo_rt->control->appl_ptr);
+                        s64 budget = (s64)(appl - vo->vo_appl_base);
+
+                        if (budget < 0) {
+                            /* appl_ptr moved backwards past the base
+                             * (RESET / post_prepare set appl_ptr =
+                             * hw_ptr, i.e. queued = 0).  Rebase with
+                             * zero headroom; the next userspace write
+                             * resumes the advance. */
+                            WRITE_ONCE(vo->vo_appl_base, appl - vo_old);
+                            budget = vo_old;
+                        }
+                        if ((u32)budget - vo_old < advance)
+                            advance = (u32)budget - vo_old;
+                    }
+
+                    if (advance > 0) {
+                        vo->pcm_pos_voice_out = vo_old + advance;
+                        if (vo_rt) {
+                            unsigned int vo_period = vo_rt->period_size;
+                            if (vo_period > 0 &&
+                                (vo->pcm_pos_voice_out / vo_period) !=
+                                (vo_old / vo_period))
+                                queue_work(zg01_period_wq,
+                                           &vo->period_work_voice_out);
+                        }
                     }
                 }
             }
@@ -1575,6 +1619,22 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
                 pr_info("zg01_pcm: Game START - Voice Out has URBs on EP 0x01, switching VO to piggyback\n");
                 zg01_stop_streaming(local_vo);
                 flush_work(&local_vo->cleanup_work_voice_out);
+                /* Capture the appl_ptr epoch BEFORE the Game callback can
+                 * advance pcm_pos_voice_out: base = absolute hw_ptr minus
+                 * frames already consumed, so budget = appl_ptr - base
+                 * = queued prefetch + consumed.  If a late VO callback
+                 * bumps pcm_pos after this, the clamp just holds until
+                 * userspace writes — never an overrun. */
+                {
+                    struct snd_pcm_substream *vo_sub =
+                        READ_ONCE(local_vo->substream_voice_out);
+                    if (vo_sub && vo_sub->runtime && vo_sub->runtime->status)
+                        local_vo->vo_appl_base =
+                            vo_sub->runtime->status->hw_ptr -
+                            local_vo->pcm_pos_voice_out;
+                    else
+                        local_vo->vo_appl_base = 0;
+                }
                 /* Register the piggyback relationship */
                 local_vo->piggyback_host = dev;
                 local_vo->voice_out_piggybacking = true;
@@ -1627,6 +1687,16 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
                 spin_lock_irqsave(&dev->lock, flags);
                 dev->substream_voice_out = substream;
                 spin_unlock_irqrestore(&dev->lock, flags);
+                /* Capture the appl_ptr epoch: prepare just reset
+                 * pcm_pos_voice_out (or it is a rapid-loop restart), and
+                 * post_prepare set appl_ptr = hw_ptr, so budget starts at
+                 * pcm_pos (zero headroom) and grows with each write. */
+                if (substream->runtime && substream->runtime->status)
+                    dev->vo_appl_base =
+                        substream->runtime->status->hw_ptr -
+                        dev->pcm_pos_voice_out;
+                else
+                    dev->vo_appl_base = 0;
                 dev->piggyback_host = local_game;
                 dev->voice_out_piggybacking = true;
                 local_game->vo_mix_dev = dev;
