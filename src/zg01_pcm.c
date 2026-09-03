@@ -567,6 +567,17 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
     if (!dev) {
         return 0;
     }
+
+    /*
+     * Serialize with the Game stream's piggyback promotion, which runs
+     * under this same mutex and submits our pre-allocated URB chain
+     * (see zg01_stop_streaming, Game branch).  Without it, promotion
+     * could pass its liveness checks and usb_submit_urb the very URBs
+     * this function is about to usb_free_urb — in-flight URB freed
+     * from under the host controller.  hw_free runs in process context
+     * (nonatomic PCM), so sleeping on the mutex is allowed.
+     */
+    mutex_lock(&dev->pcm_mutex);
     
     /* 1. STOP URBs first - prevents new callbacks from accessing memory we're about to free */
     zg01_stop_streaming(dev);
@@ -609,6 +620,7 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
     
     pr_info("zg01_pcm: Freed pre-allocated URBs in hw_free\n");
     
+    mutex_unlock(&dev->pcm_mutex);
     return 0;
 }
 
@@ -1599,7 +1611,18 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
             mutex_lock(&devices_mutex);
             local_game = game_dev;
             mutex_unlock(&devices_mutex);
-            if (local_game && atomic_read(&local_game->active_urbs_game) > 0) {
+            /*
+             * Gate on cleanup_in_progress_game, not just active_urbs_game:
+             * the URB counter stays 16 until the deferred cleanup work
+             * drains (multi-ms after Game STOP).  A VO START in that
+             * window must NOT re-enter piggyback against the dying Game
+             * chain — nothing would advance VO's hw_ptr (frozen XRUN,
+             * the flap storm).  During rapid-loop STOP suppression the
+             * flag stays false and URBs stay live, so piggyback remains
+             * correct there.
+             */
+            if (local_game && atomic_read(&local_game->active_urbs_game) > 0 &&
+                !READ_ONCE(local_game->cleanup_in_progress_game)) {
                 pr_info("zg01_pcm: Voice Out START - Game active, entering piggyback mode\n");
                 spin_lock_irqsave(&dev->lock, flags);
                 dev->substream_voice_out = substream;
@@ -1739,7 +1762,32 @@ void zg01_stop_streaming(struct zg01_dev *dev)
                 vo->voice_out_piggybacking = false;
                 vo->piggyback_host = NULL;
 
-                if (vo->substream_voice_out && vo->iso_urbs_voice_out[0] &&
+                /*
+                 * Serialize with VO's open/close/hw_free, which hold
+                 * vo->pcm_mutex and free the URB chain we are about to
+                 * submit.  Without this, VO's hw_free could usb_free_urb
+                 * the chain between our checks and usb_submit_urb — an
+                 * in-flight URB freed from under the host controller
+                 * (crash-class).  NOTE: VO's trigger does NOT hold this
+                 * mutex, so a concurrent TRIGGER_STOP can still clear
+                 * voice_out_channel_active after the check below passes;
+                 * the result is a self-resubmitting silence chain that
+                 * heals on VO's next START/close — benign, and not the
+                 * UAF this mutex prevents.  This function runs in
+                 * trigger (nonatomic, may sleep) and PM suspend context,
+                 * so mutex_lock is safe.
+                 */
+                mutex_lock(&vo->pcm_mutex);
+
+                /*
+                 * Only promote while VO is actually streaming: a
+                 * TRIGGER_STOP/hw_free racing on the other stream must
+                 * not leave a self-resubmitting silence chain running,
+                 * nor submit URBs a teardown is about to free.
+                 */
+                if (vo->substream_voice_out &&
+                    vo->voice_out_channel_active &&
+                    vo->iso_urbs_voice_out[0] &&
                     !vo->cleanup_in_progress_voice_out) {
                     int promoted = 0;
 
@@ -1750,9 +1798,15 @@ void zg01_stop_streaming(struct zg01_dev *dev)
                             promoted++;
                     }
                     atomic_set(&vo->active_urbs_voice_out, promoted);
-                    pr_info("zg01_pcm: Game STOP - promoted Voice Out to own URBs (%d submitted)\n",
-                            promoted);
+
+                    if (promoted == MAX_URBS_PER_CHANNEL)
+                        pr_info("zg01_pcm: Game STOP - promoted Voice Out to own URBs (%d)\n",
+                                promoted);
+                    else
+                        pr_warn("zg01_pcm: Game STOP - Voice Out promotion degraded: %d/%d URBs submitted\n",
+                                promoted, MAX_URBS_PER_CHANNEL);
                 }
+                mutex_unlock(&vo->pcm_mutex);
             }
             dev->vo_mix_dev = NULL;
         }
