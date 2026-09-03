@@ -569,13 +569,11 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
     }
 
     /*
-     * Serialize with the Game stream's piggyback promotion, which runs
-     * under this same mutex and submits our pre-allocated URB chain
-     * (see zg01_stop_streaming, Game branch).  Without it, promotion
-     * could pass its liveness checks and usb_submit_urb the very URBs
-     * this function is about to usb_free_urb — in-flight URB freed
-     * from under the host controller.  hw_free runs in process context
-     * (nonatomic PCM), so sleeping on the mutex is allowed.
+     * Serialize with the shared-chain transitions (Game STOP keepalive
+     * decision and the VO detach teardown, which stop or keep running
+     * this card's URB chain — see zg01_stop_streaming, Game branch).
+     * hw_free runs in process context (nonatomic PCM), so sleeping on
+     * the mutex is allowed.
      */
     mutex_lock(&dev->pcm_mutex);
 
