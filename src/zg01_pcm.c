@@ -1418,6 +1418,10 @@ static void zg01_iso_callback(struct urb *urb)
              * period boundary so PipeWire keeps feeding audio data. */
             if (is_game_channel && atomic_read(&dev->voice_out_mixing)) {
                 struct zg01_dev *vo = dev->vo_mix_dev;
+                /* Pair with smp_wmb() at piggyback engage: vo_mix_dev and
+                 * the VO runtime fields below must be observed after the
+                 * mixing flag (atomic_read is unordered on its own). */
+                smp_rmb();
                 if (vo && READ_ONCE(vo->voice_out_channel_active)) {
                     unsigned int vo_old = vo->pcm_pos_voice_out;
                     unsigned int advance = total_frames_processed;
@@ -1442,7 +1446,9 @@ static void zg01_iso_callback(struct urb *urb)
                      */
                     if (vo_rt && vo_rt->control) {
                         u64 appl = READ_ONCE(vo_rt->control->appl_ptr);
-                        s64 budget = (s64)(appl - vo->vo_appl_base);
+                        u64 base = READ_ONCE(vo->vo_appl_base);
+                        s64 budget = (s64)(appl - base);
+                        s64 headroom;
 
                         if (budget < 0) {
                             /* appl_ptr moved backwards past the base
@@ -1453,8 +1459,13 @@ static void zg01_iso_callback(struct urb *urb)
                             WRITE_ONCE(vo->vo_appl_base, appl - vo_old);
                             budget = vo_old;
                         }
-                        if ((u32)budget - vo_old < advance)
-                            advance = (u32)budget - vo_old;
+                        /* s64 compare, NOT (u32)budget - vo_old: if a
+                         * rewind moved appl_ptr into [base, base+vo_old)
+                         * the u32 subtraction wraps huge and silently
+                         * disarms the clamp (the original bug). */
+                        headroom = budget - (s64)vo_old;
+                        if (headroom < advance)
+                            advance = headroom > 0 ? headroom : 0;
                     }
 
                     if (advance > 0) {
