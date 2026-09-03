@@ -882,6 +882,16 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
         
         /* Return early to avoid ANY usb_set_interface() calls that would kill active URBs */
         dev->current_rate = 48000;
+        /* Piggyback engages from this path when this is Voice Out and Game
+         * streams on EP 0x01: its own URBs are gone, so the position reset
+         * in the block below never runs.  pcm_pos_voice_out is then STALE
+         * from the previous VO session — vo_appl_base at engage wraps,
+         * the appl_ptr clamp disarms, ALSA sees pointer jumps (XRUN pops)
+         * and the mixer reads garbage ring slots (silence then pop).
+         * Reset the position here; the engage path re-captures the epoch. */
+        if (dev->channel_type == CHANNEL_TYPE_VOICE_OUT &&
+            !voice_out_streaming)
+            dev->pcm_pos_voice_out = 0;
         goto allocate_urbs; /* Still need to allocate URBs if not done yet */
     }
     
@@ -1809,11 +1819,17 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
                 pr_info("zg01_pcm: Voice Out START - Game active, entering piggyback mode\n");
                 spin_lock_irqsave(&dev->lock, flags);
                 dev->substream_voice_out = substream;
+                /* Always restart the VO position at the piggyback epoch:
+                 * a stale pcm_pos_voice_out from the previous session both
+                 * wraps vo_appl_base (disarming the appl_ptr clamp) and
+                 * makes the mixer read garbage ring slots.  Budget starts
+                 * at zero: VO advances only as Discord actually writes. */
+                dev->pcm_pos_voice_out = 0;
                 spin_unlock_irqrestore(&dev->lock, flags);
-                /* Capture the appl_ptr epoch: prepare just reset
-                 * pcm_pos_voice_out (or it is a rapid-loop restart), and
-                 * post_prepare set appl_ptr = hw_ptr, so budget starts at
-                 * pcm_pos (zero headroom) and grows with each write. */
+                /* Capture the appl_ptr epoch with the position reset above:
+                 * base = absolute hw_ptr - 0 => budget = appl - hw_ptr is
+                 * exactly the queued-but-unconsumed frames.  Userspace
+                 * writes grow it; the clamp holds the advance until then. */
                 if (substream->runtime && substream->runtime->status)
                     dev->vo_appl_base =
                         substream->runtime->status->hw_ptr -
