@@ -29,7 +29,6 @@ extern struct mutex devices_mutex;
 
 /* Forward declarations */
 static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *substream);
-static void zg01_stop_streaming(struct zg01_dev *dev);
 static void zg01_iso_callback(struct urb *urb);
 
 /* Helper function to get active URB count based on channel type */
@@ -1705,7 +1704,7 @@ cleanup_submitted_urbs:
 }
 
 /* Helper function to stop streaming and clean up URBs */
-static void zg01_stop_streaming(struct zg01_dev *dev)
+void zg01_stop_streaming(struct zg01_dev *dev)
 {
     struct urb **iso_urbs;
     bool *cleanup_in_progress;

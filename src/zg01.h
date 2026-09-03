@@ -138,6 +138,7 @@ extern struct workqueue_struct *zg01_period_wq;
 
 int zg01_create_pcm(struct zg01_dev *dev);
 int zg01_set_streaming_interface(struct zg01_dev *dev, int interface, int alt_setting);
+void zg01_stop_streaming(struct zg01_dev *dev);
 
 /* Cleanup work functions — defined in zg01_pcm.c, registered in zg01_usb.c */
 void zg01_cleanup_work_game_fn(struct work_struct *work);

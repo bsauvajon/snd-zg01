@@ -368,11 +368,89 @@ static struct usb_device_id zg01_table[] = {
 };
 MODULE_DEVICE_TABLE(usb, zg01_table);
 
+static int zg01_suspend(struct usb_interface *intf, pm_message_t message)
+{
+    struct zg01_dev *dev = usb_get_intfdata(intf);
+
+    /*
+     * Suspend every PCM on this card. This quiesces open streams into a
+     * clean SNDRV_PCM_STATE_SUSPENDED instead of letting URBs die
+     * mid-transfer, so userspace gets an orderly -ESTRPIPE path rather
+     * than a hard "No such device".
+     */
+    if (dev && dev->pcm.instance)
+        snd_pcm_suspend_all(dev->pcm.instance);
+
+    return 0;
+}
+
+static int zg01_resume_child(struct zg01_dev *dev)
+{
+    /* Nothing streaming persists across suspend: URBs were unlinked by
+     * the USB core and will be resubmitted by the next TRIGGER_START.
+     * Just reset the channel bookkeeping so a fresh start is possible. */
+    dev->game_channel_active = false;
+    dev->voice_channel_active = false;
+    dev->voice_out_channel_active = false;
+    return 0;
+}
+
+static int zg01_resume(struct usb_interface *intf)
+{
+    struct zg01_dev *dev = usb_get_intfdata(intf);
+
+    if (dev)
+        zg01_resume_child(dev);
+
+    return 0;
+}
+
+/*
+ * reset_resume: the ZG01 firmware resets itself across suspend, so the
+ * USB core would normally treat resume as unplug+replug — disconnect(),
+ * then probe() building a NEW set of cards while the old ones linger in
+ * snd_card_free_when_closed() as zombies. That is the source of the
+ * duplicate ALSA/PipeWire devices after sleep.
+ *
+ * With reset_resume registered, the core instead keeps our interface
+ * bound, preserves the same usb_interface and ALSA card objects, and
+ * hands the device back to us here. No disconnect, no probe, no new
+ * cards — userspace sees the same nodes it had before suspend.
+ */
+static int zg01_reset_resume(struct usb_interface *intf)
+{
+    struct zg01_dev *dev = usb_get_intfdata(intf);
+
+    if (!dev)
+        return 0;
+
+    /* Device firmware restarted: all streaming state is gone. */
+    atomic_set(&dev->disconnecting, 0);
+    zg01_resume_child(dev);
+
+    /* Re-run device init (vendor handshake + interfaces to alt 0). */
+    zg01_init_control(dev);
+    usb_set_interface(dev->udev, 1, 0);
+    usb_set_interface(dev->udev, 2, 0);
+
+    /* Next open()/prepare() walks the normal first-prepare path and
+     * re-runs the Magic Sequence: clear the initialized flags so the
+     * device gets fully reconfigured after its firmware reset. */
+    dev->game_initialized = false;
+    dev->voice_initialized = false;
+    dev->voice_out_initialized = false;
+
+    return 0;
+}
+
 static struct usb_driver zg01_driver = {
-    .name      = "zg01_usb",
-    .id_table  = zg01_table,
-    .probe     = zg01_probe,
-    .disconnect = zg01_disconnect,
+    .name          = "zg01_usb",
+    .id_table      = zg01_table,
+    .probe         = zg01_probe,
+    .disconnect    = zg01_disconnect,
+    .suspend       = zg01_suspend,
+    .resume        = zg01_resume,
+    .reset_resume  = zg01_reset_resume,
 };
 
 static int __init zg01_init(void)
