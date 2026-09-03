@@ -368,39 +368,93 @@ static struct usb_device_id zg01_table[] = {
 };
 MODULE_DEVICE_TABLE(usb, zg01_table);
 
+/*
+ * Suspend one dev: quiesce its PCM, then stop and drain its URB chain.
+ *
+ * snd_pcm_suspend_all() moves open streams to SNDRV_PCM_STATE_SUSPENDED
+ * (-ESTRPIPE) instead of letting them die mid-transfer.
+ *
+ * The explicit zg01_stop_streaming() + flush_work() matters: during
+ * system suspend the USB core flushes all endpoints, and our ISO
+ * callback exits on -ESHUTDOWN/-ENOENT WITHOUT resubmitting or queueing
+ * cleanup work. Without this drain, active_urbs_* stay > 0 forever,
+ * which makes the next prepare() skip the Magic Sequence (any-channel-
+ * streaming early path) and the next TRIGGER_START skip URB submission
+ * ("Streaming already active"). PM context may sleep, so flush is safe.
+ */
+static void zg01_suspend_one(struct zg01_dev *dev)
+{
+    if (!dev)
+        return;
+
+    if (dev->pcm.instance)
+        snd_pcm_suspend_all(dev->pcm.instance);
+
+    zg01_stop_streaming(dev);
+
+    if (dev->channel_type == CHANNEL_TYPE_GAME)
+        flush_work(&dev->cleanup_work_game);
+    else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN)
+        flush_work(&dev->cleanup_work_voice);
+    else
+        flush_work(&dev->cleanup_work_voice_out);
+}
+
+/* Grab all three devs under devices_mutex; NULL entries allowed. */
+static void zg01_get_all_devs(struct zg01_dev **gdev,
+                              struct zg01_dev **vin,
+                              struct zg01_dev **vout)
+{
+    mutex_lock(&devices_mutex);
+    *gdev = game_dev;
+    *vin = voice_in_dev;
+    *vout = voice_out_dev;
+    mutex_unlock(&devices_mutex);
+}
+
 static int zg01_suspend(struct usb_interface *intf, pm_message_t message)
 {
-    struct zg01_dev *dev = usb_get_intfdata(intf);
+    struct zg01_dev *gdev, *vin, *vout;
 
     /*
-     * Suspend every PCM on this card. This quiesces open streams into a
-     * clean SNDRV_PCM_STATE_SUSPENDED instead of letting URBs die
-     * mid-transfer, so userspace gets an orderly -ESTRPIPE path rather
-     * than a hard "No such device".
+     * PM callbacks arrive per interface, but usb_get_intfdata() returns
+     * only ONE dev per interface (probe registers two cards — Game and
+     * Voice Out — on interface 1, and intfdata keeps just the last).
+     * Suspend all three devs explicitly so Game is not missed.
      */
-    if (dev && dev->pcm.instance)
-        snd_pcm_suspend_all(dev->pcm.instance);
+    zg01_get_all_devs(&gdev, &vin, &vout);
+    zg01_suspend_one(gdev);
+    zg01_suspend_one(vin);
+    zg01_suspend_one(vout);
 
     return 0;
 }
 
-static int zg01_resume_child(struct zg01_dev *dev)
+/* Reset per-channel streaming bookkeeping on one dev. */
+static void zg01_pm_reset_dev(struct zg01_dev *dev)
 {
-    /* Nothing streaming persists across suspend: URBs were unlinked by
-     * the USB core and will be resubmitted by the next TRIGGER_START.
-     * Just reset the channel bookkeeping so a fresh start is possible. */
+    if (!dev)
+        return;
+
+    atomic_set(&dev->disconnecting, 0);
     dev->game_channel_active = false;
     dev->voice_channel_active = false;
     dev->voice_out_channel_active = false;
-    return 0;
+    /* Firmware restarted: force first-prepare path (Magic Sequence) on
+     * the next open() of each channel. */
+    dev->game_initialized = false;
+    dev->voice_initialized = false;
+    dev->voice_out_initialized = false;
 }
 
 static int zg01_resume(struct usb_interface *intf)
 {
-    struct zg01_dev *dev = usb_get_intfdata(intf);
+    struct zg01_dev *gdev, *vin, *vout;
 
-    if (dev)
-        zg01_resume_child(dev);
+    zg01_get_all_devs(&gdev, &vin, &vout);
+    zg01_pm_reset_dev(gdev);
+    zg01_pm_reset_dev(vin);
+    zg01_pm_reset_dev(vout);
 
     return 0;
 }
@@ -412,33 +466,35 @@ static int zg01_resume(struct usb_interface *intf)
  * snd_card_free_when_closed() as zombies. That is the source of the
  * duplicate ALSA/PipeWire devices after sleep.
  *
- * With reset_resume registered, the core instead keeps our interface
- * bound, preserves the same usb_interface and ALSA card objects, and
- * hands the device back to us here. No disconnect, no probe, no new
+ * With reset_resume registered, the core keeps our interfaces bound and
+ * preserves the same ALSA card objects. No disconnect, no probe, no new
  * cards — userspace sees the same nodes it had before suspend.
+ *
+ * The callback fires once per interface (serialized by the USB core PM
+ * lock, and userspace is still frozen during device resume, so no ALSA
+ * ioctls can race). Per-dev state is reset for ALL three devs; the
+ * device-global reinit (vendor handshake + interfaces to alt 0) runs
+ * exactly once, from interface 2's callback.
  */
 static int zg01_reset_resume(struct usb_interface *intf)
 {
-    struct zg01_dev *dev = usb_get_intfdata(intf);
+    struct zg01_dev *gdev, *vin, *vout, *any;
+    int iface_num = intf->cur_altsetting->desc.bInterfaceNumber;
 
-    if (!dev)
-        return 0;
+    zg01_get_all_devs(&gdev, &vin, &vout);
+    zg01_pm_reset_dev(gdev);
+    zg01_pm_reset_dev(vin);
+    zg01_pm_reset_dev(vout);
 
-    /* Device firmware restarted: all streaming state is gone. */
-    atomic_set(&dev->disconnecting, 0);
-    zg01_resume_child(dev);
+    if (iface_num != 2)
+        return 0; /* device-global reinit handled from interface 2 */
 
-    /* Re-run device init (vendor handshake + interfaces to alt 0). */
-    zg01_init_control(dev);
-    usb_set_interface(dev->udev, 1, 0);
-    usb_set_interface(dev->udev, 2, 0);
-
-    /* Next open()/prepare() walks the normal first-prepare path and
-     * re-runs the Magic Sequence: clear the initialized flags so the
-     * device gets fully reconfigured after its firmware reset. */
-    dev->game_initialized = false;
-    dev->voice_initialized = false;
-    dev->voice_out_initialized = false;
+    any = vin ? vin : (gdev ? gdev : vout);
+    if (any) {
+        zg01_init_control(any);
+        usb_set_interface(any->udev, 1, 0);
+        usb_set_interface(any->udev, 2, 0);
+    }
 
     return 0;
 }

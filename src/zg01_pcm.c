@@ -1877,6 +1877,23 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         break;
     }
 
+    case SNDRV_PCM_TRIGGER_SUSPEND:
+        /* ALSA core requests suspend (snd_pcm_suspend_all). Kernel
+         * ignores our return value here; cooperate so the runtime
+         * state machine moves to SUSPENDED cleanly. Streaming URBs
+         * are stopped from the USB PM suspend callback. */
+        if (dev->channel_type == CHANNEL_TYPE_GAME) {
+            dev->game_channel_active = false;
+            zg01_stop_streaming(dev);
+        } else if (dev->channel_type == CHANNEL_TYPE_VOICE_IN) {
+            dev->voice_channel_active = false;
+            zg01_stop_streaming(dev);
+        } else {
+            dev->voice_out_channel_active = false;
+            zg01_stop_streaming(dev);
+        }
+        break;
+
     default:
         return -EINVAL;
     }
