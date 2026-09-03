@@ -583,10 +583,14 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
      * Shared-chain deferral: if the Game URB chain is in keepalive
      * (running for Voice Out), do NOT free it here — the VO detach
      * teardown will kill it.  The URBs stay allocated; a later Game
-     * prepare reuses them ("URBs already allocated" path).  Safe to
-     * check without chain_mutex: keepalive can only be cleared by
-     * Game START (this card's trigger) or VO detach, and hw_free
-     * holding pcm_mutex excludes this card's own trigger paths.
+     * prepare reuses them ("URBs already allocated" path).
+     *
+     * Serialized against this card's own trigger paths by the ALSA
+     * core's buffer lock (snd_pcm_hw_free and non-atomic trigger
+     * actions both hold it across the callback), NOT by pcm_mutex —
+     * trigger never takes pcm_mutex.  A stale-true read of
+     * chain_keepalive vs VO detach is benign: URBs stay allocated
+     * by design, healed on next hw_free/close/disconnect.
      */
     if (dev->channel_type == CHANNEL_TYPE_GAME && dev->chain_keepalive) {
         pr_info("zg01_pcm: hw_free deferred - chain in keepalive for Voice Out\n");
@@ -1486,14 +1490,16 @@ static void zg01_iso_callback(struct urb *urb)
             if (period_size > 0 &&
                 (*pcm_pos / period_size) != (old_pos / period_size))
                 period_elapsed = true;
+        }
 
-            /* Advance Voice Out PCM position if piggybacking, and signal its
-             * period boundary so PipeWire keeps feeding audio data.
-             * Also drives SUBSTITUTED callbacks (Game chain running for
-             * Voice Out after Game STOP): those skip the generic advance
-             * above and advance exclusively through this clamped block. */
-            if ((is_game_channel || vo_substituted) &&
-                atomic_read(&dev->voice_out_mixing)) {
+        /* Advance Voice Out PCM position if piggybacking, and signal its
+         * period boundary so PipeWire keeps feeding audio data.
+         * Also drives SUBSTITUTED callbacks (Game chain running for
+         * Voice Out after Game STOP): those skip the generic advance
+         * above and advance exclusively through this clamped block. */
+        if (total_frames_processed > 0 &&
+            (is_game_channel || vo_substituted) &&
+            atomic_read(&dev->voice_out_mixing)) {
                 struct zg01_dev *vo = dev->vo_mix_dev;
                 /* Pair with smp_wmb() at piggyback engage: vo_mix_dev and
                  * the VO runtime fields below must be observed after the
@@ -1558,7 +1564,6 @@ static void zg01_iso_callback(struct urb *urb)
                     }
                 }
             }
-        }
         spin_unlock_irqrestore(&dev->lock, flags);
         } else {
             /* CAPTURE: Copy audio data FROM USB device TO PCM buffer */
@@ -1686,24 +1691,27 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
      * yet, wait for it here. ALSA holds a mutex around nonatomic .trigger
      * calls, so cleanup must stay on a queue that never calls back into ALSA. */
     if (is_game_channel) {
-        if (dev->cleanup_in_progress_game) {
-            pr_info("zg01_pcm: Game cleanup in progress, waiting for drain\n");
-            flush_work(&dev->cleanup_work_game);
-        }
-
         /*
-         * If the chain is in keepalive (running for Voice Out after a
-         * previous Game STOP), Game re-owns it: clear keepalive and
-         * fall through — the "streaming already active" path below
-         * adopts the live chain without resubmitting anything.
+         * Serialize against the VO detach teardown, which stops the
+         * orphaned chain: it claims keepalive under chain_mutex and
+         * sets cleanup_in_progress_game there too, so the check+flush
+         * below inside the mutex cannot adopt a chain being killed
+         * (START-adopts-dying-chain race found in review).
          */
         mutex_lock(&dev->chain_mutex);
         if (dev->chain_keepalive && atomic_read(&dev->active_urbs_game) > 0) {
+            /* Keepalive: Game re-owns the live chain — clear the flag
+             * and fall through; the "streaming already active" path
+             * below adopts it without resubmitting anything. */
             dev->chain_keepalive = false;
             mutex_unlock(&dev->chain_mutex);
             pr_info("zg01_pcm: Game START - re-owning keepalive chain\n");
         } else {
             mutex_unlock(&dev->chain_mutex);
+            if (dev->cleanup_in_progress_game) {
+                pr_info("zg01_pcm: Game cleanup in progress, waiting for drain\n");
+                flush_work(&dev->cleanup_work_game);
+            }
         }
 
         /*
@@ -1945,9 +1953,17 @@ void zg01_stop_streaming(struct zg01_dev *dev)
             }
             dev->vo_mix_dev = NULL;
         }
+        /* Publish the teardown flag while still holding chain_mutex so
+         * a concurrent Game START (which checks it inside the mutex)
+         * can never adopt the chain this path is about to kill. */
+        spin_lock_irqsave(&dev->lock, flags);
+        dev->cleanup_in_progress_game = true;
+        spin_unlock_irqrestore(&dev->lock, flags);
         mutex_unlock(&dev->chain_mutex);
+        /* Already claimed under the mutex above — skip the generic
+         * claim below, which is outside chain_mutex. */
         iso_urbs = dev->iso_urbs_game;
-        cleanup_in_progress = &dev->cleanup_in_progress_game;
+        cleanup_in_progress = NULL;
         pr_info("zg01_pcm: Stopping Game channel\n");
     } else if (is_voice_in_channel) {
         iso_urbs = dev->iso_urbs_voice;
@@ -1977,6 +1993,12 @@ void zg01_stop_streaming(struct zg01_dev *dev)
                     mutex_unlock(&host->chain_mutex);
                     pr_info("zg01_pcm: VO STOP - stopping orphaned Game chain\n");
                     zg01_stop_streaming(host);
+                    /* Drain the kill before close frees our substream/
+                     * runtime: in-flight Game-chain callbacks may still
+                     * hold a substituted pointer to them (UAF window
+                     * found in review — usb_kill_urb in the cleanup
+                     * work is what waits for callbacks to finish). */
+                    flush_work(&host->cleanup_work_game);
                     dev->voice_out_piggybacking = false;
                     dev->piggyback_host = NULL;
                     return;
@@ -1992,9 +2014,13 @@ void zg01_stop_streaming(struct zg01_dev *dev)
         pr_info("zg01_pcm: Stopping Voice Out channel\n");
     }
 
-    spin_lock_irqsave(&dev->lock, flags);
-    *cleanup_in_progress = true;
-    spin_unlock_irqrestore(&dev->lock, flags);
+    /* Game path may have claimed the flag under chain_mutex already
+     * (cleanup_in_progress == NULL then); others claim it here. */
+    if (cleanup_in_progress) {
+        spin_lock_irqsave(&dev->lock, flags);
+        *cleanup_in_progress = true;
+        spin_unlock_irqrestore(&dev->lock, flags);
+    }
 
     /* Unlink all URBs asynchronously (non-sleeping, safe from atomic/trigger context).
      * usb_kill_urb() can sleep and must NOT be called from the PCM .trigger() path,
