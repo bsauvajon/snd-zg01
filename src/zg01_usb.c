@@ -77,6 +77,7 @@ static int zg01_create_one_card(struct usb_interface *interface,
 
     spin_lock_init(&dev->lock);
     mutex_init(&dev->pcm_mutex);
+    mutex_init(&dev->chain_mutex);
 
     dev->game_channel_active = false;
     dev->voice_channel_active = false;
@@ -423,9 +424,12 @@ static int zg01_suspend(struct usb_interface *intf, pm_message_t message)
      * Suspend all three devs explicitly so Game is not missed.
      */
     zg01_get_all_devs(&gdev, &vin, &vout);
+    /* Voice Out BEFORE Game: if the Game chain is in keepalive for
+     * Voice Out, VO's stop tears the orphaned chain down and queues
+     * Game cleanup work, which the Game suspend below then flushes. */
+    zg01_suspend_one(vout);
     zg01_suspend_one(gdev);
     zg01_suspend_one(vin);
-    zg01_suspend_one(vout);
 
     return 0;
 }

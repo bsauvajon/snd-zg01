@@ -122,6 +122,22 @@ struct zg01_dev {
     struct zg01_dev *piggyback_host; /* voice_out_dev field: pointer to game_dev */
 
     /*
+     * Shared EP 0x01 chain (game_dev fields).  When Game stops while
+     * Voice Out piggybacks, the chain is NOT killed (the old fix
+     * promoted Voice Out to its own URBs here): the callback silences
+     * the Game slots and keeps mixing Voice Out.  Transitions are
+     * serialized by chain_mutex (game_dev):
+     *   Game STOP  with VO riding  -> chain_keepalive = true, chain runs
+     *   VO detach  with keepalive  -> VO stops the orphaned chain
+     *   Game START with keepalive  -> keepalive = false, Game re-owns it
+     * Game hw_free while keepalive defers freeing the chain; the VO
+     * detach teardown kills the URBs, which stay allocated for reuse
+     * by the next Game prepare (disconnect frees them for real).
+     */
+    bool chain_keepalive;
+    struct mutex chain_mutex;
+
+    /*
      * Piggyback appl_ptr clamp (voice_out_dev fields, written under
      * voice_out_dev->lock, read in the Game URB callback).
      *

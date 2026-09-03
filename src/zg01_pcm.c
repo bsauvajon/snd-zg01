@@ -578,7 +578,22 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
      * (nonatomic PCM), so sleeping on the mutex is allowed.
      */
     mutex_lock(&dev->pcm_mutex);
-    
+
+    /*
+     * Shared-chain deferral: if the Game URB chain is in keepalive
+     * (running for Voice Out), do NOT free it here — the VO detach
+     * teardown will kill it.  The URBs stay allocated; a later Game
+     * prepare reuses them ("URBs already allocated" path).  Safe to
+     * check without chain_mutex: keepalive can only be cleared by
+     * Game START (this card's trigger) or VO detach, and hw_free
+     * holding pcm_mutex excludes this card's own trigger paths.
+     */
+    if (dev->channel_type == CHANNEL_TYPE_GAME && dev->chain_keepalive) {
+        pr_info("zg01_pcm: hw_free deferred - chain in keepalive for Voice Out\n");
+        mutex_unlock(&dev->pcm_mutex);
+        return 0;
+    }
+
     /* 1. STOP URBs first - prevents new callbacks from accessing memory we're about to free */
     zg01_stop_streaming(dev);
     
@@ -1173,6 +1188,7 @@ static void zg01_iso_callback(struct urb *urb)
     int resubmit_ret;
     bool is_game_channel = false;
     bool is_voice_out_channel = false;
+    bool vo_substituted = false;
     bool found_urb = false;
 
     /* Check disconnecting flag FIRST - if USB disconnect started, stop resubmitting URBs immediately */
@@ -1231,9 +1247,53 @@ static void zg01_iso_callback(struct urb *urb)
 
     /* Validate substream (still holding lock - prevents race with close()) */
     if (!substream) {
-        spin_unlock_irqrestore(&dev->lock, flags);
-        pr_debug("zg01_pcm: No substream in callback (stream stopped)\n");
-        return;
+        /*
+         * Shared-chain keepalive: a Game URB callback with no Game
+         * substream is not necessarily stale — while Voice Out
+         * piggybacks, the chain deliberately stays alive after Game
+         * stopped.  zg01_game_consumer() below substitutes Voice Out
+         * as this chain's consumer; if Voice Out is gone too, fall
+         * through to the plain silence/stale handling.
+         */
+        if (is_game_channel && atomic_read(&dev->voice_out_mixing)) {
+            struct zg01_dev *vo = dev->vo_mix_dev;
+            struct snd_pcm_substream *vo_sub;
+
+            smp_rmb();
+            vo_sub = vo ? READ_ONCE(vo->substream_voice_out) : NULL;
+            if (vo_sub && vo_sub->runtime && vo_sub->runtime->dma_area &&
+                READ_ONCE(vo->voice_out_channel_active) &&
+                snd_pcm_running(vo_sub)) {
+                /* Full substitution: from here on this callback behaves
+                 * exactly like a Voice Out callback — VO data in the
+                 * voice slots, silence in the game slots, VO position
+                 * advanced (clamped), VO period work queued. */
+                substream = vo_sub;
+                runtime = vo_sub->runtime;
+                pcm_pos = &vo->pcm_pos_voice_out;
+                is_game_channel = false;
+                is_voice_out_channel = true;
+                vo_substituted = true;
+            } else {
+                spin_unlock_irqrestore(&dev->lock, flags);
+                pr_debug("zg01_pcm: Chain alive, no consumer - silence\n");
+                /* Keep the chain alive: silence packets, keep resubmitting */
+                if (urb->status == 0) {
+                    for (i = 0; i < urb->number_of_packets; i++) {
+                        unsigned char *pkt_buf = urb->transfer_buffer +
+                            urb->iso_frame_desc[i].offset;
+                        unsigned int pkt_len = urb->iso_frame_desc[i].length;
+                        if (pkt_len > 0 && pkt_len <= MAX_ISO_PACKET_SIZE)
+                            memset(pkt_buf, 0, pkt_len);
+                    }
+                }
+                goto resubmit;
+            }
+        } else {
+            spin_unlock_irqrestore(&dev->lock, flags);
+            pr_debug("zg01_pcm: No substream in callback (stream stopped)\n");
+            return;
+        }
     }
 
     /* Dereference runtime (safe - lock held, substream can't be freed by close()) */
@@ -1245,8 +1305,14 @@ static void zg01_iso_callback(struct urb *urb)
         goto resubmit;
     }
 
-    /* Check if stream is still active before processing audio data */
-    if (!snd_pcm_running(substream)) {
+    /* Check if stream is still active before processing audio data.
+     * EXCEPTION: a stopped Game stream must not mute the whole packet
+     * while Voice Out piggybacks on this chain — fall through to the
+     * mixing loop, which reads Game only under game_channel_active
+     * (false here) and keeps mixing Voice Out with the appl_ptr clamp. */
+    if (!snd_pcm_running(substream) &&
+        !(is_game_channel && !vo_substituted &&
+          atomic_read(&dev->voice_out_mixing))) {
         spin_unlock_irqrestore(&dev->lock, flags);
         pr_debug("zg01_pcm: Stream not running, sending silence\n");
         /* Send silence but keep URBs running */
@@ -1406,8 +1472,15 @@ static void zg01_iso_callback(struct urb *urb)
             }
         }
             
-        /* Update global position once for all processed frames in this URB */
-        if (total_frames_processed > 0) {
+        /* Update global position once for all processed frames in this URB.
+         * A STOPPED owner must not advance: its hw_ptr would outrun
+         * appl_ptr (the failure mode the VO clamp fixes).  When the
+         * owner is stopped, only the piggyback advance block below
+         * moves the rider's position, clamped to its appl_ptr.
+         * Substituted callbacks (Game chain running for Voice Out)
+         * also advance ONLY through the clamped block below. */
+        if (total_frames_processed > 0 && !vo_substituted &&
+            snd_pcm_running(substream)) {
             *pcm_pos += total_frames_processed;
             /* Period elapsed if we crossed a period boundary (quotient changed) */
             if (period_size > 0 &&
@@ -1415,8 +1488,12 @@ static void zg01_iso_callback(struct urb *urb)
                 period_elapsed = true;
 
             /* Advance Voice Out PCM position if piggybacking, and signal its
-             * period boundary so PipeWire keeps feeding audio data. */
-            if (is_game_channel && atomic_read(&dev->voice_out_mixing)) {
+             * period boundary so PipeWire keeps feeding audio data.
+             * Also drives SUBSTITUTED callbacks (Game chain running for
+             * Voice Out after Game STOP): those skip the generic advance
+             * above and advance exclusively through this clamped block. */
+            if ((is_game_channel || vo_substituted) &&
+                atomic_read(&dev->voice_out_mixing)) {
                 struct zg01_dev *vo = dev->vo_mix_dev;
                 /* Pair with smp_wmb() at piggyback engage: vo_mix_dev and
                  * the VO runtime fields below must be observed after the
@@ -1612,6 +1689,21 @@ static int zg01_start_streaming(struct zg01_dev *dev, struct snd_pcm_substream *
         if (dev->cleanup_in_progress_game) {
             pr_info("zg01_pcm: Game cleanup in progress, waiting for drain\n");
             flush_work(&dev->cleanup_work_game);
+        }
+
+        /*
+         * If the chain is in keepalive (running for Voice Out after a
+         * previous Game STOP), Game re-owns it: clear keepalive and
+         * fall through — the "streaming already active" path below
+         * adopts the live chain without resubmitting anything.
+         */
+        mutex_lock(&dev->chain_mutex);
+        if (dev->chain_keepalive && atomic_read(&dev->active_urbs_game) > 0) {
+            dev->chain_keepalive = false;
+            mutex_unlock(&dev->chain_mutex);
+            pr_info("zg01_pcm: Game START - re-owning keepalive chain\n");
+        } else {
+            mutex_unlock(&dev->chain_mutex);
         }
 
         /*
@@ -1820,77 +1912,40 @@ void zg01_stop_streaming(struct zg01_dev *dev)
 
     if (is_game_channel) {
         /*
-         * If Voice Out was piggybacking, PROMOTE it to its own URB chain
-         * before killing the Game URBs.  Merely clearing the relationship
-         * (the old behavior) left Voice Out with zero URBs and a frozen
-         * PCM position: its period-elapsed events were only ever produced
-         * by the Game callback's mixing block, so the stream sat in a
-         * permanent XRUN (silence) until userspace fully closed it.
-         *
-         * Promotion keeps Voice Out audible across Game STOP: its own
-         * callback chain resumes advancing pcm_pos_voice_out immediately.
-         * URBs were pre-allocated in Voice Out's prepare(), so submission
-         * from this (nonatomic, may-sleep) trigger context with
-         * GFP_ATOMIC is safe.  If Voice Out already closed
-         * (substream gone) or its cleanup is mid-drain, skip promotion —
-         * its next START takes the normal own-URB path.
+         * Shared-chain keepalive: when Voice Out piggybacks on this
+         * chain, Game STOP no longer promotes Voice Out to its own URB
+         * (the old fix).  The chain simply keeps running; the ISO
+         * callback silences the Game slots and keeps mixing Voice Out
+         * (still clamped by appl_ptr).  Decide under chain_mutex so
+         * this races safely against a concurrent Voice Out detach,
+         * which decides whether to tear this chain down.
          */
+        mutex_lock(&dev->chain_mutex);
         if (atomic_read(&dev->voice_out_mixing)) {
             struct zg01_dev *vo = dev->vo_mix_dev;
+            bool vo_live = vo && READ_ONCE(vo->substream_voice_out) &&
+                           READ_ONCE(vo->voice_out_channel_active) &&
+                           !atomic_read(&vo->disconnecting);
+
+            if (vo_live) {
+                spin_lock_irqsave(&dev->lock, flags);
+                dev->chain_keepalive = true;
+                spin_unlock_irqrestore(&dev->lock, flags);
+                mutex_unlock(&dev->chain_mutex);
+                pr_info("zg01_pcm: Game STOP - chain keepalive for Voice Out\n");
+                return;
+            }
+            /* Voice Out gone or dying: clear the relationship and fall
+             * through to the normal teardown below. */
             atomic_set(&dev->voice_out_mixing, 0);
             smp_wmb();
             if (vo) {
                 vo->voice_out_piggybacking = false;
                 vo->piggyback_host = NULL;
-
-                /*
-                 * Serialize with VO's open/close/hw_free, which hold
-                 * vo->pcm_mutex and free the URB chain we are about to
-                 * submit.  Without this, VO's hw_free could usb_free_urb
-                 * the chain between our checks and usb_submit_urb — an
-                 * in-flight URB freed from under the host controller
-                 * (crash-class).  NOTE: VO's trigger does NOT hold this
-                 * mutex, so a concurrent TRIGGER_STOP can still clear
-                 * voice_out_channel_active after the check below passes;
-                 * the result is a self-resubmitting silence chain that
-                 * heals on VO's next START/close — benign, and not the
-                 * UAF this mutex prevents.  This function runs in
-                 * trigger (nonatomic, may sleep) and PM suspend context,
-                 * so mutex_lock is safe.
-                 */
-                mutex_lock(&vo->pcm_mutex);
-
-                /*
-                 * Only promote while VO is actually streaming: a
-                 * TRIGGER_STOP/hw_free racing on the other stream must
-                 * not leave a self-resubmitting silence chain running,
-                 * nor submit URBs a teardown is about to free.
-                 */
-                if (vo->substream_voice_out &&
-                    vo->voice_out_channel_active &&
-                    vo->iso_urbs_voice_out[0] &&
-                    !vo->cleanup_in_progress_voice_out) {
-                    int promoted = 0;
-
-                    for (i = 0; i < MAX_URBS_PER_CHANNEL; i++) {
-                        if (vo->iso_urbs_voice_out[i] &&
-                            usb_submit_urb(vo->iso_urbs_voice_out[i],
-                                           GFP_ATOMIC) == 0)
-                            promoted++;
-                    }
-                    atomic_set(&vo->active_urbs_voice_out, promoted);
-
-                    if (promoted == MAX_URBS_PER_CHANNEL)
-                        pr_info("zg01_pcm: Game STOP - promoted Voice Out to own URBs (%d)\n",
-                                promoted);
-                    else
-                        pr_warn("zg01_pcm: Game STOP - Voice Out promotion degraded: %d/%d URBs submitted\n",
-                                promoted, MAX_URBS_PER_CHANNEL);
-                }
-                mutex_unlock(&vo->pcm_mutex);
             }
             dev->vo_mix_dev = NULL;
         }
+        mutex_unlock(&dev->chain_mutex);
         iso_urbs = dev->iso_urbs_game;
         cleanup_in_progress = &dev->cleanup_in_progress_game;
         pr_info("zg01_pcm: Stopping Game channel\n");
@@ -1900,16 +1955,33 @@ void zg01_stop_streaming(struct zg01_dev *dev)
         pr_info("zg01_pcm: Stopping Voice In channel\n");
     } else {
         /*
-         * Voice Out: if piggybacking onto the Game stream, simply clear the
-         * relationship and return — there are no own URBs to unlink.
+         * Voice Out: if piggybacking onto the Game stream, clear the
+         * relationship.  If the Game chain is in keepalive (Game
+         * stopped but the chain runs for us), we are the last consumer:
+         * claim release and stop the orphaned Game chain ourselves.
          */
         if (dev->voice_out_piggybacking) {
             struct zg01_dev *host = dev->piggyback_host;
             pr_info("zg01_pcm: Voice Out STOP - leaving piggyback mode\n");
             if (host) {
+                mutex_lock(&host->chain_mutex);
                 atomic_set(&host->voice_out_mixing, 0);
                 smp_wmb();
                 host->vo_mix_dev = NULL;
+                if (host->chain_keepalive) {
+                    /* We are the last consumer of the orphaned chain.
+                     * Claim the stop under the mutex, then release it
+                     * BEFORE the recursive call — stop_streaming(host)
+                     * re-locks chain_mutex in its Game branch. */
+                    host->chain_keepalive = false;
+                    mutex_unlock(&host->chain_mutex);
+                    pr_info("zg01_pcm: VO STOP - stopping orphaned Game chain\n");
+                    zg01_stop_streaming(host);
+                    dev->voice_out_piggybacking = false;
+                    dev->piggyback_host = NULL;
+                    return;
+                }
+                mutex_unlock(&host->chain_mutex);
             }
             dev->voice_out_piggybacking = false;
             dev->piggyback_host = NULL;
