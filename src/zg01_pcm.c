@@ -593,7 +593,21 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
      * by design, healed on next hw_free/close/disconnect.
      */
     if (dev->channel_type == CHANNEL_TYPE_GAME && dev->chain_keepalive) {
+        unsigned long flags_;
+
         pr_info("zg01_pcm: hw_free deferred - chain in keepalive for Voice Out\n");
+        /*
+         * The ALSA core frees runtime->dma_area after this callback
+         * returns, but dev->substream_game would stay registered —
+         * later callbacks would pass the mixing exception and bail at
+         * !dma_area with a pr_err flood while Voice Out starves
+         * (re-review finding).  Clear the substream: callbacks then
+         * take the substitution path, which touches only Voice Out
+         * memory.  A later Game prepare/START re-registers it.
+         */
+        spin_lock_irqsave(&dev->lock, flags_);
+        dev->substream_game = NULL;
+        spin_unlock_irqrestore(&dev->lock, flags_);
         mutex_unlock(&dev->pcm_mutex);
         return 0;
     }
@@ -1986,10 +2000,13 @@ void zg01_stop_streaming(struct zg01_dev *dev)
                 host->vo_mix_dev = NULL;
                 if (host->chain_keepalive) {
                     /* We are the last consumer of the orphaned chain.
-                     * Claim the stop under the mutex, then release it
-                     * BEFORE the recursive call — stop_streaming(host)
-                     * re-locks chain_mutex in its Game branch. */
+                     * Publish the kill marker in THIS critical section:
+                     * a Game START squeezing in before the recursive
+                     * stop below re-locks chain_mutex must see it and
+                     * flush instead of adopting the dying chain
+                     * (residual window found in re-review). */
                     host->chain_keepalive = false;
+                    host->cleanup_in_progress_game = true;
                     mutex_unlock(&host->chain_mutex);
                     pr_info("zg01_pcm: VO STOP - stopping orphaned Game chain\n");
                     zg01_stop_streaming(host);
