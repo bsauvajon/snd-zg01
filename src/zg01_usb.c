@@ -169,21 +169,32 @@ static void zg01_disconnect(struct usb_interface *interface)
         flush_work(&dev->streams[i].xrun_work);
     }
 
+    /* F2 fence: mark chains unallocated under state_mutex so a
+     * concurrent trigger/chain_start (blocked on the mutex) sees the
+     * teardown and bails with -ENODEV instead of submitting URBs we
+     * are about to free. */
+    mutex_lock(&dev->state_mutex);
+    dev->out_chain.allocated = false;
+    dev->in_chain.allocated = false;
+    mutex_unlock(&dev->state_mutex);
+
     /* Free URBs and buffers for real. */
     for (i = 0; i < MAX_URBS; i++) {
         if (dev->out_chain.urbs[i]) {
             usb_kill_urb(dev->out_chain.urbs[i]);
             usb_free_urb(dev->out_chain.urbs[i]);
+            dev->out_chain.urbs[i] = NULL;
         }
         kfree(dev->out_chain.bufs[i]);
+        dev->out_chain.bufs[i] = NULL;
         if (dev->in_chain.urbs[i]) {
             usb_kill_urb(dev->in_chain.urbs[i]);
             usb_free_urb(dev->in_chain.urbs[i]);
+            dev->in_chain.urbs[i] = NULL;
         }
         kfree(dev->in_chain.bufs[i]);
+        dev->in_chain.bufs[i] = NULL;
     }
-    dev->out_chain.allocated = false;
-    dev->in_chain.allocated = false;
 
     /* Asynchronous teardown: does not hang the USB hub thread when
      * PipeWire still holds the device open. */

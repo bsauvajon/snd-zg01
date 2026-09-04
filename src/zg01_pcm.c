@@ -246,6 +246,7 @@ static void zg01_chain_stop(struct zg01_dev *dev, struct zg01_chain *c)
  */
 static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
 {
+    int submitted = 0;
     int i, ret;
 
     if (!c->allocated)
@@ -257,11 +258,23 @@ static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
     cancel_delayed_work(&c->quiesce_work);
 
     mutex_lock(&dev->state_mutex);
+
+    /* F2: never submit against a device being torn down — disconnect
+     * frees the URBs under this mutex after setting disconnecting. */
+    if (atomic_read(&dev->disconnecting)) {
+        mutex_unlock(&dev->state_mutex);
+        return -ENODEV;
+    }
+
     if (c->cleanup_pending) {
         mutex_unlock(&dev->state_mutex);
         flush_work(&c->cleanup_work);   /* also drains callbacks */
         mutex_lock(&dev->state_mutex);
         c->cleanup_pending = false;
+        if (atomic_read(&dev->disconnecting) || !c->allocated) {
+            mutex_unlock(&dev->state_mutex);
+            return -ENODEV;
+        }
     }
 
     if (atomic_read(&c->inflight) > 0) {
@@ -271,21 +284,29 @@ static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
 
     atomic_set(&c->kill, 0);
     atomic_set(&c->inflight, MAX_URBS);
-    mutex_unlock(&dev->state_mutex);
 
+    /* Submit with state_mutex held: disconnect's URB free path also
+     * runs under state_mutex, so a URB can never be freed between
+     * our check and usb_submit_urb. */
     for (i = 0; i < MAX_URBS; i++) {
         ret = usb_submit_urb(c->urbs[i], GFP_KERNEL);
         if (ret)
             goto fail;
+        submitted++;
     }
+
+    mutex_unlock(&dev->state_mutex);
     return 0;
 
 fail:
-    mutex_lock(&dev->state_mutex);
-    for (i--; i >= 0; i--)
-        usb_unlink_urb(c->urbs[i]);
+    /* F1: URBs never handed to usb_submit_urb can never decrement
+     * inflight via a completion — subtract them here, or the counter
+     * sticks >0 and a later start "adopts" a dead chain forever. */
+    atomic_sub(MAX_URBS - submitted, &c->inflight);
     atomic_set(&c->kill, 1);
     c->cleanup_pending = true;
+    for (i = submitted - 1; i >= 0; i--)
+        usb_unlink_urb(c->urbs[i]);
     queue_work(zg01_cleanup_wq, &c->cleanup_work);
     mutex_unlock(&dev->state_mutex);
     return ret;
@@ -466,6 +487,19 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
         dev_warn(&dev->udev->dev, "resubmit failed on EP 0x%02x: %d\n",
                  c->endpoint, ret);
         atomic_dec(&c->inflight);
+        /* F3: surface the dead chain to ALSA as an xrun instead of
+         * clicking silently forever.  Queuing work from softirq is
+         * safe; the handlers check substream state themselves. */
+        if (c == &dev->out_chain) {
+            if (dev->streams[ZG01_GAME].running)
+                queue_work(zg01_period_wq,
+                           &dev->streams[ZG01_GAME].xrun_work);
+            if (dev->streams[ZG01_VOICE_OUT].running)
+                queue_work(zg01_period_wq,
+                           &dev->streams[ZG01_VOICE_OUT].xrun_work);
+        } else if (dev->streams[ZG01_VOICE_IN].running) {
+            queue_work(zg01_period_wq, &dev->streams[ZG01_VOICE_IN].xrun_work);
+        }
         return false;
     }
     return true;
@@ -867,7 +901,6 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     struct zg01_stream *s = sub_to_stream(substream);
     struct zg01_dev *dev = s->dev;
     unsigned long flags;
-    unsigned int rate;
     int ret;
 
     mutex_lock(&dev->state_mutex);
@@ -877,19 +910,22 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
         return -ENODEV;
     }
 
-    rate = substream->runtime
-        ? substream->runtime->rate : 48000;
-
     /*
      * Device initialization (vendor handshake + rate).  The Magic
      * Sequence resets both interfaces to alt 0, killing every live URB
      * — run it only when NO chain is streaming.  state_mutex makes this
      * check atomic against triggers on the sibling PCMs (R1).
+     *
+     * F4: the clock is DEVICE-WIDE (one UAC2 clock source shared by
+     * both interfaces).  Always initialize at 48 kHz — a Voice In
+     * first-open at 16 kHz must not mis-clock the 48 kHz-only Game
+     * playback (old driver effectively behaved the same: first init
+     * always requested 48000).
      */
     if (!dev->device_initialized &&
         atomic_read(&dev->out_chain.inflight) == 0 &&
         atomic_read(&dev->in_chain.inflight) == 0) {
-        ret = zg01_set_rate(dev, (rate == 16000) ? 16000 : 48000);
+        ret = zg01_set_rate(dev, 48000);
         if (ret < 0)
             dev_warn(&dev->udev->dev, "set_rate failed: %d\n", ret);
         dev->device_initialized = true;
@@ -1083,14 +1119,18 @@ int zg01_create_pcm_devices(struct zg01_dev *dev)
     if (ret)
         return ret;
 
-    for (int i = 0; i < ZG01_N_STREAMS; i++)
+    for (int i = 0; i < ZG01_N_STREAMS; i++) {
+        unsigned int max = dev->streams[i].direction ==
+                           SNDRV_PCM_STREAM_CAPTURE
+                               ? PCM_BUFFER_BYTES_MAX_VOICE
+                               : PCM_BUFFER_BYTES_MAX_GAME;
+
+        /* Match old driver: managed minimum = max/8 (6144 game/VO,
+         * 12288 voice-in), not the smaller hw floor. */
         snd_pcm_set_managed_buffer_all(dev->pcm_instances[i],
                                        SNDRV_DMA_TYPE_CONTINUOUS, NULL,
-                                       PCM_BUFFER_BYTES_MIN_GAME,
-                                       dev->streams[i].direction ==
-                                       SNDRV_PCM_STREAM_CAPTURE
-                                           ? PCM_BUFFER_BYTES_MAX_VOICE
-                                           : PCM_BUFFER_BYTES_MAX_GAME);
+                                       max / 8, max);
+    }
 
     return 0;
 }
