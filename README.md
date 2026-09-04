@@ -123,7 +123,7 @@ install. If a pre-2026 package left broken DKMS state, remove
 
 Working: Game Out + Voice Out simultaneous playback, Voice In capture,
 suspend/resume, replug, single module, single card. Not implemented: MIDI,
-hardware volume controls, other sample rates.
+other sample rates.
 
 Experimental out-of-tree driver. Kernel updates can break the build; report
 issues with `dmesg` output.
