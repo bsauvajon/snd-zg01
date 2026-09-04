@@ -32,8 +32,7 @@ sudo apt-get install -f   # only if dependencies are missing
 ```
 
 Get the `.deb` from the latest GitHub release. The postinst script builds
-the module through DKMS, installs udev rules, and adds the modules-load.d
-entry.
+the module through DKMS and adds the modules-load.d entry.
 
 ## From source
 
@@ -77,13 +76,14 @@ and Voice In.
 
 ## Automatic loading
 
-The package installs two mechanisms:
+`snd-zg01.conf` in modules-load.d pre-loads the module at boot, before
+`snd-usb-audio` claims the device through its generic Yamaha alias.
 
-1. `snd-zg01.conf` in modules-load.d pre-loads the module at boot, before
-   `snd-usb-audio` claims the device through its generic Yamaha alias.
-2. `90-zg01.rules` runs `modprobe snd-zg01` when the device is plugged in.
+At hotplug time no helper is needed: the module exports the exact
+`usb:v0499p1513` modalias, and kmod prefers the exact alias over the
+`snd-usb-audio` wildcard, so `modprobe` always resolves to `snd_zg01`.
 
-Manual builds get neither mechanism. Add the module to `/etc/modules-load.d/`
+Manual builds get no mechanism. Add the module to `/etc/modules-load.d/`
 yourself if needed.
 
 ## Troubleshooting
@@ -110,11 +110,11 @@ journalctl -b -k --grep zg01
 ### Wrong driver claimed the device
 
 `snd-usb-audio` must not win the bind. Confirm the modules-load.d entry
-exists and the udev rule fired:
+exists and the module bound to the device:
 
 ```bash
 cat /etc/modules-load.d/snd-zg01.conf
-journalctl -b --grep 90-zg01
+journalctl -b -k --grep zg01
 ```
 
 ### Permission issues
@@ -135,9 +135,9 @@ sudo apt remove snd-zg01-dkms
 sudo pacman -R snd-zg01-dkms-git
 ```
 
-The postrm and pacman hooks unload the module and remove the DKMS state,
-udev rules, and modules-load.d entry. Do not delete files under `/usr/src`
-or `/var/lib/dkms` by hand.
+The postrm and pacman hooks unload the module and remove the DKMS state and
+the modules-load.d entry. Do not delete files under `/usr/src` or
+`/var/lib/dkms` by hand.
 
 ## Upgrades from old driver versions
 

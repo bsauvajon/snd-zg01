@@ -39,10 +39,9 @@ makepkg --cleanbuild
 sudo pacman -U snd-zg01-dkms-git-*.pkg.tar.zst
 ```
 
-The package installs the udev rules, the modules-load.d entry, and the UCM
-profile. Reboot after install so `snd-zg01` registers before the generic
-Yamaha match claims the device. See `packaging/arch/README.md` for
-verification and rollback.
+The package installs the modules-load.d entry and the UCM profile. Reboot
+after install so `snd-zg01` registers before the generic Yamaha match claims
+the device. See `packaging/arch/README.md` for verification and rollback.
 
 ### Debian, Ubuntu
 

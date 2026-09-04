@@ -16,8 +16,8 @@ The package installs:
 3. Post-install actions (`debian/snd-zg01-dkms.postinst`):
    - unloads any loaded `snd-zg01` or old `zg01_*` modules
    - registers, builds, and installs through DKMS
-   - copies `src/90-zg01.rules` to `/etc/udev/rules.d/`
    - copies `src/snd-zg01.conf` to `/etc/modules-load.d/`
+   - removes stale `90-zg01.rules` copies from older package versions
 
 The postrm script unloads the module, removes the DKMS state, the copied
 udev rules, and the modules-load.d entry.

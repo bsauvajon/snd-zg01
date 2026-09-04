@@ -34,8 +34,6 @@ package() {
     -e '/^CLEAN=/d' \
     "${dkms_root}/dkms.conf"
 
-  install -Dm644 "${_pkgname}/src/90-zg01.rules" \
-    "${pkgdir}/usr/lib/udev/rules.d/90-zg01.rules"
   install -Dm644 "${_pkgname}/src/snd-zg01.conf" \
     "${pkgdir}/usr/lib/modules-load.d/snd-zg01.conf"
 
