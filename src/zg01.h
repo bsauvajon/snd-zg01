@@ -60,14 +60,13 @@ struct zg01_stream {
     unsigned int pcm_pos;                    /* absolute frame counter */
 
     /*
-     * appl_ptr epoch for the playback advance clamp.  The out-chain
-     * callback advances pcm_pos at USB packet cadence while userspace
-     * (PipeWire) commits writes in batches; without a clamp hw_ptr can
-     * outrun appl_ptr and snd_pcm_playback_avail() underflows.
-     * budget = appl_ptr - appl_base; pcm_pos may advance only up to
-     * budget.  Captured at prepare, after the position reset.
+     * appl_ptr clamp for playback: the out-chain callback advances
+     * pcm_pos at USB packet cadence while userspace (PipeWire) commits
+     * writes in batches; without a clamp hw_ptr can outrun appl_ptr
+     * and snd_pcm_playback_avail() underflows.  The clamp compares
+     * ALSA's own appl_ptr and hw_ptr (same epoch, self-healing after
+     * any core-side reset) — no driver-side epoch bookkeeping.
      */
-    u64 appl_base;
 
     /* PCM-op state, protected by dev->state_mutex: */
     bool opened;                             /* open() .. close() */
@@ -127,7 +126,7 @@ struct zg01_dev {
 
     /*
      * dev->lock guards the callback-shared fields (substream pointers,
-     * pcm_pos, appl_base).  Every dereference of substream/runtime/
+     * pcm_pos).  Every dereference of substream/runtime/
      * dma_area in the URB callbacks happens inside this lock, and every
      * clear of those pointers also happens inside it — after the chain
      * drain guarantees no callback is in flight.  One device, one lock:

@@ -506,30 +506,27 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
 }
 
 /*
- * Clamp a callback-side position advance to the appl_ptr budget.
- * budget = appl_ptr - appl_base; pcm_pos may never pass the last frame
- * userspace committed.  s64 compare only — a u32 subtraction wraps and
- * silently disarms the clamp after a rewind.
+ * Clamp a callback-side position advance so hw_ptr never passes the
+ * last frame userspace committed.  Both counters live in ALSA's own
+ * epoch (runtime->status->hw_ptr and runtime->control->appl_ptr), so
+ * budget = appl_ptr - hw_ptr is always the exact queued count and
+ * survives every core-side reset (prepare, RESET, suspend) without
+ * driver-side epoch bookkeeping.  s64 compare; a u32 subtraction
+ * wraps and silently disarms the clamp after a rewind.
  */
 static unsigned int clamp_advance(struct zg01_stream *s,
                                   struct snd_pcm_runtime *rt,
                                   unsigned int advance)
 {
-    if (rt->control) {
+    if (rt->control && rt->status) {
         u64 appl = READ_ONCE(rt->control->appl_ptr);
-        u64 base = READ_ONCE(s->appl_base);
-        s64 budget = (s64)(appl - base);
-        s64 headroom;
+        u64 hw = READ_ONCE(rt->status->hw_ptr);
+        s64 queued = (s64)(appl - hw);
 
-        if (budget < 0) {
-            /* appl_ptr moved backwards (RESET sets appl = hw): rebase
-             * with zero headroom; the next userspace write resumes. */
-            WRITE_ONCE(s->appl_base, appl - s->pcm_pos);
-            budget = (s64)s->pcm_pos;
-        }
-        headroom = budget - (s64)s->pcm_pos;
-        if (headroom < (s64)advance)
-            return headroom > 0 ? (unsigned int)headroom : 0;
+        /* hw_ptr is what WE advanced; cap the additional advance at
+         * what userspace has queued beyond it. */
+        if (queued < (s64)advance)
+            return queued > 0 ? (unsigned int)queued : 0;
     }
     return advance;
 }
@@ -965,9 +962,9 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     spin_lock_irqsave(&dev->lock, flags);
     s->substream = substream;
     s->pcm_pos = 0;
-    if (s->direction == SNDRV_PCM_STREAM_PLAYBACK &&
-        substream->runtime && substream->runtime->status)
-        s->appl_base = substream->runtime->status->hw_ptr;
+    /* Playback needs no epoch capture here: the advance clamp reads
+     * ALSA's own appl_ptr/hw_ptr counters, which the core keeps in a
+     * single epoch across prepare/RESET/suspend. */
     spin_unlock_irqrestore(&dev->lock, flags);
 
     s->initialized = true;

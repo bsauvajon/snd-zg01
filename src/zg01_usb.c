@@ -67,7 +67,6 @@ static int zg01_probe(struct usb_interface *interface,
         s->dev = dev;
         s->substream = NULL;
         s->pcm_pos = 0;
-        s->appl_base = 0;
         s->opened = false;
         s->initialized = false;
         s->running = false;
