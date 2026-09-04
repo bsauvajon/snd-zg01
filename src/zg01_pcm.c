@@ -92,10 +92,8 @@ void zg01_xrun_work_fn(struct work_struct *work)
     if (!sub || atomic_read(&dev->disconnecting))
         return;
 
-    snd_pcm_stream_lock_irqsave(sub, flags);
-    if (snd_pcm_running(sub))
-        snd_pcm_stop_xrun(sub);
-    snd_pcm_stream_unlock_irqrestore(sub, flags);
+    /* This helper takes the stream lock and checks the running state. */
+    snd_pcm_stop_xrun(sub);
 }
 
 void zg01_chain_cleanup_fn(struct work_struct *work)
@@ -505,32 +503,6 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
     return true;
 }
 
-/*
- * Clamp a callback-side position advance so hw_ptr never passes the
- * last frame userspace committed.  Both counters live in ALSA's own
- * epoch (runtime->status->hw_ptr and runtime->control->appl_ptr), so
- * budget = appl_ptr - hw_ptr is always the exact queued count and
- * survives every core-side reset (prepare, RESET, suspend) without
- * driver-side epoch bookkeeping.  s64 compare; a u32 subtraction
- * wraps and silently disarms the clamp after a rewind.
- */
-static unsigned int clamp_advance(struct zg01_stream *s,
-                                  struct snd_pcm_runtime *rt,
-                                  unsigned int advance)
-{
-    if (rt->control && rt->status) {
-        u64 appl = READ_ONCE(rt->control->appl_ptr);
-        u64 hw = READ_ONCE(rt->status->hw_ptr);
-        s64 queued = (s64)(appl - hw);
-
-        /* hw_ptr is what WE advanced; cap the additional advance at
-         * what userspace has queued beyond it. */
-        if (queued < (s64)advance)
-            return queued > 0 ? (unsigned int)queued : 0;
-    }
-    return advance;
-}
-
 /* Snapshot of one playback consumer, taken under dev->lock. */
 struct out_consumer {
     struct zg01_stream *s;
@@ -585,16 +557,14 @@ static void advance_consumer(struct out_consumer *oc, unsigned int total)
 {
     struct zg01_stream *s = oc->s;
     unsigned int period_size = oc->rt->period_size;
-    unsigned int advance;
 
     if (!oc->active || total == 0)
         return;
 
-    advance = clamp_advance(s, oc->rt, total);
-    if (advance == 0)
-        return;
-
-    s->pcm_pos += advance;
+    /* The endpoint consumed every frame placed in the URB.  Keep the
+     * reported hardware position at that same cadence.  ALSA detects an
+     * underrun when this position overtakes userspace's appl_ptr. */
+    s->pcm_pos += total;
     if (period_size > 0 &&
         (s->pcm_pos / period_size) != (oc->old_pos / period_size))
         oc->period_elapsed = true;
@@ -602,7 +572,7 @@ static void advance_consumer(struct out_consumer *oc, unsigned int total)
 
 /*
  * EP 0x01 OUT completion: mix both playback consumers into the packet
- * slots and advance their positions (clamped).  All ring accesses and
+ * slots and advance their positions at the endpoint cadence.  All ring
  * position updates happen under dev->lock; every clear of those
  * pointers in close/hw_free also happens under dev->lock AFTER the
  * chain drain — no window where the callback touches freed memory
@@ -753,7 +723,6 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
     struct zg01_dev *dev = s->dev;
     struct snd_pcm_runtime *runtime = substream->runtime;
     unsigned long now = jiffies;
-    bool rapid;
     int ret = 0;
 
     mutex_lock(&dev->state_mutex);
@@ -769,7 +738,6 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
     else
         dev->open_count = 1;
     dev->last_open_jiffies = now;
-    rapid = dev->open_count > 2;
 
     runtime->hw.info = SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_MMAP_VALID |
                        SNDRV_PCM_INFO_INTERLEAVED |
@@ -956,15 +924,12 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
 
     /*
      * Publish the substream and reset the position under dev->lock.
-     * For playback capture the appl_ptr epoch AFTER the reset:
-     *   base = hw_ptr - 0  =>  budget = appl_ptr - hw_ptr = queued.
+     * The callback advances this position for every frame submitted to
+     * the endpoint. ALSA compares it with appl_ptr to detect underruns.
      */
     spin_lock_irqsave(&dev->lock, flags);
     s->substream = substream;
     s->pcm_pos = 0;
-    /* Playback needs no epoch capture here: the advance clamp reads
-     * ALSA's own appl_ptr/hw_ptr counters, which the core keeps in a
-     * single epoch across prepare/RESET/suspend. */
     spin_unlock_irqrestore(&dev->lock, flags);
 
     s->initialized = true;

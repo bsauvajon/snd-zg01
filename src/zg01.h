@@ -59,15 +59,6 @@ struct zg01_stream {
     struct snd_pcm_substream *substream;
     unsigned int pcm_pos;                    /* absolute frame counter */
 
-    /*
-     * appl_ptr clamp for playback: the out-chain callback advances
-     * pcm_pos at USB packet cadence while userspace (PipeWire) commits
-     * writes in batches; without a clamp hw_ptr can outrun appl_ptr
-     * and snd_pcm_playback_avail() underflows.  The clamp compares
-     * ALSA's own appl_ptr and hw_ptr (same epoch, self-healing after
-     * any core-side reset) — no driver-side epoch bookkeeping.
-     */
-
     /* PCM-op state, protected by dev->state_mutex: */
     bool opened;                             /* open() .. close() */
     bool initialized;                        /* device init has run */
