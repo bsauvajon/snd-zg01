@@ -587,7 +587,9 @@ static void zg01_iso_out(struct urb *urb)
     unsigned int total_frames = 0;
     int i, f;
 
-    if (urb->status && urb->status != -EXDEV)
+    if (urb->status && urb->status != -EXDEV &&
+        urb->status != -ENOENT && urb->status != -ECONNRESET &&
+        urb->status != -ESHUTDOWN)
         dev_warn_ratelimited(&dev->udev->dev, "out URB status %d\n",
                              urb->status);
 
@@ -656,7 +658,9 @@ static void zg01_iso_in(struct urb *urb)
     bool period_elapsed = false;
     int i, f;
 
-    if (urb->status && urb->status != -EXDEV)
+    if (urb->status && urb->status != -EXDEV &&
+        urb->status != -ENOENT && urb->status != -ECONNRESET &&
+        urb->status != -ESHUTDOWN)
         dev_warn_ratelimited(&dev->udev->dev, "in URB status %d\n",
                              urb->status);
 
