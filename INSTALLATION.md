@@ -1,228 +1,155 @@
-# Installation Guide
+# Installation
 
-## Option 1: DKMS Package Installation (Recommended)
+## Arch Linux, CachyOS, Omarchy
 
-### Prerequisites
+Install build tools, DKMS, and headers for the running kernel:
+
 ```bash
-sudo apt update
+sudo pacman -S --needed base-devel dkms linux-headers git
+```
+
+Other kernel variants need their matching headers instead. Build and install:
+
+```bash
+cd packaging/arch
+makepkg --cleanbuild
+sudo pacman -U snd-zg01-dkms-git-*.pkg.tar.zst
+reboot
+```
+
+The reboot lets `snd-zg01` register before the generic Yamaha USB-audio
+match claims the device. See `packaging/arch/README.md` for verification,
+rollback, and warnings about experimental out-of-tree modules.
+
+## Debian, Ubuntu
+
+Install DKMS and headers, then the package:
+
+```bash
 sudo apt install dkms linux-headers-$(uname -r)
+sudo dpkg -i snd-zg01-dkms_*.deb
+sudo apt-get install -f   # only if dependencies are missing
 ```
 
-### Install from .deb Package
-```bash
-# Download from releases or use the local package
-sudo dpkg -i snd-zg01-dkms_1.0.0-1_all.deb
+Get the `.deb` from the latest GitHub release. The postinst script builds
+the module through DKMS, installs udev rules, and adds the modules-load.d
+entry.
 
-# Fix dependencies if needed
-sudo apt-get install -f
+## From source
+
+Prerequisites: kernel headers and build tools for the running kernel.
+
+```bash
+make
+sudo modprobe snd-zg01
 ```
 
-### Verify Installation
+Unload:
+
 ```bash
-# Check DKMS status
+sudo modprobe -r snd-zg01
+```
+
+The module is a single object built from the repository root. Clang-built
+kernels need `LLVM=1`; the Makefile detects this from the kernel config.
+
+## Verify
+
+```bash
 dkms status snd-zg01
-
-# Should show:
-# snd-zg01/1.0.0, 6.17.0-8-generic, x86_64: installed
-```
-
-### Load the Modules
-```bash
-# Load all modules
-sudo modprobe zg01_usb zg01_pcm zg01_control zg01_usb_discovery
-
-# Verify modules loaded
-lsmod | grep zg01
-```
-
-### Verify Audio Devices
-```bash
-# Check ALSA cards
+lsmod | grep snd_zg01
 cat /proc/asound/cards
-
-# Should show:
-#  X [zg01game    ]: zg01game - Yamaha ZG01 Game
-#                   Yamaha ZG01 Game at usb-XXXX
-#  Y [zg01voice   ]: zg01voice - Yamaha ZG01 Voice
-#                   Yamaha ZG01 Voice at usb-XXXX
 ```
 
-### Test Audio
+Expected card state: one card `zg01` with three PCM devices.
+
 ```bash
-# Test playback (1-second 440Hz tone)
-speaker-test -D hw:zg01game -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
-
-# Test capture (5-second recording)
-arecord -D hw:zg01voice -f S32_LE -r 48000 -c 2 -d 5 test.wav
+# Playback, Game Out
+speaker-test -D hw:zg01,0 -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
+# Playback, Voice Out
+speaker-test -D hw:zg01,1 -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
+# Capture, Voice In
+arecord -D hw:zg01,2 -f S32_LE -r 48000 -c 2 -d 5 test.wav
 ```
 
-### Uninstall
-```bash
-# Remove the package
-sudo apt remove snd-zg01-dkms
+In PipeWire, the UCM profile exposes the devices as Game Out, Voice Out,
+and Voice In.
 
-# DKMS will automatically remove the modules from all kernels
-```
+## Automatic loading
 
----
+The package installs two mechanisms:
 
-## Option 2: Manual Build from Source
+1. `snd-zg01.conf` in modules-load.d pre-loads the module at boot, before
+   `snd-usb-audio` claims the device through its generic Yamaha alias.
+2. `90-zg01.rules` runs `modprobe snd-zg01` when the device is plugged in.
 
-### Prerequisites
-```bash
-sudo apt update
-sudo apt install build-essential linux-headers-$(uname -r)
-```
-
-### Build
-```bash
-# Clone repository
-git clone https://github.com/yourusername/snd-zg01.git
-cd snd-zg01
-
-# Clean and build
-make clean
-make -j$(nproc)
-```
-
-### Load Modules
-```bash
-# Load using the provided script
-sudo ./scripts/load_modules.sh
-
-# Or load manually
-sudo insmod zg01_usb.ko
-sudo insmod zg01_pcm.ko
-sudo insmod zg01_control.ko
-sudo insmod zg01_usb_discovery.ko
-```
-
-### Unload Modules
-```bash
-# Unload using the provided script
-sudo ./scripts/unload_modules.sh
-
-# Or unload manually (in reverse order)
-sudo rmmod zg01_usb_discovery
-sudo rmmod zg01_control
-sudo rmmod zg01_pcm
-sudo rmmod zg01_usb
-```
-
----
-
-## Option 3: Build Your Own DKMS Package
-
-### Prerequisites
-```bash
-sudo apt update
-sudo apt install debhelper devscripts dh-dkms dkms linux-headers-$(uname -r)
-```
-
-### Build Package
-```bash
-# From the repository root
-./scripts/build-deb.sh
-
-# Package will be created in parent directory
-ls -lh ../snd-zg01-dkms_*.deb
-```
-
-### Install Your Package
-```bash
-sudo dpkg -i ../snd-zg01-dkms_1.0.0-1_all.deb
-```
-
----
+Manual builds get neither mechanism. Add the module to `/etc/modules-load.d/`
+yourself if needed.
 
 ## Troubleshooting
 
-### DKMS Build Failed
+### DKMS build fails
+
 ```bash
-# Check DKMS logs
-sudo dkms status -a
+dkms status
 cat /var/lib/dkms/snd-zg01/1.0.0/build/make.log
 ```
 
-### Modules Won't Load
-```bash
-# Check kernel logs
-sudo dmesg | tail -50
+Check that the headers for the running kernel are installed. Clang-built
+kernels log the compiler detection in the Makefile; build once with
+`make` by hand to see the full output.
 
-# Check dependencies
-modinfo zg01_usb.ko
+### Device not detected
+
+```bash
+lsusb | grep 0499:1513
+sudo modprobe snd-zg01
+journalctl -b -k --grep zg01
 ```
 
-### Device Not Detected
-```bash
-# Verify USB device is present
-lsusb | grep "0499:1513"
+### Wrong driver claimed the device
 
-# Check module loading order
-sudo modprobe zg01_usb
-sudo modprobe zg01_pcm
-sudo modprobe zg01_control
-sudo modprobe zg01_usb_discovery
+`snd-usb-audio` must not win the bind. Confirm the modules-load.d entry
+exists and the udev rule fired:
+
+```bash
+cat /etc/modules-load.d/snd-zg01.conf
+journalctl -b --grep 90-zg01
 ```
 
-### Permission Issues
-```bash
-# Add user to audio group (logout/login required)
-sudo usermod -a -G audio $USER
+### Permission issues
 
-# Verify group membership
-groups $USER
+Add your user to the `audio` group, then log out and back in:
+
+```bash
+sudo usermod -aG audio $USER
 ```
 
----
+## Uninstall
 
-## Automatic Module Loading at Boot
-
-### Option 1: Via /etc/modules
 ```bash
-# Add to /etc/modules
-echo "zg01_usb" | sudo tee -a /etc/modules
-echo "zg01_pcm" | sudo tee -a /etc/modules
-echo "zg01_control" | sudo tee -a /etc/modules
-echo "zg01_usb_discovery" | sudo tee -a /etc/modules
+# Debian
+sudo apt remove snd-zg01-dkms
+
+# Arch
+sudo pacman -R snd-zg01-dkms-git
 ```
 
-### Option 2: Via systemd service
+The postrm and pacman hooks unload the module and remove the DKMS state,
+udev rules, and modules-load.d entry. Do not delete files under `/usr/src`
+or `/var/lib/dkms` by hand.
+
+## Upgrades from old driver versions
+
+Packages older than 2026 installed four modules (`zg01_usb`, `zg01_pcm`,
+`zg01_control`, `zg01_usb_discovery`) and three ALSA cards. The current
+install unloads those modules. If `dkms status` still shows broken old
+state, clean it manually:
+
 ```bash
-# Create service file
-sudo tee /etc/systemd/system/zg01-driver.service << 'EOF'
-[Unit]
-Description=Yamaha ZG01 USB Audio Driver
-After=sound.target
-
-[Service]
-Type=oneshot
-ExecStart=/sbin/modprobe zg01_usb
-ExecStart=/sbin/modprobe zg01_pcm
-ExecStart=/sbin/modprobe zg01_control
-ExecStart=/sbin/modprobe zg01_usb_discovery
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Enable service
-sudo systemctl daemon-reload
-sudo systemctl enable zg01-driver.service
-sudo systemctl start zg01-driver.service
+sudo modprobe -r zg01_usb_discovery zg01_control zg01_pcm zg01_usb 2>/dev/null || true
+sudo dkms remove snd-zg01/1.0.0 --all 2>/dev/null || true
+sudo rm -rf /var/lib/dkms/snd-zg01 /usr/src/snd-zg01-*
+sudo find /lib/modules -name 'snd-zg01.ko*' -path '*updates/dkms*' -delete
+sudo depmod -a
 ```
-
----
-
-## Verifying Installation Success
-
-After installation, you should see:
-
-1. **DKMS Status**: `dkms status` shows module installed
-2. **Loaded Modules**: `lsmod | grep zg01` shows 4 modules
-3. **ALSA Cards**: `cat /proc/asound/cards` shows zg01game and zg01voice
-4. **Kernel Messages**: `dmesg | grep zg01` shows successful initialization
-5. **Audio Test**: `speaker-test -D hw:zg01game` plays tone successfully
-
-If all checks pass, your installation is complete! 🎉

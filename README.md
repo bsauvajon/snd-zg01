@@ -1,333 +1,139 @@
-# Yamaha ZG01 Linux Kernel Driver
+# Yamaha ZG01 Linux kernel driver
 
-**Status: PRODUCTION READY ✅**
+An ALSA driver for the Yamaha ZG01 USB audio interface (VID 0x0499, PID
+0x1513). The device uses a vendor-specific protocol, so this driver reverse
+engineers it from USB captures instead of using the generic `snd-usb-audio`
+class driver.
 
-A complete Linux kernel driver for the Yamaha ZG01 USB audio interface (VID: 0x0499, PID: 0x1513), providing **excellent quality** 32-bit audio with three independent channels.
+## How the driver maps the device
 
-## ✨ Latest Updates
+The ZG01 carries both playback channels on one isochronous endpoint and mixes
+them in hardware. The driver exposes one ALSA card with three PCM devices:
 
-### 🎉 March 29, 2026 - Concurrent Output Mixing + Stability Fixes
-**Game + Voice Out simultaneous playback without saccades:**
-- **Fixed**: Opening a second app (e.g. Audacity) while audio is playing no longer cuts the stream
-- **Fixed**: Game + Voice Out playing together caused saccades (two URB chains on the same USB endpoint)
-- **Fixed**: Changing Discord capture device caused a rapid TRIGGER_START/STOP loop crashing the USB device
-- **How**: Voice Out now *piggybacks* onto the Game URB stream when both are active — samples are mixed frame-by-frame in the Game callback, so only a single URB chain occupies EP 0x01
-- **Result**: Chrome (Game) + Discord (Voice Out + Voice In) all work simultaneously without any glitch
+| PCM device | Name | Direction | Rates | Packet |
+|---|---|---|---|---|
+| 0 | Game Out | playback | 48 kHz | 240 B: 6 frames x 40 B |
+| 1 | Voice Out | playback | 48 kHz | shared EP 0x01 with Game Out |
+| 2 | Voice In | capture | 48 kHz, 16 kHz | 108 B: 8 B header, 6 frames x 16 B, 4 B trailer |
 
-### 🎉 February 7, 2026 - Full Multi-Channel Support!
-**All three channels work simultaneously!**
-- **Fixed**: Game + Voice Out + Voice In can all operate together without interference
-- **Fixed**: Kernel crash when opening control device (card->module not set)
-- **Fixed**: Voice Out opening no longer kills Game channel playback
-- **Result**: Discord (Voice Out) + Music (Game) + Audacity (Voice In) all work at the same time!
+All channels run S32_LE stereo. Game Out and Voice Out are mixed by the
+device hardware, so use both sinks at the same time. On Arch, the package
+also installs a UCM profile, and PipeWire shows the devices as separate
+sinks named Game Out, Voice Out, and Voice In.
 
-### 🔧 January 18, 2026 - PipeWire START/STOP Loop Fix
-**Fixed rapid trigger loop causing audio instability:**
-- **Issue**: PipeWire would enter a rapid START/STOP loop when reconfiguring streams, causing audio to fail or become unstable
-- **Root Cause**: TRIGGER_STOP kept URBs running (only muting), causing state mismatch when TRIGGER_START tried to skip starting already-active URBs
-- **Solution**: 
-  - TRIGGER_STOP now properly stops URBs via `zg01_stop_streaming()`
-  - Each START/STOP cycle is clean with fresh URB allocation
-  - Added trigger loop detection and throttling as safety measure
-- **Result**: Stable audio during app start/stop and stream reconfiguration. Multiple applications work correctly without triggering restart loops.
+A single out chain serves both playback PCMs. When only Voice Out runs, the
+chain sends keepalive silence on the shared endpoint. When both run, the URB
+callback mixes both PCM streams into each packet. This preserves the two
+sinks without moving the mix into userspace.
 
-### 🔧 January 17, 2026 - Audio Stream Stability Fix
-**Fixed critical issue where audio would stop when starting/stopping applications:**
-- **Root Cause**: URBs were not being resubmitted when PCM state wasn't RUNNING, causing USB streaming to stop permanently
-- **Solution**: Modified URB callback to always resubmit URBs (sending silence when PCM not running), ensuring continuous USB streaming between TRIGGER_START and TRIGGER_STOP
-- **Additional Fixes**:
-  - PCM position no longer reset when URBs are already streaming (prevents desync)
-  - USB interface setup skipped when streaming is active (prevents disruption)
-- **Result**: Multiple applications can play audio simultaneously without interference
+## Install
 
-### 🎙️ January 11, 2026 - Three Independent Audio Channels!
-The driver now provides complete access to all ZG01 audio channels:
-- **Game Output**: High-quality playback for gaming/music (96-byte packets)
-- **Voice Output**: Secondary playback channel (240-byte packets)
-- **Voice Input**: Low-latency microphone capture (108-byte packets)
+### Arch Linux, CachyOS, Omarchy
 
-Each channel appears as a separate ALSA sound card with distinct names in PipeWire/PulseAudio.
-
-### 📦 DKMS Package Production Ready
-Professional DKMS packaging with full automation:
-- **One-command install**: `sudo dpkg -i snd-zg01-dkms_*.deb`
-- **Automatic driver loading**: udev rules handle device detection
-- **Kernel updates**: Modules rebuild automatically
-- **Proper module structure**: Fixed relocation issues by building from root directory
-
-## 🎉 Features
-
-- **Three Independent Channels**:
-  - **Game Output**: Crystal-clear playback for gaming/music
-  - **Voice Output**: Secondary playback channel for communication apps
-  - **Voice Input**: Low-latency microphone capture
-- **Format**: **32-bit Stereo (S32_LE) @ 48kHz** on all channels
-- **Architecture**: Asynchronous USB Audio with proper packet handling per channel
-- **Integration**: Fully compatible with ALSA, PulseAudio, and PipeWire
-- **Naming**: Distinct device names in audio applications via udev rules
-- **Quality**: Crystal-clear audio with no clicks or distortion
-
-## 🚀 Quick Start
-
-### Installation via DKMS Package (Recommended)
-
-The easiest way to install the driver is using the pre-built DKMS package:
-
-#### Using apt
-```
-curl -L https://raw.githubusercontent.com/bsauvajon/snd-zg01/refs/heads/main/apt/snd-zg01.asc | sudo tee /etc/apt/keyrings/snd-zg01.asc
-curl -L https://raw.githubusercontent.com/bsauvajon/snd-zg01/refs/heads/main/apt/snd-zg01.sources | sudo tee /etc/apt/sources.list.d/snd-zg01.sources
-sudo apt update
-sudo apt install snd-zg01-dkms
-```
-
-#### Downloading and installing manually
-
-Download the deb archive from the latest release then use these commands
+Build the package, then install it. DKMS hooks build the module for every
+installed kernel with matching headers:
 
 ```bash
-
-# Install the package (modules are compiled and installed automatically)
-sudo dpkg -i snd-zg01-dkms_1.0.0-1_all.deb
-
-# If there are dependency issues
-sudo apt-get install -f
-
-# Verify DKMS built and installed the modules
-dkms status snd-zg01
-
-# Plug in your ZG01 device (modules load automatically via udev)
-# Or if already connected, unplug and reconnect
-
-# Verify device is detected
-cat /proc/asound/cards
-# You should see three cards: "zg01game", "zg01voiceout", and "zg01voice"
+cd packaging/arch
+makepkg --cleanbuild
+sudo pacman -U snd-zg01-dkms-git-*.pkg.tar.zst
 ```
 
-**Benefits of DKMS:**
-- ✅ **Fully automated**: Modules compile during installation, load automatically when device is connected
-- ✅ **Plug-and-play**: Udev rules automatically load driver when ZG01 is plugged in
-- ✅ **Kernel updates**: Automatically rebuilds the driver when kernel is updated
-- ✅ **Clean removal**: `sudo apt remove snd-zg01-dkms` removes everything
+The package installs the udev rules, the modules-load.d entry, and the UCM
+profile. Reboot after install so `snd-zg01` registers before the generic
+Yamaha match claims the device. See `packaging/arch/README.md` for
+verification and rollback.
 
-### Prerequisites
-- Ubuntu 22.04+ or compatible Linux system (tested on kernel 6.17.0-8-generic)
-- Kernel headers: `sudo apt install linux-headers-$(uname -r)`
-- Build tools (only for manual build): `sudo apt install build-essential`
+### Debian, Ubuntu
 
-### Manual Build and Install
+Download the `.deb` from the latest release and install it:
+
 ```bash
-# Clone the repository
-git clone https://github.com/bsauvajon/snd-zg01.git
-cd snd-zg01
-
-# Build the driver
-make clean && make -j$(nproc)
-
-# Load the main module (it will load dependencies automatically)
-sudo modprobe zg01_usb
-
-# Verify device is detected
-cat /proc/asound/cards
-# You should see three cards: "zg01game", "zg01voiceout", and "zg01voice"
-
-# Check kernel logs
-sudo dmesg | tail -20 | grep zg01
+sudo dpkg -i snd-zg01-dkms_*.deb
+sudo apt-get install -f   # only if dependencies are missing
 ```
 
-### Unload
+The APT repository at `bsauvajon/snd-zg01` predates this fork. Its packages
+still describe the old driver.
+
+### From source
+
+The module builds against kernel headers. Clang-built kernels need the LLVM
+front end; the Makefile reads `CONFIG_CC_IS_CLANG` from the target kernel and
+sets it. A user-supplied `LLVM=` value wins over the auto-detection:
+
 ```bash
-sudo modprobe -r zg01_usb
+make
+sudo modprobe snd-zg01
 ```
 
-### Known Platform Compatibility
-- ✅ **Localhost xHCI (Intel)**: Fully functional, perfect audio quality
-- ✅ **VM (QEMU/KVM)**: Fully functional, perfect audio quality
-- ❓ **Other Controllers**: Likely compatible, please report results!
+## Verify
 
-## 🎧 Usage
+With the device connected:
 
-### ALSA Device Names
-The driver creates three distinct ALSA cards:
-1. **Yamaha ZG01 Game**: Primary playback device (hw:zg01game)
-2. **Yamaha ZG01 Voice Out**: Secondary playback device (hw:zg01voiceout)
-3. **Yamaha ZG01 Voice In**: Capture device (hw:zg01voice)
-
-In PipeWire/PulseAudio, these appear with their full descriptive names thanks to udev rules.
-
-### Testing Audio
-**Game Output (Primary Playback):**
 ```bash
-# 1-second 440Hz sine wave test
-speaker-test -D hw:zg01game -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
-
-# Play audio file
-aplay -D plughw:zg01game your_audio.wav
+cat /proc/asound/cards      # one card: zg01
+lsmod | grep snd_zg01
+journalctl -b -k --grep zg01
 ```
 
-**Voice Output (Secondary Playback):**
+The card offers three PCM devices: `hw:N,0` Game Out, `hw:N,1` Voice Out,
+`hw:N,2` Voice In. With the UCM profile installed, PipeWire names them the
+same way.
+
 ```bash
-# Test voice output channel
-speaker-test -D hw:zg01voiceout -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
-
-# Play audio file
-aplay -D plughw:zg01voiceout your_audio.wav
+# Game Out
+speaker-test -D hw:zg01,0 -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
+# Voice In
+arecord -D hw:zg01,2 -f S32_LE -r 48000 -c 2 -d 5 test.wav
 ```
 
-**Voice Input (Microphone Capture):**
-```bash
-# Record 5 seconds of audio
-arecord -D hw:zg01voice -f S32_LE -r 48000 -c 2 -d 5 test.wav
+Voice In logs bursts of `-ECONNRESET` on the first open. They are benign;
+the chain resubmits.
 
-# Or use plughw for automatic format conversion
-arecord -D plughw:zg01voice -f S16_LE -r 48000 -c 2 -d 5 test.wav
-```
+## DKMS
 
-**Multi-Channel Test:**
-```bash
-# Play simultaneously on both outputs (in separate terminals)
-# Terminal 1: Game output
-aplay -D hw:zg01game -f S32_LE music.wav
+Both packages install the source to DKMS. DKMS rebuilds the module on kernel
+updates. Remove the package with `pacman -R snd-zg01-dkms-git` or
+`apt remove snd-zg01-dkms`; the hooks unload the module and clean `/usr/src`
+and `/var/lib/dkms`.
 
-# Terminal 2: Voice output
-aplay -D hw:zg01voiceout -f S32_LE voice.wav
+Upgrades from the old split-driver packages (modules `zg01_usb`,
+`zg01_pcm`, `zg01_control`, `zg01_usb_discovery`) unload those modules during
+install. If a pre-2026 package left broken DKMS state, remove
+`/var/lib/dkms/snd-zg01` and `/usr/src/snd-zg01-*`, then run `depmod -a`.
 
-# Terminal 3: Record from microphone
-arecord -D hw:zg01voice -f S32_LE -r 48000 -c 2 recording.wav
-```
+## Troubleshooting
 
-## 🔧 Technical Details
+- Device missing: check `lsusb | grep 0499:1513`, then
+  `sudo modprobe snd-zg01` and read `journalctl -b -k --grep zg01`.
+- Wrong device claimed the card: check `snd-zg01` loads before
+  `snd-usb-audio` (modules-load.d entry).
+- No audio on one sink: Game Out and Voice Out share one endpoint; check
+  the other sink is not open in exclusive mode.
+- Rate problems: playback is 48 kHz only. Voice In also accepts 16 kHz.
+  Use `plughw:` for format conversion.
 
-- **USB Protocol**: Vendor-specific implementation with interface switching
-- **Three Channel Types**:
-  - **Game Output**: 96-byte packets (Interface 2,0 → 1,1)
-  - **Voice Output**: 240-byte packets (Interface 2,0 → 1,1 → 2,1)
-  - **Voice Input**: 108-byte packets (Interface 2,0 → 1,2)
-- **Data Format**: 32-bit PCM (S32_LE), stereo @ 48kHz
-- **Architecture**: Asynchronous USB Audio with URB-based streaming
-- **DKMS Integration**: Automatic build and module loading via udev rules
-- **Device Naming**: Unique names per channel via udev ID_MODEL_FROM_DATABASE
+## Documentation
 
-## 🐛 Troubleshooting
+- `docs/PROTOCOL_CAPTURE.md`: capture workflow for knobs, buttons, routing
+- `docs/INITIALIZATION_ANALYSIS.md`: device USB topology and packet formats
+- `packaging/arch/README.md`: Arch packaging, verification, rollback
 
-### Device Not Detected
-```bash
-# Check if USB device is visible
-lsusb | grep 0499:1513
+## Scope and status
 
-# Check if modules are loaded
-lsmod | grep zg01
+Working: Game Out + Voice Out simultaneous playback, Voice In capture,
+suspend/resume, replug, single module, single card. Not implemented: MIDI,
+hardware volume controls, other sample rates.
 
-# Check kernel logs
-sudo dmesg | grep -E "(zg01|0499:1513)"
+Experimental out-of-tree driver. Kernel updates can break the build; report
+issues with `dmesg` output.
 
-# Manually load driver if needed
-sudo modprobe zg01_usb
-```
+## Contributing
 
-### Only Some Channels Appear
-The driver creates three separate sound cards. Check all cards:
-```bash
-cat /proc/asound/cards
-# Should show: zg01game (card 0), zg01voiceout (card 2), zg01voice (card 3)
-# Card 1 is typically the built-in USB-Audio driver (MIDI)
-```
+Issues and pull requests are welcome. For protocol work, follow
+`docs/PROTOCOL_CAPTURE.md` and keep raw captures out of Git.
 
-### Audio Issues
-The driver provides crystal-clear audio on compatible hardware. If you experience issues:
-- Verify correct device selection in your audio application
-- Check sample rate is set to 48kHz
-- Ensure format is S32_LE (or use `plughw:` for automatic conversion)
-- Check `dmesg` for any USB or driver errors
-
-### Cleaning Up Older Versions
-
-If you installed an older version of the driver (before March 2026) and `dkms status` shows errors or broken modules after uninstalling, you may need to manually clean up the DKMS state. Older packages had incomplete cleanup scripts.
-
-**Symptoms of incomplete removal:**
-- `dkms status` shows `snd-zg01` with errors
-- `/var/lib/dkms/snd-zg01/` directory still exists after removal
-- Module files (`.ko` or `.ko.zst`) remain in `/lib/modules/*/updates/dkms/`
-
-**Complete manual cleanup:**
-```bash
-# 1. Unload the module if loaded
-sudo modprobe -r snd_zg01 2>/dev/null || sudo rmmod snd_zg01 2>/dev/null || true
-
-# 2. Force DKMS removal (ignore errors from broken state)
-sudo dkms uninstall snd-zg01/1.0.0 --all 2>/dev/null || true
-sudo dkms remove snd-zg01/1.0.0 --all 2>/dev/null || true
-
-# 3. Remove DKMS state and source directories
-sudo rm -rf /var/lib/dkms/snd-zg01
-sudo rm -rf /usr/src/snd-zg01-*
-
-# 4. Remove compiled module files
-sudo find /lib/modules/*/updates/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
-sudo find /lib/modules/*/extra/dkms/ -name "snd-zg01.ko*" -delete 2>/dev/null || true
-
-# 5. Update module dependencies
-sudo depmod -a
-
-# 6. Remove udev rules and configs (if package removal didn't do it)
-sudo rm -f /etc/udev/rules.d/90-zg01.rules
-sudo rm -f /etc/modules-load.d/snd-zg01.conf
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-
-# 7. Verify everything is clean
-dkms status | grep snd-zg01  # Should show nothing
-ls -la /var/lib/dkms/ | grep snd  # Should show nothing
-ls -la /usr/src/ | grep snd  # Should show nothing
-```
-
-After cleanup, you can install the latest version:
-```bash
-sudo apt update
-sudo apt install snd-zg01-dkms
-```
-
-## 📚 Documentation
-
-See additional markdown files for detailed information:
-- [INSTALLATION.md](INSTALLATION.md): Detailed installation instructions
-- [packaging/arch/README.md](packaging/arch/README.md): Arch Linux and Omarchy packaging, verification, and rollback
-- [docs/PROTOCOL_CAPTURE.md](docs/PROTOCOL_CAPTURE.md): Windows USBPcap workflow for knobs, buttons, routing, and DSP
-- [PACKAGING.md](PACKAGING.md): DKMS package building and release process
-- [TESTING_GUIDE.md](TESTING_GUIDE.md): Comprehensive testing procedures
-- [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md): Technical details and development notes
-
-
-## 🤝 Contributing
-
-Contributions are welcome! Please submit pull requests or open issues for any bugs found.
-
-## 📄 License
+## License
 
 GPL-2.0
-
-## GitHub Releases & APT repository
-
-A GitHub Actions workflow is included to build Debian packages, create a draft release, upload `.deb` assets, and publish a signed APT repository as release assets. The workflow file is `.github/workflows/release-apt.yml`.
-
-Usage
-- Trigger a release by creating a tag that matches `v*`, for example:
-
-```bash
-# create a tag and push it
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
-```
-
-Required repository secrets
-- `GPG_PRIVATE_KEY`: ASCII-armored GPG private key used to sign `Release`/`InRelease`.
-- `GPG_PASSPHRASE`: Passphrase for the private key.
-- `GPG_KEY_ID`: The key ID (e.g. `ABCDE123`) used to set ownertrust.
-- `GITHUB_TOKEN` (provided by GitHub Actions): used by the `gh` CLI to create and update releases. If you need elevated permissions, provide a personal token in a secret and reference it in the workflow.
-
-Notes and recommendations
-- The workflow imports the provided GPG key and uses `gpg` in batch mode to sign non-interactively. Keep `GPG_PRIVATE_KEY` and `GPG_PASSPHRASE` secure.
-- If you prefer hosting the APT repo elsewhere (GitHub Pages, S3), the workflow can be adapted to upload the generated APT files to any storage provider.
-- The workflow assumes `debian/` packaging files are present and that `dpkg-buildpackage` will generate the `.deb` files at the repository root.
-
-If you want I can add a small `PACKAGING.md` snippet with example `release.conf` for `apt-ftparchive` or modify the workflow to publish to GitHub Pages instead of release assets.

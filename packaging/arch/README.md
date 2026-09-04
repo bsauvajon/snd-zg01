@@ -61,9 +61,10 @@ wpctl status
 journalctl -b -k --grep='zg01\|0499:1513'
 ```
 
-Expected ALSA devices are `ZG01 Game`, `ZG01 Voice Out`, and `ZG01 Voice In`.
-Test playback and capture at the driver's fixed 48 kHz rate before selecting
-the device as the desktop default.
+Expected ALSA devices are `Game Out`, `Voice Out`, and `Voice In` on one
+card (`hw:N,0`, `hw:N,1`, `hw:N,2`). Test playback and capture at the
+driver's fixed 48 kHz rate before selecting the device as the desktop
+default.
 
 ## Roll back
 
