@@ -44,7 +44,7 @@ static struct zg01_stream *sub_to_stream(struct snd_pcm_substream *substream)
 static const char *stream_name(const struct zg01_stream *s)
 {
     return s->direction == SNDRV_PCM_STREAM_CAPTURE ? "Voice In" :
-           (s->pcm_device == ZG01_PCM_GAME ? "Game" : "Voice Out");
+           (s->pcm_device == ZG01_PCM_GAME ? "Game Out" : "Voice Out");
 }
 
 /* Is any consumer of this chain currently running (state_mutex)? */
@@ -1101,7 +1101,7 @@ int zg01_create_pcm_devices(struct zg01_dev *dev)
 {
     int ret;
 
-    ret = zg01_new_pcm(dev, ZG01_GAME, "ZG01 Game", 1, 0,
+    ret = zg01_new_pcm(dev, ZG01_GAME, "ZG01 Game Out", 1, 0,
                        PCM_BUFFER_BYTES_MAX_GAME);
     if (ret)
         return ret;
