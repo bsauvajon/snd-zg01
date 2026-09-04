@@ -94,7 +94,7 @@ struct zg01_stream {
  *   start: drain pending cleanup, kill=0, submit all (adopt if in flight)
  * The callback resubmits unless disconnecting, kill, or terminal status;
  * every non-resubmit exit decrements inflight, so the counter can never
- * stick (the MR3 class of bug).
+ * stick.
  */
 struct zg01_chain {
     struct zg01_dev *dev;
@@ -131,7 +131,8 @@ struct zg01_dev {
      * dma_area in the URB callbacks happens inside this lock, and every
      * clear of those pointers also happens inside it — after the chain
      * drain guarantees no callback is in flight.  One device, one lock:
-     * the cross-card mismatch window of the three-card design is gone.
+     * the cross-card mismatch window of the previous multi-card design
+     * is gone.
      */
     spinlock_t lock;
 
@@ -141,7 +142,7 @@ struct zg01_dev {
      * interface altsettings and chain state.  trigger may sleep (the
      * PCMs are nonatomic), so check-then-act sequences like "skip the
      * Magic Sequence if anything streams" are now atomic against
-     * concurrent triggers on the sibling PCMs (the R1 TOCTOU).
+     * concurrent triggers on the sibling PCMs.
      */
     struct mutex state_mutex;
 

@@ -2,17 +2,17 @@
 
 _pkgname=snd-zg01
 pkgname=snd-zg01-dkms-git
-pkgver=r69.2b37dac
+pkgver=r94.5b4ac9f
 pkgrel=1
-pkgdesc="Experimental Yamaha ZG01 USB audio driver (DKMS, git)"
+pkgdesc="Experimental Yamaha ZG01 USB audio driver (DKMS, git) — single card, 3 PCM devices, UCM profile"
 arch=('any')
 url="https://github.com/softashell/snd-zg01"
 license=('GPL-2.0-or-later')
-depends=('dkms')
+depends=('dkms' 'alsa-ucm-conf')
 makedepends=('git')
 provides=('snd-zg01-dkms')
 conflicts=('snd-zg01-dkms')
-source=("${_pkgname}::git+${url}.git#branch=slop")
+source=("${_pkgname}::git+${url}.git#branch=rework")
 sha256sums=('SKIP')
 
 pkgver() {
@@ -38,4 +38,11 @@ package() {
     "${pkgdir}/usr/lib/udev/rules.d/90-zg01.rules"
   install -Dm644 "${_pkgname}/src/snd-zg01.conf" \
     "${pkgdir}/usr/lib/modules-load.d/snd-zg01.conf"
+
+  # UCM: gives PipeWire/WirePlumber a normal HiFi profile with three
+  # named nodes (Game sink, Voice Out sink, Voice In source) instead of
+  # the generic single-stereo fallback. Requires alsa-ucm-conf with
+  # Syntax 8 support (alsa-lib >= 1.2.13).
+  install -Dm644 "${_pkgname}/ucm/conf.d/zg01_usb/zg01_usb.conf" \
+    "${pkgdir}/usr/share/alsa/ucm2/conf.d/zg01_usb/zg01_usb.conf"
 }

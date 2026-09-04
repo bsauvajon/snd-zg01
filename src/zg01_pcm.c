@@ -1,5 +1,5 @@
 /*
- * Yamaha ZG01 USB Audio Driver - PCM layer (single-card rework)
+ * Yamaha ZG01 USB Audio Driver - PCM layer
  *
  * One card, three PCM devices:
  *   pcm0 "ZG01 Game"      playback   - consumer of the EP 0x01 chain
@@ -33,7 +33,7 @@
 #define PCM_PERIOD_BYTES_MAX_VOICE  (48 * 16)
 
 /* Delay before an idle chain kept alive by rapid START/STOP suppression
- * is quiesced for real (R7 fix). */
+ * is quiesced for real. */
 #define ZG01_QUIESCE_DELAY msecs_to_jiffies(200)
 
 static struct zg01_stream *sub_to_stream(struct snd_pcm_substream *substream)
@@ -76,7 +76,7 @@ void zg01_period_work_fn(struct work_struct *work)
         snd_pcm_period_elapsed(sub);
 }
 
-/* R6 fix: snd_pcm_stop_xrun() takes the PCM stream lock, which SLEEPS
+/* snd_pcm_stop_xrun() takes the PCM stream lock, which SLEEPS
  * for a nonatomic PCM.  Never call it from the URB callback. */
 void zg01_xrun_work_fn(struct work_struct *work)
 {
@@ -116,7 +116,7 @@ void zg01_chain_cleanup_fn(struct work_struct *work)
 }
 
 /*
- * R7 fix: a rapid STOP/START burst that ends on a STOP leaves the chain
+ * A rapid STOP/START burst that ends on a STOP leaves the chain
  * streaming silence forever.  Schedule a quiesce; a later START cancels
  * it asynchronously (the quiesce then no-ops on consumers-running).
  */
@@ -259,7 +259,7 @@ static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
 
     mutex_lock(&dev->state_mutex);
 
-    /* F2: never submit against a device being torn down — disconnect
+    /* Never submit against a device being torn down — disconnect
      * frees the URBs under this mutex after setting disconnecting. */
     if (atomic_read(&dev->disconnecting)) {
         mutex_unlock(&dev->state_mutex);
@@ -299,7 +299,7 @@ static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
     return 0;
 
 fail:
-    /* F1: URBs never handed to usb_submit_urb can never decrement
+    /* URBs never handed to usb_submit_urb can never decrement
      * inflight via a completion — subtract them here, or the counter
      * sticks >0 and a later start "adopts" a dead chain forever. */
     atomic_sub(MAX_URBS - submitted, &c->inflight);
@@ -487,7 +487,7 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
         dev_warn(&dev->udev->dev, "resubmit failed on EP 0x%02x: %d\n",
                  c->endpoint, ret);
         atomic_dec(&c->inflight);
-        /* F3: surface the dead chain to ALSA as an xrun instead of
+        /* Surface the dead chain to ALSA as an xrun instead of
          * clicking silently forever.  Queuing work from softirq is
          * safe; the handlers check substream state themselves. */
         if (c == &dev->out_chain) {
@@ -609,7 +609,7 @@ static void advance_consumer(struct out_consumer *oc, unsigned int total)
  * position updates happen under dev->lock; every clear of those
  * pointers in close/hw_free also happens under dev->lock AFTER the
  * chain drain — no window where the callback touches freed memory
- * (R2 closed by construction: one dev, one lock, drain before clear).
+ * (one dev, one lock, drain before clear).
  */
 static void zg01_iso_out(struct urb *urb)
 {
@@ -826,7 +826,7 @@ unlock:
  * can reference the substream, then clear the pointer.  The drain runs
  * WITHOUT state_mutex (cleanup work re-acquires it), the pointer clear
  * runs under dev->lock — after the drain no callback or queued work
- * can still hold the old substream (R2/MR1 closed).
+ * can still hold the old substream.
  */
 static int zg01_pcm_close(struct snd_pcm_substream *substream)
 {
@@ -914,9 +914,9 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
      * Device initialization (vendor handshake + rate).  The Magic
      * Sequence resets both interfaces to alt 0, killing every live URB
      * — run it only when NO chain is streaming.  state_mutex makes this
-     * check atomic against triggers on the sibling PCMs (R1).
+     * check atomic against triggers on the sibling PCMs.
      *
-     * F4: the clock is DEVICE-WIDE (one UAC2 clock source shared by
+     * The clock is DEVICE-WIDE (one UAC2 clock source shared by
      * both interfaces).  Always initialize at 48 kHz — a Voice In
      * first-open at 16 kHz must not mis-clock the 48 kHz-only Game
      * playback (old driver effectively behaved the same: first init
@@ -1019,7 +1019,7 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         s->running = false;
         if (rapid) {
             /* Keep the chain cycling (silence); the quiesce timer
-             * stops it if no START follows (R7). */
+             * stops it if no START follows. */
             mod_delayed_work(zg01_cleanup_wq, &c->quiesce_work,
                              ZG01_QUIESCE_DELAY);
             mutex_unlock(&dev->state_mutex);
@@ -1125,7 +1125,7 @@ int zg01_create_pcm_devices(struct zg01_dev *dev)
                                ? PCM_BUFFER_BYTES_MAX_VOICE
                                : PCM_BUFFER_BYTES_MAX_GAME;
 
-        /* Match old driver: managed minimum = max/8 (6144 game/VO,
+        /* Managed minimum = max/8 per PCM (6144 game/VO,
          * 12288 voice-in), not the smaller hw floor. */
         snd_pcm_set_managed_buffer_all(dev->pcm_instances[i],
                                        SNDRV_DMA_TYPE_CONTINUOUS, NULL,
@@ -1158,7 +1158,7 @@ void zg01_pm_reset_streams(struct zg01_dev *dev)
      * path (vendor handshake + rate) on the next open of each stream.
      * Piggyback/keepalive state no longer exists — chain state is
      * fully described by the kill/inflight atomics, which the suspend
-     * stop already quiesced (R5 closed by construction).
+     * stop already quiesced.
      */
     mutex_lock(&dev->state_mutex);
     for (i = 0; i < ZG01_N_STREAMS; i++) {

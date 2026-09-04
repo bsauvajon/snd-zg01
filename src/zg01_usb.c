@@ -1,5 +1,5 @@
 /*
- * Yamaha ZG01 USB Audio Driver - USB glue (single-card rework)
+ * Yamaha ZG01 USB Audio Driver - USB glue
  *
  * One USB device, one ALSA card, three PCM devices (Game playback,
  * Voice Out playback, Voice In capture).  Probe anchors on interface 1
@@ -169,7 +169,7 @@ static void zg01_disconnect(struct usb_interface *interface)
         flush_work(&dev->streams[i].xrun_work);
     }
 
-    /* F2 fence: mark chains unallocated under state_mutex so a
+    /* Mark chains unallocated under state_mutex so a
      * concurrent trigger/chain_start (blocked on the mutex) sees the
      * teardown and bails with -ENODEV instead of submitting URBs we
      * are about to free. */
