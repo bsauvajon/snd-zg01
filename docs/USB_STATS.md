@@ -12,8 +12,10 @@ no header. This is a diagnostic assumption, not a validated new protocol decoder
 
 The timestamps describe completion callbacks, not individual USB transfer times.
 Packets in one URB share a timestamp. Sequence-number gaps denote unretained
-ordinary packets. The buffer freezes when full, while `omitted` keeps counting
-selected records that could not fit. Reload the module for a fresh trace.
+ordinary packets. The buffer is a ring: once full, each new record replaces the
+oldest, so the trace always holds the most recent 256 selected records, and
+`omitted` counts how many older records were displaced. Reload the module for a
+fresh trace.
 The trace does not activate IN by itself or implement feedback.
 
 After reloading, reapply Voice Out preallocation with playback closed:
@@ -39,10 +41,8 @@ cat /proc/asound/zg01/in_trace > /tmp/zg01-in-trace.txt
 cat /proc/asound/zg01/usb_stats > /tmp/zg01-usb-stats.txt
 ```
 
-`python3 tests/test-in-trace.py` exercises the actual trace helpers using mock
-URBs under ASan/UBSan. It checks transition neighbors, bounds, cancellation,
-and capacity. It does not validate hardware behavior.
-
+The first trace line reads `zg01_in_trace_v2`; v1 froze at capacity instead
+of cycling.
 
 This diagnostic build exposes `/proc/asound/zg01/usb_stats` with cumulative,
 read-only counters. Counters reset when the ALSA card is recreated, such as
@@ -52,22 +52,18 @@ The callbacks count packet results before PCM state and capture-length filters.
 They do not print each packet or allocate memory. The proc reader copies both
 endpoint snapshots under the device spinlock and formats them after unlocking.
 
-This patch does not change packet sizing, buffering, feedback, capture decoding,
-or playback pointer handling. Existing audio-path defects remain under investigation.
+The diagnostic counters describe the current playback and feedback paths. A
+consumer underrun is attributed to that playback stream. A shared transport or
+feedback-source fault is attributed to the affected chain and schedules XRUN
+work for its dependent streams. These events do not prove hardware behavior.
 
-## Build and test
+## Build
 
 From the repository root:
 
 ```bash
-python3 tests/test-usb-stats.py
 make
 ```
-
-The test compiles the actual counter helper with mock URBs under ASan/UBSan.
-It checks successful-URB packet failures, capture length buckets, cancellations,
-OUT length mismatches, unexpected status bounds, and aggregate errors.
-It does not test kernel scheduling, proc lifetime, or the hardware.
 
 ## Load
 

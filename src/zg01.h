@@ -32,10 +32,6 @@
 
 #define MAX_URBS             16      /* 64ms of buffering */
 
-/* Unconsumed frames held back while RUNNING so per-URB retirement can
- * never land exactly on appl_ptr before the userspace write does. */
-#define ZG01_PLAY_GUARD      (192)
-
 /* PCM device numbers on the single card */
 #define ZG01_PCM_GAME        0
 #define ZG01_PCM_VOICE_OUT   1
@@ -144,7 +140,9 @@ struct zg01_chain {
 
 #define ZG01_TRACE_RECORDS 256
 
-/* Bounded IN header trace. No sample payload; protected by dev->lock. */
+/* Bounded IN header trace: a ring of the MOST RECENT change-points.
+ * Header bytes + length/status of every successful packet; no payload.
+ * Protected by dev->lock. */
 struct zg01_in_record {
     u64 seq;
     u64 completion_ns;
@@ -157,7 +155,8 @@ struct zg01_in_record {
 struct zg01_in_trace {
     u64 packets;
     u64 omitted;
-    unsigned int count;
+    unsigned int count;               /* valid records in ring order */
+    unsigned int next;                /* next write slot (ring head) */
     bool have_previous;
     struct zg01_in_record previous;
     struct zg01_in_record records[ZG01_TRACE_RECORDS];
@@ -178,7 +177,10 @@ struct zg01_dev {
     bool have_last_plan;                     /* dev->lock */
     bool feedback_started;                   /* dev->lock: priming complete */
     bool feedback_fault;                     /* latched until drained restart */
+    unsigned int feedback_gap_urbs;          /* consecutive fallback URBs */
     unsigned int feedback_startup_urbs;       /* bounded no-feedback startup */
+
+#define ZG01_GAP_FALLBACK_MAX_URBS 125    /* ~500 ms at ~4 ms per URB */
 
     /*
      * dev->lock guards the callback-shared fields (substream pointers,

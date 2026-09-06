@@ -64,6 +64,7 @@ static bool chain_consumers_running(struct zg01_dev *dev, struct zg01_chain *c)
 static void zg01_chain_stop(struct zg01_dev *dev, struct zg01_chain *c);
 static void zg01_feedback_pump(struct zg01_dev *dev);
 static void zg01_feedback_xrun(struct zg01_dev *dev);
+static void zg01_feedback_xrun_in(struct zg01_dev *dev);
 
 /* ================================================================== */
 /* Deferred work handlers                                              */
@@ -314,18 +315,25 @@ static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
         mutex_unlock(&dev->state_mutex);
         return -ECANCELED;
     }
-    if (!atomic_read(&c->kill)) {
-        mutex_unlock(&dev->state_mutex);
-        return 0;                        /* adopt live chain */
-    }
-
+    /* Take the adoption decision with the callback lock held.  OUT can be
+     * healthy while waiting for feedback with no URB in flight, so pending
+     * URB ownership also marks that chain live.  This recheck closes the
+     * gap between the unlocked cleanup drain and the reset decision. */
     spin_lock_irqsave(&dev->lock, flags);
+    if (!atomic_read(&c->kill) &&
+        (atomic_read(&c->inflight) > 0 ||
+         (c == &dev->out_chain && dev->feedback.pending))) {
+        spin_unlock_irqrestore(&dev->lock, flags);
+        mutex_unlock(&dev->state_mutex);
+        return 0;
+    }
     atomic_set(&c->kill, 0);
     if (c == &dev->out_chain) {
         zg01_feedback_reset(&dev->feedback);
         dev->have_last_plan = false;
         dev->feedback_started = false;
         dev->feedback_fault = false;
+        dev->feedback_gap_urbs = 0;
         dev->feedback_startup_urbs = 0;
         memset(c->completed_frames, 0, sizeof(c->completed_frames));
         for (i = 0; i < MAX_URBS; i++) {
@@ -568,13 +576,18 @@ static void zg01_usb_stats_account(struct zg01_usb_stats *s,
 static void zg01_in_trace_append(struct zg01_in_trace *t,
                                  const struct zg01_in_record *r)
 {
-    if (t->count && t->records[t->count - 1].seq == r->seq)
-        return;
+    /* Ring of the most recent records: once full, each append replaces
+     * the oldest slot.  'omitted' counts displaced records so a reader
+     * still sees that history was lost. */
     if (t->count == ZG01_TRACE_RECORDS) {
+        t->records[t->next] = *r;
+        t->next = (t->next + 1) % ZG01_TRACE_RECORDS;
         t->omitted++;
         return;
     }
-    t->records[t->count++] = *r;
+    t->records[t->next] = *r;
+    t->next = (t->next + 1) % ZG01_TRACE_RECORDS;
+    t->count++;
 }
 
 static void zg01_in_trace_account(struct zg01_in_trace *t,
@@ -636,11 +649,14 @@ static void zg01_in_trace_read(struct snd_info_entry *entry,
     *t = dev->in_trace;
     spin_unlock_irqrestore(&dev->lock, flags);
 
-    snd_iprintf(buffer, "zg01_in_trace_v1\npackets %llu\nretained %u\nomitted %llu\n",
+    snd_iprintf(buffer, "zg01_in_trace_v2\npackets %llu\nretained %u\nomitted %llu\n",
                 t->packets, t->count, t->omitted);
     snd_iprintf(buffer, "# seq completion_ns length status header_hex\n");
+    /* Oldest first: full ring starts at t->next, partial at 0. */
     for (i = 0; i < t->count; i++) {
-        const struct zg01_in_record *r = &t->records[i];
+        const struct zg01_in_record *r =
+            &t->records[(t->next + ZG01_TRACE_RECORDS - t->count + i) %
+                        ZG01_TRACE_RECORDS];
 
         snd_iprintf(buffer, "%llu %llu %u %d ", r->seq,
                     r->completion_ns, r->length, r->status);
@@ -726,7 +742,12 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
         if (terminal && !atomic_read(&dev->disconnecting) &&
             !atomic_read(&c->kill)) {
             atomic_set(&c->kill, 1);
-            zg01_feedback_xrun(dev);
+            /* IN endpoint death (URB kill/shutdown) takes capture down
+             * with playback; the pacing source is gone for both. */
+            if (c == &dev->in_chain)
+                zg01_feedback_xrun_in(dev);
+            else
+                zg01_feedback_xrun(dev);
         }
         atomic_dec(&c->inflight);
         return false;
@@ -746,7 +767,10 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
          * clicking silently forever.  Queuing work from softirq is
          * safe; the handlers check substream state themselves. */
         c->stats.feedback_submit_errors++;
-        zg01_feedback_xrun(dev);
+        if (c == &dev->in_chain)
+            zg01_feedback_xrun_in(dev);
+        else
+            zg01_feedback_xrun(dev);
         return false;
     }
     return true;
@@ -768,8 +792,8 @@ static void snap_consumer(struct zg01_dev *dev, enum zg01_stream_id id,
 
     memset(oc, 0, sizeof(*oc));
     oc->s = s;
-    if (!s->enabled || !sub || !sub->runtime || !sub->runtime->dma_area ||
-        !snd_pcm_running(sub))
+    if (!s->enabled || s->xrun_generation || !sub || !sub->runtime ||
+        !sub->runtime->dma_area || !snd_pcm_running(sub))
         return;
     oc->rt = sub->runtime;
     oc->active = true;
@@ -777,18 +801,50 @@ static void snap_consumer(struct zg01_dev *dev, enum zg01_stream_id id,
                          s->queued_ptr, oc->rt->boundary, oc->rt->buffer_size);
 }
 
-static void zg01_feedback_xrun(struct zg01_dev *dev)
+static void zg01_stream_xrun(struct zg01_stream *s)
 {
-    int i;
+    if (s->enabled && !s->xrun_generation) {
+        s->xrun_generation = s->generation;
+        queue_work(zg01_period_wq, &s->xrun_work);
+    }
+}
+
+static void zg01_feedback_xrun_locked(struct zg01_dev *dev, bool include_capture)
+{
+    int first, last, i;
 
     dev->feedback_fault = true;
+    atomic_set(&dev->out_chain.kill, 1);
     dev->out_chain.stats.driver_xruns++;
-    for (i = 0; i < ZG01_N_STREAMS; i++) {
+
+    /* Stop only the transport that actually died.  OUT-side faults
+     * (submit failure, starvation, plan overflow) must not tear down
+     * capture; IN-chain death kills both. */
+    if (include_capture) {
+        first = 0;
+        last = ZG01_N_STREAMS - 1;
+    } else {
+        first = ZG01_GAME;
+        last = ZG01_VOICE_OUT;
+    }
+    for (i = first; i <= last; i++) {
         if (dev->streams[i].enabled && !dev->streams[i].xrun_generation) {
             dev->streams[i].xrun_generation = dev->streams[i].generation;
             queue_work(zg01_period_wq, &dev->streams[i].xrun_work);
         }
     }
+}
+
+/* OUT-chain faults only: playback pacing died, capture stays up. */
+static void zg01_feedback_xrun(struct zg01_dev *dev)
+{
+    zg01_feedback_xrun_locked(dev, false);
+}
+
+/* The IN endpoint itself failed: capture and playback share its fate. */
+static void zg01_feedback_xrun_in(struct zg01_dev *dev)
+{
+    zg01_feedback_xrun_locked(dev, true);
 }
 
 /* dev->lock covers submit as well as kill publication: IN callbacks must
@@ -801,7 +857,7 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
     struct zg01_feedback_plan plan;
     struct out_consumer oc[2];
     unsigned int limit[2];
-    unsigned int id, total, used[2], i, f, n;
+    unsigned int id, used[2], i, f, n;
     struct urb *urb;
     int ret;
 
@@ -817,19 +873,21 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
         bool gap_fallback = false;
 
         if (q->plans && q->pending) {
-            total = 0;
-            for (i = 0; i < ISO_PKTS_OUT; i++)
-                total += q->plan[q->plan_head].frames[i];
+            dev->feedback_gap_urbs = 0;
         } else if (dev->have_last_plan && dev->feedback_started) {
-            /* Plan gap: keep OUT cadence on the last measured framing.
-             * A stalled hw_ptr makes ALSA's in_interrupt jiffies heuristic
-             * assume a ring wrap and fabricate a full-buffer hw_ptr jump,
-             * which lands as a false XRUN.  The nominal clock is at most
-             * ~21 ppm off until the next plan resyncs it. */
-            total = 0;
-            for (i = 0; i < ISO_PKTS_OUT; i++)
-                total += dev->last_plan.frames[i];
+            /* Plan gap: keep OUT cadence on the last measured framing
+             * for the bounded fallback window.  This is a continuity
+             * policy, not a measured rate-error guarantee. */
             gap_fallback = true;
+            /* Bounded fallback: IN producing no valid packets without any
+             * URB error is a dead clock, not a hiccup.  ~500 ms on
+             * fallback framing, then XRUN (analog of the 16-URB IN-chain
+             * terminal-death budget). */
+            if (dev->feedback_gap_urbs >= ZG01_GAP_FALLBACK_MAX_URBS) {
+                dev->out_chain.stats.feedback_starved++;
+                zg01_feedback_xrun(dev);
+                return;
+            }
         } else {
             break;
         }
@@ -855,40 +913,20 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
                 limit[n] = oc[n].available;   /* drain consumes all */
                 continue;
             }
-            /* RUNNING: keep one URB of guard frames unconsumed so a
-             * completion can never land exactly on appl_ptr before the
-             * userspace write does (per-URB retirement vs per-period
-             * refill makes that race routine under load).  DRAINING
-             * must consume everything. */
-            limit[n] = oc[n].available > ZG01_PLAY_GUARD
-                     ? oc[n].available - ZG01_PLAY_GUARD : 0;
-            if (oc[n].available >= total) {
-                s->wait_since_ns = 0;
-                continue;
-            }
-            /* Partial fill: the copy loop caps used[n] at limit[n] and
-             * pads the rest with silence.  Stalling the whole pump here
-             * deadlocks userspace wakeups — aplay refills on
-             * period_elapsed, which only fires after an OUT completion
-             * retires frames. */
-            if (limit[n] > 0) {
+            /* Consume every committed frame.  If a consumer has no data,
+             * emit silence for that slot and schedule only its XRUN.  The
+             * sibling remains eligible to submit and retire audio. */
+            limit[n] = oc[n].available;
+            if (!oc[n].available) {
                 c->stats.playback_waits++;
+                /* Availability ends at queued_ptr, while pcm_pos marks
+                 * hardware retirement.  Do not report an underrun while
+                 * submitted contributions remain ahead of retirement. */
+                if (s->queued_pos == s->pcm_pos)
+                    zg01_stream_xrun(s);
+            } else {
                 s->wait_since_ns = 0;
-                continue;
             }
-            /* At or below the guard: true starvation, but only if
-             * nothing is still in flight to wake the stream. */
-            c->stats.playback_waits++;
-            if (s->queued_pos != s->pcm_pos)
-                return; /* in-flight completion will pump again */
-            /* Period notification is deferred; give userspace two URB
-             * intervals to refill before declaring a true starvation. */
-            if (!s->wait_since_ns)
-                s->wait_since_ns = ktime_get_ns();
-            if (ktime_get_ns() - s->wait_since_ns < 8000000)
-                return;
-            zg01_feedback_xrun(dev);
-            return;
         }
         if (gap_fallback) {
             plan = dev->last_plan;
@@ -933,6 +971,8 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
             zg01_feedback_xrun(dev);
             return;
         }
+        if (gap_fallback)
+            dev->feedback_gap_urbs++;
         for (n = 0; n < 2; n++) {
             if (!used[n])
                 continue;
@@ -958,7 +998,10 @@ static void zg01_iso_out(struct urb *urb)
     atomic_dec(&c->inflight);
     if (terminal && !atomic_read(&c->kill) && !atomic_read(&dev->disconnecting)) {
         atomic_set(&c->kill, 1);
-        zg01_feedback_xrun(dev);
+        if (c == &dev->in_chain)
+            zg01_feedback_xrun_in(dev);
+        else
+            zg01_feedback_xrun(dev);
     }
     if (id == MAX_URBS || terminal || atomic_read(&c->kill) ||
         atomic_read(&dev->disconnecting))
@@ -1039,7 +1082,7 @@ static void zg01_iso_in(struct urb *urb)
             !dev->feedback_fault) {
             if (!valid && (dev->feedback_started ||
                           ++dev->feedback_startup_urbs >= MAX_URBS))
-                zg01_feedback_xrun(dev);
+                zg01_feedback_xrun_in(dev);
         }
         if (valid && !dev->feedback_fault && !atomic_read(&dev->out_chain.kill) &&
             (dev->feedback.pending || atomic_read(&dev->out_chain.inflight))) {
@@ -1161,8 +1204,6 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
 
     flush_work(&dev->out_chain.cleanup_work);
     flush_work(&dev->in_chain.cleanup_work);
-    cancel_delayed_work_sync(&dev->out_chain.quiesce_work);
-    cancel_delayed_work_sync(&dev->in_chain.quiesce_work);
     flush_work(&s->period_work);
     flush_work(&s->xrun_work);
 
@@ -1260,13 +1301,23 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
 
     /* Playback also owns IN for implicit feedback. Never reset a live
      * interface when capture joins/leaves or either playback PCM joins. */
-    if (atomic_read(&dev->in_chain.inflight) == 0)
-        usb_set_interface(dev->udev, 2, 1);
+    if (atomic_read(&dev->in_chain.inflight) == 0) {
+        ret = usb_set_interface(dev->udev, 2, 1);
+        if (ret < 0) {
+            mutex_unlock(&dev->state_mutex);
+            return ret;
+        }
+    }
     ret = zg01_chain_alloc(dev, &dev->in_chain, ZG01_EP_IN, 2,
                            ISO_PKTS_IN, ISO_PKT_SIZE_IN, false);
     if (!ret && s->direction != SNDRV_PCM_STREAM_CAPTURE) {
-        if (!dev->out_chain.allocated || atomic_read(&dev->out_chain.kill))
-            usb_set_interface(dev->udev, 1, 1);
+        if (!dev->out_chain.allocated || atomic_read(&dev->out_chain.kill)) {
+            ret = usb_set_interface(dev->udev, 1, 1);
+            if (ret < 0) {
+                mutex_unlock(&dev->state_mutex);
+                return ret;
+            }
+        }
         ret = zg01_chain_alloc(dev, &dev->out_chain, ZG01_EP_OUT, 1,
                                ISO_PKTS_OUT, ISO_PKT_SIZE_OUT, true);
     }
@@ -1467,6 +1518,10 @@ static int zg01_new_pcm(struct zg01_dev *dev, enum zg01_stream_id id,
 int zg01_create_pcm_devices(struct zg01_dev *dev)
 {
     int ret;
+
+    /* The pending-id ring requeues one id per recycled URB; a depth
+     * smaller than the URB count would silently drop ids. */
+    BUILD_BUG_ON(ZG01_FB_DEPTH < MAX_URBS);
 
     ret = zg01_new_pcm(dev, ZG01_GAME, "ZG01 Game Out", 1, 0,
                        PCM_BUFFER_BYTES_MAX_GAME);

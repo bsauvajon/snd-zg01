@@ -51,6 +51,14 @@ proves that clock mismatch is the only remaining audio defect.
 - Retain read-only diagnostics. Invalid feedback, queue overflow, submission
   failures, and starvation must remain observable, not masquerade as clean audio.
 
+## Fallback policy
+
+During a short gap, the pump repeats the last validated framing plan for at most
+125 successful fallback OUT submissions. The limit bounds silence and clock error
+exposure. It is not a ppm accuracy claim. After the limit, the driver faults the
+OUT transport and schedules playback XRUN work. A malformed packet faults the IN
+feedback source immediately after startup, and does not count as a gap fallback.
+
 ## First playback-only check
 
 After the user loads the experimental module, start with no `arecord` process.
