@@ -1,8 +1,8 @@
 # Arch Linux and Omarchy
 
-The Arch package is currently a VCS package because upstream has not published
-a tagged release. It installs the driver source for DKMS; Arch's DKMS pacman
-hooks build the module for every installed kernel that has matching headers.
+The Arch package is a VCS package. It installs the driver source for DKMS;
+Arch's DKMS pacman hooks build the module for every installed kernel that has
+matching headers.
 
 ## Prerequisites
 

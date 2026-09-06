@@ -52,9 +52,6 @@ sudo dpkg -i snd-zg01-dkms_*.deb
 sudo apt-get install -f   # only if dependencies are missing
 ```
 
-The APT repository at `bsauvajon/snd-zg01` predates this fork. Its packages
-still describe the old driver.
-
 ### From source
 
 The module builds against kernel headers. Clang-built kernels need the LLVM
