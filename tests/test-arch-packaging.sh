@@ -39,8 +39,7 @@ for path in \
   "$src_root/src/zg01_pcm.c" \
   "$src_root/src/zg01_control.c" \
   "$src_root/src/zg01_usb_discovery.c" \
-  "usr/lib/modules-load.d/snd-zg01.conf" \
-  "usr/lib/udev/rules.d/90-zg01.rules"
+  "usr/lib/modules-load.d/snd-zg01.conf"
 do
   bsdtar -tf "$package" | grep -Fxq "$path"
 done

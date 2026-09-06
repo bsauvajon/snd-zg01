@@ -57,9 +57,10 @@ descriptors; the packet formats below are reverse engineered.
   Header 8 bytes (counter + 0x60000000 marker), 6 frames of 16 bytes
   (L 4, R 4, pad 8), trailer 4 bytes (counter repeat).
 
-The 40-byte playback frame carries both sinks on one endpoint. The device
-mixes the Game and Voice samples itself, which is why the driver exposes two
-playback PCM devices on the shared endpoint instead of mixing in userspace.
+The 40-byte playback frame carries both sinks on one endpoint. The driver
+writes the Game and Voice samples into separate frame slots, which is why the
+driver exposes two playback PCM devices on the shared endpoint instead of
+mixing in userspace.
 
 ## Unused hardware
 

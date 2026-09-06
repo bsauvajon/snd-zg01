@@ -15,11 +15,12 @@
  * USB layout (from Windows capture analysis):
  *   Interface 1, Alt 1: EP 0x01 OUT, isochronous
  *       - shared by Game and Voice Out playback
- *       - 240-byte packet = 6 frames of 40 bytes
+ *       - variable-length packet = 5 to 7 frames of 40 bytes
  *       - frame = Voice_L(4) Voice_R(4) Game_L(4) Game_R(4) + 24 pad
- *   Interface 2, Alt 1: EP 0x81 IN, isochronous
- *       - Voice In capture, 108-byte packets
- *         (8-byte header + 6 frames x 16 bytes + 4-byte trailer)
+ *   Interface 2, Alt 1: EP 0x81 IN, isochronous (implicit feedback)
+ *       - Voice In capture and playback pacing
+ *       - variable-length packet: 8-byte header + 5 to 7 frames
+ *         x 16 bytes + 4-byte trailer (124-byte buffer)
  */
 #define ZG01_EP_OUT          0x01
 #define ZG01_EP_IN           0x81
@@ -45,8 +46,9 @@ enum zg01_stream_id {
 
 /*
  * Per-PCM-device stream state.  Game and Voice Out are two independent
- * ALSA playback PCMs whose samples are mixed into the packets of the
- * single EP 0x01 URB chain; the ZG01 firmware performs the analog mix.
+ * ALSA playback PCMs whose samples are mixed by the driver into the
+ * packets of the single EP 0x01 URB chain; the ZG01 firmware combines
+ * the two streams at its input.
  * PipeWire exposes one node per PCM device, so the single-card topology
  * keeps three independent sinks/sources.
  */

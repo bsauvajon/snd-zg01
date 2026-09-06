@@ -72,7 +72,7 @@ Close audio clients. If PipeWire holds the device, stop its services and sockets
 ```bash
 systemctl --user stop wireplumber.service pipewire-pulse.service pipewire.service pipewire-pulse.socket pipewire.socket
 sudo rmmod snd-zg01
-sudo insmod /home/softashell/Projects/zg01/snd-zg01-forgejo/snd-zg01.ko
+sudo insmod ./snd-zg01.ko   # path to your locally built module
 cat /proc/asound/zg01/usb_stats
 ```
 

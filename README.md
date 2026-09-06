@@ -7,19 +7,19 @@ class driver.
 
 ## How the driver maps the device
 
-The ZG01 carries both playback channels on one isochronous endpoint and mixes
-them in hardware. The driver exposes one ALSA card with three PCM devices:
+The ZG01 carries both playback channels on one isochronous endpoint. The
+driver mixes them into the shared URB stream. It exposes one ALSA card with
+three PCM devices:
 
 | PCM device | Name | Direction | Rates | Packet |
 |---|---|---|---|---|
 | 0 | Game Out | playback | 48 kHz | 240 B: 6 frames x 40 B |
 | 1 | Voice Out | playback | 48 kHz | shared EP 0x01 with Game Out |
-| 2 | Voice In | capture | 48 kHz, 16 kHz | 108 B: 8 B header, 6 frames x 16 B, 4 B trailer |
+| 2 | Voice In | capture | 48 kHz | 108 B nominal: 8 B header, 5-7 frames x 16 B, 4 B trailer |
 
-All channels run S32_LE stereo. Game Out and Voice Out are mixed by the
-device hardware, so use both sinks at the same time. On Arch, the package
-also installs a UCM profile, and PipeWire shows the devices as separate
-sinks named Game Out, Voice Out, and Voice In.
+All channels run S32_LE stereo. Both sinks work at the same time. On Arch,
+the package also installs a UCM profile, and PipeWire shows the devices as
+separate sinks named Game Out, Voice Out, and Voice In.
 
 A single out chain serves both playback PCMs. When only Voice Out runs, the
 chain sends keepalive silence on the shared endpoint. When both run, the URB
@@ -107,7 +107,7 @@ install. If a pre-2026 package left broken DKMS state, remove
   `snd-usb-audio` (modules-load.d entry).
 - No audio on one sink: Game Out and Voice Out share one endpoint; check
   the other sink is not open in exclusive mode.
-- Rate problems: playback is 48 kHz only. Voice In also accepts 16 kHz.
+- Rate problems: playback is 48 kHz only. Voice In is 48 kHz only too.
   Use `plughw:` for format conversion.
 
 ## Documentation

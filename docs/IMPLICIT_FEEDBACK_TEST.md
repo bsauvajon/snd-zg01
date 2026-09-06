@@ -3,7 +3,8 @@
 ## Scope
 
 Keep the three ALSA devices: Game Out (0), Voice Out (1), Voice In (2).
-The device mixes both playback streams. No software mix or new PipeWire profile.
+The driver mixes both playback streams into the shared endpoint. No
+software-mix change or new PipeWire profile.
 This experiment addresses variable IN framing and asynchronous playback pacing.
 A successful build or unit test does not establish that the audible pops are fixed.
 

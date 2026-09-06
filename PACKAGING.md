@@ -19,8 +19,8 @@ The package installs:
    - copies `src/snd-zg01.conf` to `/etc/modules-load.d/`
    - removes stale `90-zg01.rules` copies from older package versions
 
-The postrm script unloads the module, removes the DKMS state, the copied
-udev rules, and the modules-load.d entry.
+The postrm script unloads the module, removes the DKMS state, the stale
+udev rule copies from older package versions, and the modules-load.d entry.
 
 ## Build the package
 
@@ -58,7 +58,7 @@ debian/
 ├── rules                    # debhelper + dkms, skips the build step
 ├── snd-zg01-dkms.dkms       # DKMS registration
 ├── snd-zg01-dkms.install    # maps sources to /usr/src/snd-zg01-1.0.0/
-├── snd-zg01-dkms.postinst   # build, install, udev + modules-load setup
+├── snd-zg01-dkms.postinst   # build, install, modules-load setup
 └── snd-zg01-dkms.postrm     # unload, deregister, clean state
 ```
 

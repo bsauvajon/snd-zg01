@@ -28,31 +28,34 @@ and all three PCM devices.
 
 Game Out and Voice Out both target EP 0x01 OUT. One URB chain (`out_chain`)
 serves both PCM devices; Voice In has its own `in_chain` on EP 0x81.
-Chain state lives in atomics (`kill`, `inflight`) guarded by
-`dev->state_mutex`. The device hardware mixes Game and Voice samples, so the
+Chain state is an explicit enum (`enum zg01_chain_state`) under
+`dev->lock`; `inflight` is URB accounting. The driver mixes the Game and
+Voice samples into separate frame slots, so the
 two playback PCMs stay separate sinks.
 
 - Voice Out alone: chain runs in keepalive mode, sends silence.
 - Both PCMs open: the URB callback reads both substream buffers and mixes
-  them into each 240-byte packet.
+  them into each 5-7 frame packet (240 bytes nominal).
 - The out chain starts when either sink prepares and stops when both stop.
 
 ### Packet formats
 
-Playback packet: 240 bytes = 6 frames of 40 bytes. Frame: Voice_L(4),
+Playback packet: variable, 5-7 frames of 40 bytes (240 bytes nominal),
+paced by IN endpoint implicit feedback. Frame: Voice_L(4),
 Voice_R(4), Game_L(4), Game_R(4), 24 pad bytes. 32 ISO packets per URB,
 4 ms per URB, `MAX_URBS` 16 (64 ms buffering).
 
-Capture packet: 108 bytes = 8-byte header, 6 frames of 16 bytes
-(L 4, R 4, pad 8), 4-byte trailer.
+Capture packet: variable, 5-7 frames of 16 bytes plus an 8-byte header
+(counter + length) and 4-byte trailer; 108 bytes nominal, 124-byte
+buffer. The same IN stream paces playback via implicit feedback.
 
 ### Rates
 
-Playback locks to 48 kHz. Voice In accepts 48 kHz and 16 kHz. The device
-clock is shared across interfaces; the driver always initializes it at
-48 kHz, including when Voice In opens first at 16 kHz. The vendor handshake
+All three PCMs run at 48 kHz only; the old 16 kHz capture mode is gone.
+The device clock is shared across interfaces; the driver always
+initializes it at 48 kHz. The vendor handshake
 in prepare resets both interfaces to alt 0, so it runs only when no chain is
-streaming (`device_initialized` flag plus `inflight` checks under
+streaming (`device_initialized` flag plus chain-state checks under
 `state_mutex`).
 
 ### Streaming lifecycle

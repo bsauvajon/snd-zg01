@@ -6,12 +6,14 @@
  *   pcm1 "ZG01 Voice Out" playback   - consumer of the EP 0x01 chain
  *   pcm2 "ZG01 Voice In"  capture    - owner of the EP 0x81 chain
  *
- * The EP 0x01 URB chain is a single shared resource.  Every 240-byte
- * packet carries slots for BOTH playback consumers (voice L/R at byte
+ * The EP 0x01 URB chain is a single shared resource.  Each packet
+ * carries 5 to 7 frames of 40 bytes; the nominal 240-byte packet has
+ * slots for BOTH playback consumers (voice L/R at byte
  * offsets 0-7, game L/R at 8-15, 24 pad bytes).  The chain runs while
  * either consumer needs it; the callback mixes each consumer's samples
  * from its own ALSA ring buffer (silence for a consumer that is not
- * running).  The ZG01 firmware performs the analog mix.
+ * running).  The two consumer slots land side by side in each frame;
+ * the ZG01 combines both streams at its input.
  */
 
 #include <linux/module.h>
