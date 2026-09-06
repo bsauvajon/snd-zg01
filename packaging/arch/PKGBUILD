@@ -6,13 +6,13 @@ pkgver=r94.5b4ac9f
 pkgrel=1
 pkgdesc="Experimental Yamaha ZG01 USB audio driver (DKMS, git)"
 arch=('any')
-url="https://github.com/softashell/snd-zg01"
+url="https://github.com/bsauvajon/snd-zg01"
 license=('GPL-2.0-or-later')
 depends=('dkms' 'alsa-ucm-conf')
 makedepends=('git')
 provides=('snd-zg01-dkms')
 conflicts=('snd-zg01-dkms')
-source=("${_pkgname}::git+${url}.git#branch=slop")
+source=("${_pkgname}::git+${url}.git#branch=main")
 sha256sums=('SKIP')
 
 pkgver() {
