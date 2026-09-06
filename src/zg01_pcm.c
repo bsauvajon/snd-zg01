@@ -17,6 +17,8 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/jiffies.h>
+#include <linux/ktime.h>
+#include <sound/info.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -53,8 +55,15 @@ static bool chain_consumers_running(struct zg01_dev *dev, struct zg01_chain *c)
     if (c == &dev->out_chain)
         return dev->streams[ZG01_GAME].running ||
                dev->streams[ZG01_VOICE_OUT].running;
-    return dev->streams[ZG01_VOICE_IN].running;
+    return dev->streams[ZG01_VOICE_IN].running ||
+           dev->streams[ZG01_GAME].running ||
+           dev->streams[ZG01_VOICE_OUT].running ||
+           (dev->out_chain.allocated && !atomic_read(&dev->out_chain.kill));
 }
+
+static void zg01_chain_stop(struct zg01_dev *dev, struct zg01_chain *c);
+static void zg01_feedback_pump(struct zg01_dev *dev);
+static void zg01_feedback_xrun(struct zg01_dev *dev);
 
 /* ================================================================== */
 /* Deferred work handlers                                              */
@@ -83,17 +92,26 @@ void zg01_xrun_work_fn(struct work_struct *work)
     struct zg01_stream *s = container_of(work, struct zg01_stream, xrun_work);
     struct zg01_dev *dev = s->dev;
     struct snd_pcm_substream *sub;
-    unsigned long flags;
+    unsigned long flags, pcm_flags;
+    unsigned int generation;
+    bool stop;
 
     spin_lock_irqsave(&dev->lock, flags);
     sub = s->substream;
+    generation = s->xrun_generation;
     spin_unlock_irqrestore(&dev->lock, flags);
-
-    if (!sub || atomic_read(&dev->disconnecting))
+    if (!sub || !generation || atomic_read(&dev->disconnecting))
         return;
 
-    /* This helper takes the stream lock and checks the running state. */
-    snd_pcm_stop_xrun(sub);
+    /* Serialize the generation check with ALSA prepare/trigger. Never hold
+     * dev->lock while taking the (nonatomic, sleeping) PCM stream lock. */
+    snd_pcm_stream_lock_irqsave(sub, pcm_flags);
+    spin_lock_irqsave(&dev->lock, flags);
+    stop = s->substream == sub && s->enabled && s->generation == generation;
+    spin_unlock_irqrestore(&dev->lock, flags);
+    if (stop && snd_pcm_running(sub))
+        snd_pcm_stop(sub, SNDRV_PCM_STATE_XRUN);
+    snd_pcm_stream_unlock_irqrestore(sub, pcm_flags);
 }
 
 void zg01_chain_cleanup_fn(struct work_struct *work)
@@ -120,26 +138,14 @@ void zg01_chain_cleanup_fn(struct work_struct *work)
  */
 void zg01_chain_quiesce_fn(struct work_struct *work)
 {
-    struct zg01_chain *c = container_of(work, struct zg01_chain,
-                                        quiesce_work.work);
+    struct zg01_chain *c = container_of(work, struct zg01_chain, quiesce_work.work);
     struct zg01_dev *dev = c->dev;
-    int i;
-
-    if (atomic_read(&dev->disconnecting))
-        return;
 
     mutex_lock(&dev->state_mutex);
-    if (c->allocated && atomic_read(&c->kill) == 0 &&
-        atomic_read(&c->inflight) > 0 && !chain_consumers_running(dev, c)) {
-        dev_dbg(&dev->udev->dev, "quiescing idle chain EP 0x%02x\n",
-                c->endpoint);
-        atomic_set(&c->kill, 1);
-        for (i = 0; i < MAX_URBS; i++)
-            if (c->urbs[i])
-                usb_unlink_urb(c->urbs[i]);
-        c->cleanup_pending = true;
-        queue_work(zg01_cleanup_wq, &c->cleanup_work);
-    }
+    if (!chain_consumers_running(dev, c))
+        zg01_chain_stop(dev, c);
+    if (!chain_consumers_running(dev, &dev->in_chain))
+        zg01_chain_stop(dev, &dev->in_chain);
     mutex_unlock(&dev->state_mutex);
 }
 
@@ -197,6 +203,7 @@ static int zg01_chain_alloc(struct zg01_dev *dev, struct zg01_chain *c,
     }
 
     c->allocated = true;
+    atomic_set(&c->kill, 1);
     return 0;
 
 fail:
@@ -221,6 +228,7 @@ fail:
 static void zg01_chain_stop(struct zg01_dev *dev, struct zg01_chain *c)
 {
     int i;
+    unsigned long flags;
 
     lockdep_assert_held(&dev->state_mutex);
 
@@ -229,7 +237,11 @@ static void zg01_chain_stop(struct zg01_dev *dev, struct zg01_chain *c)
     if (atomic_read(&c->kill))
         return;                    /* already stopped or stopping */
 
+    spin_lock_irqsave(&dev->lock, flags);
     atomic_set(&c->kill, 1);
+    if (c == &dev->out_chain)
+        zg01_feedback_reset(&dev->feedback);
+    spin_unlock_irqrestore(&dev->lock, flags);
     c->cleanup_pending = true;
     for (i = 0; i < MAX_URBS; i++)
         if (c->urbs[i])
@@ -246,6 +258,7 @@ static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
 {
     int submitted = 0;
     int i, ret;
+    unsigned long flags;
 
     if (!c->allocated)
         return -ENOMEM;
@@ -264,23 +277,66 @@ static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
         return -ENODEV;
     }
 
-    if (c->cleanup_pending) {
+    while (c->cleanup_pending) {
         mutex_unlock(&dev->state_mutex);
         flush_work(&c->cleanup_work);   /* also drains callbacks */
         mutex_lock(&dev->state_mutex);
-        c->cleanup_pending = false;
+        if (atomic_read(&dev->disconnecting) || !c->allocated) {
+            mutex_unlock(&dev->state_mutex);
+            return -ENODEV;
+        }
+        if (!c->cleanup_pending)
+            continue;
+    }
+
+    /* A terminal URB completion can kill a chain from callback context.
+     * Convert that state into the normal synchronous cleanup path before
+     * a later START can submit or adopt any remaining URBs. */
+    if (atomic_read(&c->kill) && atomic_read(&c->inflight) > 0) {
+        c->cleanup_pending = true;
+        for (i = 0; i < MAX_URBS; i++)
+            if (c->urbs[i])
+                usb_unlink_urb(c->urbs[i]);
+        queue_work(zg01_cleanup_wq, &c->cleanup_work);
+    }
+    while (c->cleanup_pending) {
+        mutex_unlock(&dev->state_mutex);
+        flush_work(&c->cleanup_work);
+        mutex_lock(&dev->state_mutex);
         if (atomic_read(&dev->disconnecting) || !c->allocated) {
             mutex_unlock(&dev->state_mutex);
             return -ENODEV;
         }
     }
 
-    if (atomic_read(&c->inflight) > 0) {
+    if (atomic_read(&dev->disconnecting) || !c->allocated ||
+        !chain_consumers_running(dev, c)) {
+        mutex_unlock(&dev->state_mutex);
+        return -ECANCELED;
+    }
+    if (!atomic_read(&c->kill)) {
         mutex_unlock(&dev->state_mutex);
         return 0;                        /* adopt live chain */
     }
 
+    spin_lock_irqsave(&dev->lock, flags);
     atomic_set(&c->kill, 0);
+    if (c == &dev->out_chain) {
+        zg01_feedback_reset(&dev->feedback);
+        dev->have_last_plan = false;
+        dev->feedback_started = false;
+        dev->feedback_fault = false;
+        dev->feedback_startup_urbs = 0;
+        memset(c->completed_frames, 0, sizeof(c->completed_frames));
+        for (i = 0; i < MAX_URBS; i++) {
+            memset(c->bufs[i], 0, c->iso_pkts * c->iso_pkt_size);
+            zg01_feedback_pending(&dev->feedback, i);
+        }
+        spin_unlock_irqrestore(&dev->lock, flags);
+        mutex_unlock(&dev->state_mutex);
+        return 0;
+    }
+    spin_unlock_irqrestore(&dev->lock, flags);
     atomic_set(&c->inflight, MAX_URBS);
 
     /* Submit with state_mutex held: disconnect's URB free path also
@@ -301,7 +357,9 @@ fail:
      * inflight via a completion — subtract them here, or the counter
      * sticks >0 and a later start "adopts" a dead chain forever. */
     atomic_sub(MAX_URBS - submitted, &c->inflight);
+    spin_lock_irqsave(&dev->lock, flags);
     atomic_set(&c->kill, 1);
+    spin_unlock_irqrestore(&dev->lock, flags);
     c->cleanup_pending = true;
     for (i = submitted - 1; i >= 0; i--)
         usb_unlink_urb(c->urbs[i]);
@@ -461,16 +519,215 @@ int zg01_set_rate(struct zg01_dev *dev, int rate)
 /* ISO callbacks                                                       */
 /* ================================================================== */
 
+/* Account every non-cancelled packet, before any PCM length/state filter.
+ * Caller holds dev->lock. No printk or allocation in the completion path. */
+static void zg01_usb_stats_account(struct zg01_usb_stats *s,
+                                   const struct urb *urb, bool capture, u64 now)
+{
+    int i;
+
+    s->completions++;
+    if (urb->status == -ENOENT || urb->status == -ECONNRESET ||
+        urb->status == -ESHUTDOWN) {
+        s->cancelled++;
+        return;
+    }
+    if (urb->status) {
+        s->urb_errors++;
+        s->last_error_ns = now;
+    }
+
+    for (i = 0; i < urb->number_of_packets; i++) {
+        const struct usb_iso_packet_descriptor *p = &urb->iso_frame_desc[i];
+
+        s->packets++;
+        if (p->status <= 0 && p->status > -128)
+            s->packet_status[-p->status]++;
+        else
+            s->unknown_status++;
+        if (p->status) {
+            s->last_error_ns = now;
+            continue;
+        }
+        if (capture) {
+            if (p->actual_length <= ISO_PKT_SIZE_IN)
+                s->in_length[p->actual_length]++;
+            else
+                s->in_length_overflow++;
+        } else if (p->actual_length != p->length) {
+            s->out_length_mismatch++;
+            s->last_error_ns = now;
+        } else if (p->length >= 200 && p->length <= 280 && !(p->length % 40)) {
+            s->out_frames[p->length / 40]++;
+        }
+    }
+}
+
+/* Retain startup and the packet on either side of a length/status change.
+ * Freeze records at capacity; continue counting omitted selected records. */
+static void zg01_in_trace_append(struct zg01_in_trace *t,
+                                 const struct zg01_in_record *r)
+{
+    if (t->count && t->records[t->count - 1].seq == r->seq)
+        return;
+    if (t->count == ZG01_TRACE_RECORDS) {
+        t->omitted++;
+        return;
+    }
+    t->records[t->count++] = *r;
+}
+
+static void zg01_in_trace_account(struct zg01_in_trace *t,
+                                  const struct urb *urb, u64 now)
+{
+    int i;
+
+    if (urb->status) {
+        t->have_previous = false;
+        return;
+    }
+    for (i = 0; i < urb->number_of_packets; i++) {
+        const struct usb_iso_packet_descriptor *p = &urb->iso_frame_desc[i];
+        struct zg01_in_record r = {
+            .seq = ++t->packets,
+            .completion_ns = now,
+            .length = p->actual_length,
+            .status = p->status,
+        };
+        bool changed;
+
+        /* Never read failed, short, or out-of-bounds packet data. */
+        if (!p->status && p->actual_length >= sizeof(r.header) &&
+            p->actual_length <= p->length && urb->transfer_buffer &&
+            urb->transfer_buffer_length >= 0 &&
+            p->offset <= (unsigned int)urb->transfer_buffer_length &&
+            p->actual_length <= (unsigned int)urb->transfer_buffer_length - p->offset) {
+            memcpy(r.header, (u8 *)urb->transfer_buffer + p->offset,
+                   sizeof(r.header));
+            r.header_valid = true;
+        }
+        changed = t->have_previous &&
+                  (r.length != t->previous.length ||
+                   r.status != t->previous.status);
+        if (changed)
+            zg01_in_trace_append(t, &t->previous);
+        if (!t->have_previous || r.seq <= 4 || changed || r.status ||
+            r.length != 108)
+            zg01_in_trace_append(t, &r);
+        t->previous = r;
+        t->have_previous = true;
+    }
+}
+
+static void zg01_in_trace_read(struct snd_info_entry *entry,
+                               struct snd_info_buffer *buffer)
+{
+    struct zg01_dev *dev = entry->private_data;
+    struct zg01_in_trace *t;
+    unsigned long flags;
+    unsigned int i;
+
+    t = kmalloc(sizeof(*t), GFP_KERNEL);
+    if (!t) {
+        snd_iprintf(buffer, "snapshot allocation failed\n");
+        return;
+    }
+    spin_lock_irqsave(&dev->lock, flags);
+    *t = dev->in_trace;
+    spin_unlock_irqrestore(&dev->lock, flags);
+
+    snd_iprintf(buffer, "zg01_in_trace_v1\npackets %llu\nretained %u\nomitted %llu\n",
+                t->packets, t->count, t->omitted);
+    snd_iprintf(buffer, "# seq completion_ns length status header_hex\n");
+    for (i = 0; i < t->count; i++) {
+        const struct zg01_in_record *r = &t->records[i];
+
+        snd_iprintf(buffer, "%llu %llu %u %d ", r->seq,
+                    r->completion_ns, r->length, r->status);
+        if (r->header_valid)
+            snd_iprintf(buffer, "%8phN\n", r->header);
+        else
+            snd_iprintf(buffer, "-\n");
+    }
+    kfree(t);
+}
+
+static void zg01_usb_stats_print(struct snd_info_buffer *buffer,
+                                 const struct zg01_usb_stats *s, bool capture)
+{
+    int i;
+
+    snd_iprintf(buffer, "%s\n", capture ? "IN 0x81" : "OUT 0x01");
+    snd_iprintf(buffer, "completions %llu\ncancelled %llu\nurb_errors %llu\n",
+                s->completions, s->cancelled, s->urb_errors);
+    snd_iprintf(buffer, "packets %llu\nunknown_status %llu\nlast_error_ns %llu\n",
+                s->packets, s->unknown_status, s->last_error_ns);
+    snd_iprintf(buffer, "feedback_valid %llu\nfeedback_invalid %llu\n"
+                "feedback_starved %llu\nfeedback_overflow %llu\n"
+                "feedback_submit_errors %llu\nplayback_waits %llu\n"
+                "driver_xruns %llu\n",
+                s->feedback_valid, s->feedback_invalid, s->feedback_starved,
+                s->feedback_overflow, s->feedback_submit_errors, s->playback_waits,
+                s->driver_xruns);
+    for (i = 0; i < ARRAY_SIZE(s->packet_status); i++)
+        if (s->packet_status[i])
+            snd_iprintf(buffer, "packet_status %d %llu\n", -i,
+                        s->packet_status[i]);
+    if (capture) {
+        for (i = 0; i < ARRAY_SIZE(s->in_length); i++)
+            if (s->in_length[i])
+                snd_iprintf(buffer, "in_length %d %llu\n", i, s->in_length[i]);
+        snd_iprintf(buffer, "in_length_overflow %llu\n", s->in_length_overflow);
+    } else {
+        snd_iprintf(buffer, "out_length_mismatch %llu\n", s->out_length_mismatch);
+        for (i = 5; i <= 7; i++)
+            snd_iprintf(buffer, "out_frames %d %llu\n", i, s->out_frames[i]);
+    }
+}
+
+static void zg01_usb_stats_read(struct snd_info_entry *entry,
+                                struct snd_info_buffer *buffer)
+{
+    struct zg01_dev *dev = entry->private_data;
+    struct zg01_usb_stats *snapshot;
+    unsigned long flags;
+    u64 now;
+
+    /* Keep the snapshots off the kernel stack; format after releasing lock. */
+    snapshot = kmalloc_array(2, sizeof(*snapshot), GFP_KERNEL);
+    if (!snapshot) {
+        snd_iprintf(buffer, "snapshot allocation failed\n");
+        return;
+    }
+    spin_lock_irqsave(&dev->lock, flags);
+    snapshot[0] = dev->out_chain.stats;
+    snapshot[1] = dev->in_chain.stats;
+    now = ktime_get_ns();
+    spin_unlock_irqrestore(&dev->lock, flags);
+
+    snd_iprintf(buffer, "zg01_usb_stats_v1\nsnapshot_ns %llu\n", now);
+    zg01_usb_stats_print(buffer, &snapshot[0], false);
+    zg01_usb_stats_print(buffer, &snapshot[1], true);
+    kfree(snapshot);
+}
+
 /* Resubmit gate.  Returns true when the URB was resubmitted; on false
  * the caller must NOT touch the chain again (inflight already dropped). */
 static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
 {
     struct zg01_dev *dev = c->dev;
     int i, ret;
+    bool terminal = urb->status == -ESHUTDOWN ||
+                    urb->status == -ENOENT ||
+                    urb->status == -ECONNRESET;
 
     if (atomic_read(&dev->disconnecting) || atomic_read(&c->kill) ||
-        urb->status == -ESHUTDOWN || urb->status == -ENOENT ||
-        urb->status == -ECONNRESET) {
+        terminal) {
+        if (terminal && !atomic_read(&dev->disconnecting) &&
+            !atomic_read(&c->kill)) {
+            atomic_set(&c->kill, 1);
+            zg01_feedback_xrun(dev);
+        }
         atomic_dec(&c->inflight);
         return false;
     }
@@ -488,28 +745,19 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
         /* Surface the dead chain to ALSA as an xrun instead of
          * clicking silently forever.  Queuing work from softirq is
          * safe; the handlers check substream state themselves. */
-        if (c == &dev->out_chain) {
-            if (dev->streams[ZG01_GAME].running)
-                queue_work(zg01_period_wq,
-                           &dev->streams[ZG01_GAME].xrun_work);
-            if (dev->streams[ZG01_VOICE_OUT].running)
-                queue_work(zg01_period_wq,
-                           &dev->streams[ZG01_VOICE_OUT].xrun_work);
-        } else if (dev->streams[ZG01_VOICE_IN].running) {
-            queue_work(zg01_period_wq, &dev->streams[ZG01_VOICE_IN].xrun_work);
-        }
+        c->stats.feedback_submit_errors++;
+        zg01_feedback_xrun(dev);
         return false;
     }
     return true;
 }
 
-/* Snapshot of one playback consumer, taken under dev->lock. */
+/* Snapshot and all ring access are serialized against STOP/hw_free. */
 struct out_consumer {
     struct zg01_stream *s;
     struct snd_pcm_runtime *rt;
-    bool active;              /* has ring + stream running */
-    unsigned int old_pos;
-    bool period_elapsed;
+    unsigned int available;
+    bool active;
 };
 
 static void snap_consumer(struct zg01_dev *dev, enum zg01_stream_id id,
@@ -518,134 +766,227 @@ static void snap_consumer(struct zg01_dev *dev, enum zg01_stream_id id,
     struct zg01_stream *s = &dev->streams[id];
     struct snd_pcm_substream *sub = s->substream;
 
+    memset(oc, 0, sizeof(*oc));
     oc->s = s;
-    oc->rt = NULL;
-    oc->active = false;
-    oc->period_elapsed = false;
-    oc->old_pos = s->pcm_pos;
-
-    if (sub && sub->runtime && sub->runtime->dma_area &&
-        snd_pcm_running(sub)) {
-        oc->rt = sub->runtime;
-        oc->active = true;
-    }
-}
-
-/* Read one interleaved stereo S32 frame from a ring buffer. */
-static void read_frame(struct snd_pcm_runtime *rt, unsigned int frame,
-                       u32 *l, u32 *r)
-{
-    unsigned int bpf = rt->frame_bits / 8;
-    unsigned int buf_bytes = rt->buffer_size * bpf;
-    unsigned int off = (frame % rt->buffer_size) * bpf;
-    u8 tmp[8];
-
-    if (off + 8 <= buf_bytes) {
-        memcpy(l, rt->dma_area + off, 4);
-        memcpy(r, rt->dma_area + off + 4, 4);
-    } else {
-        unsigned int first = buf_bytes - off;
-        memcpy(tmp, rt->dma_area + off, first);
-        memcpy(tmp + first, rt->dma_area, 8 - first);
-        memcpy(l, tmp, 4);
-        memcpy(r, tmp + 4, 4);
-    }
-}
-
-/* Advance a consumer under dev->lock after total_frames consumed. */
-static void advance_consumer(struct out_consumer *oc, unsigned int total)
-{
-    struct zg01_stream *s = oc->s;
-    unsigned int period_size = oc->rt->period_size;
-
-    if (!oc->active || total == 0)
+    if (!s->enabled || !sub || !sub->runtime || !sub->runtime->dma_area ||
+        !snd_pcm_running(sub))
         return;
-
-    /* The endpoint consumed every frame placed in the URB.  Keep the
-     * reported hardware position at that same cadence.  ALSA detects an
-     * underrun when this position overtakes userspace's appl_ptr. */
-    s->pcm_pos += total;
-    if (period_size > 0 &&
-        (s->pcm_pos / period_size) != (oc->old_pos / period_size))
-        oc->period_elapsed = true;
+    oc->rt = sub->runtime;
+    oc->active = true;
+    oc->available = zg01_playback_available(READ_ONCE(oc->rt->control->appl_ptr),
+                         s->queued_ptr, oc->rt->boundary, oc->rt->buffer_size);
 }
 
-/*
- * EP 0x01 OUT completion: mix both playback consumers into the packet
- * slots and advance their positions at the endpoint cadence.  All ring
- * position updates happen under dev->lock; every clear of those
- * pointers in close/hw_free also happens under dev->lock AFTER the
- * chain drain — no window where the callback touches freed memory
- * (one dev, one lock, drain before clear).
- */
+static void zg01_feedback_xrun(struct zg01_dev *dev)
+{
+    int i;
+
+    dev->feedback_fault = true;
+    dev->out_chain.stats.driver_xruns++;
+    for (i = 0; i < ZG01_N_STREAMS; i++) {
+        if (dev->streams[i].enabled && !dev->streams[i].xrun_generation) {
+            dev->streams[i].xrun_generation = dev->streams[i].generation;
+            queue_work(zg01_period_wq, &dev->streams[i].xrun_work);
+        }
+    }
+}
+
+/* dev->lock covers submit as well as kill publication: IN callbacks must
+ * never submit OUT after its stop path has begun draining. Maximum two
+ * submitted OUT URBs bounds copy-ahead below the smallest playback ring. */
+static void zg01_feedback_pump(struct zg01_dev *dev)
+{
+    struct zg01_chain *c = &dev->out_chain;
+    struct zg01_feedback_queue *q = &dev->feedback;
+    struct zg01_feedback_plan plan;
+    struct out_consumer oc[2];
+    unsigned int limit[2];
+    unsigned int id, total, used[2], i, f, n;
+    struct urb *urb;
+    int ret;
+
+    if (dev->feedback_fault)
+        return;
+    if (!dev->feedback_started) {
+        if (q->plans < 2)
+            return;
+        dev->feedback_started = true;
+    }
+    while (!atomic_read(&dev->disconnecting) && !atomic_read(&c->kill) &&
+           atomic_read(&c->inflight) < 2) {
+        bool gap_fallback = false;
+
+        if (q->plans && q->pending) {
+            total = 0;
+            for (i = 0; i < ISO_PKTS_OUT; i++)
+                total += q->plan[q->plan_head].frames[i];
+        } else if (dev->have_last_plan && dev->feedback_started) {
+            /* Plan gap: keep OUT cadence on the last measured framing.
+             * A stalled hw_ptr makes ALSA's in_interrupt jiffies heuristic
+             * assume a ring wrap and fabricate a full-buffer hw_ptr jump,
+             * which lands as a false XRUN.  The nominal clock is at most
+             * ~21 ppm off until the next plan resyncs it. */
+            total = 0;
+            for (i = 0; i < ISO_PKTS_OUT; i++)
+                total += dev->last_plan.frames[i];
+            gap_fallback = true;
+        } else {
+            break;
+        }
+        if (gap_fallback)
+            c->stats.feedback_starved++;
+        snap_consumer(dev, ZG01_GAME, &oc[0]);
+        snap_consumer(dev, ZG01_VOICE_OUT, &oc[1]);
+        for (n = 0; n < 2; n++) {
+            struct zg01_stream *s = oc[n].s;
+
+            /* START precedes ALSA's PREPARED -> RUNNING transition.  A
+             * starting consumer contributes silence for now; it must not
+             * stall the already-running sibling's submissions (a drain
+             * and burst catch-up drives hw_ptr into appl_ptr). */
+            if (s->enabled && !oc[n].active) {
+                s->wait_since_ns = 0;
+                limit[n] = 0;
+                continue;
+            }
+            if (!oc[n].active ||
+                oc[n].rt->status->state == SNDRV_PCM_STATE_DRAINING) {
+                s->wait_since_ns = 0;
+                limit[n] = oc[n].available;   /* drain consumes all */
+                continue;
+            }
+            /* RUNNING: keep one URB of guard frames unconsumed so a
+             * completion can never land exactly on appl_ptr before the
+             * userspace write does (per-URB retirement vs per-period
+             * refill makes that race routine under load).  DRAINING
+             * must consume everything. */
+            limit[n] = oc[n].available > ZG01_PLAY_GUARD
+                     ? oc[n].available - ZG01_PLAY_GUARD : 0;
+            if (oc[n].available >= total) {
+                s->wait_since_ns = 0;
+                continue;
+            }
+            /* Partial fill: the copy loop caps used[n] at limit[n] and
+             * pads the rest with silence.  Stalling the whole pump here
+             * deadlocks userspace wakeups — aplay refills on
+             * period_elapsed, which only fires after an OUT completion
+             * retires frames. */
+            if (limit[n] > 0) {
+                c->stats.playback_waits++;
+                s->wait_since_ns = 0;
+                continue;
+            }
+            /* At or below the guard: true starvation, but only if
+             * nothing is still in flight to wake the stream. */
+            c->stats.playback_waits++;
+            if (s->queued_pos != s->pcm_pos)
+                return; /* in-flight completion will pump again */
+            /* Period notification is deferred; give userspace two URB
+             * intervals to refill before declaring a true starvation. */
+            if (!s->wait_since_ns)
+                s->wait_since_ns = ktime_get_ns();
+            if (ktime_get_ns() - s->wait_since_ns < 8000000)
+                return;
+            zg01_feedback_xrun(dev);
+            return;
+        }
+        if (gap_fallback) {
+            plan = dev->last_plan;
+            if (!zg01_feedback_pending_take(q, &id))
+                return;
+        } else if (!zg01_feedback_take(q, &plan, &id)) {
+            return;
+        }
+        urb = c->urbs[id];
+        memset(urb->transfer_buffer, 0, c->iso_pkts * c->iso_pkt_size);
+        used[0] = used[1] = 0;
+        for (i = 0; i < ISO_PKTS_OUT; i++) {
+            u8 *pkt = urb->transfer_buffer + i * ISO_PKT_SIZE_OUT;
+
+            urb->iso_frame_desc[i].length = plan.frames[i] * 40;
+            urb->iso_frame_desc[i].actual_length = 0;
+            urb->iso_frame_desc[i].status = 0;
+            for (f = 0; f < plan.frames[i]; f++) {
+                for (n = 0; n < 2; n++) {
+                    unsigned int off;
+                    struct zg01_stream *s = oc[n].s;
+
+                    if (!oc[n].active || used[n] >= limit[n])
+                        continue;
+                    off = ((s->queued_pos + used[n]) % oc[n].rt->buffer_size) * 8;
+                    memcpy(pkt + f * 40 + (n == 0 ? 8 : 0),
+                           oc[n].rt->dma_area + off, 8);
+                    used[n]++;
+                }
+            }
+        }
+        for (n = 0; n < 2; n++) {
+            c->completed_frames[id][n] = used[n];
+            c->generation[id][n] = oc[n].s->generation;
+        }
+        atomic_inc(&c->inflight);
+        ret = usb_submit_urb(urb, GFP_ATOMIC);
+        if (ret) {
+            atomic_dec(&c->inflight);
+            c->stats.feedback_submit_errors++;
+            zg01_feedback_pending(q, id);
+            zg01_feedback_xrun(dev);
+            return;
+        }
+        for (n = 0; n < 2; n++) {
+            if (!used[n])
+                continue;
+            oc[n].s->queued_pos += used[n];
+            oc[n].s->queued_ptr = (oc[n].s->queued_ptr + used[n]) % oc[n].rt->boundary;
+        }
+    }
+}
+
 static void zg01_iso_out(struct urb *urb)
 {
     struct zg01_chain *c = urb->context;
     struct zg01_dev *dev = c->dev;
-    struct out_consumer game = {0}, vo = {0};
     unsigned long flags;
-    unsigned int total_frames = 0;
-    int i, f;
-
-    if (urb->status && urb->status != -EXDEV &&
-        urb->status != -ENOENT && urb->status != -ECONNRESET &&
-        urb->status != -ESHUTDOWN)
-        dev_warn_ratelimited(&dev->udev->dev, "out URB status %d\n",
-                             urb->status);
+    unsigned int id, n;
+    bool terminal = urb->status == -ENOENT || urb->status == -ECONNRESET ||
+                    urb->status == -ESHUTDOWN;
 
     spin_lock_irqsave(&dev->lock, flags);
-
-    if (urb->status == 0) {
-        snap_consumer(dev, ZG01_GAME, &game);
-        snap_consumer(dev, ZG01_VOICE_OUT, &vo);
-
-        for (i = 0; i < urb->number_of_packets; i++) {
-            unsigned int pkt_len = urb->iso_frame_desc[i].length;
-            u8 *pkt;
-
-            if (pkt_len != 240)
-                continue;
-
-            pkt = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
-
-            for (f = 0; f < 6; f++) {
-                u32 gl = 0, gr = 0, vl = 0, vr = 0;
-                u8 *slot = pkt + f * 40;
-
-                if (game.active)
-                    read_frame(game.rt, game.s->pcm_pos + total_frames + f,
-                               &gl, &gr);
-                if (vo.active)
-                    read_frame(vo.rt, vo.s->pcm_pos + total_frames + f,
-                               &vl, &vr);
-
-                memcpy(slot, &vl, 4);
-                memcpy(slot + 4, &vr, 4);
-                memcpy(slot + 8, &gl, 4);
-                memcpy(slot + 12, &gr, 4);
-                memset(slot + 16, 0, 24);
-            }
-            total_frames += 6;
-        }
-
-        advance_consumer(&game, total_frames);
-        advance_consumer(&vo, total_frames);
+    zg01_usb_stats_account(&c->stats, urb, false, ktime_get_ns());
+    for (id = 0; id < MAX_URBS && c->urbs[id] != urb; id++)
+        ;
+    atomic_dec(&c->inflight);
+    if (terminal && !atomic_read(&c->kill) && !atomic_read(&dev->disconnecting)) {
+        atomic_set(&c->kill, 1);
+        zg01_feedback_xrun(dev);
     }
+    if (id == MAX_URBS || terminal || atomic_read(&c->kill) ||
+        atomic_read(&dev->disconnecting))
+        goto unlock;
+    for (n = 0; n < 2; n++) {
+        struct zg01_stream *s = &dev->streams[n];
+        unsigned int frames = c->completed_frames[id][n];
 
+        /* Retire submitted samples once, including lost USB packets;
+         * never replay a partly successful URB. USB errors remain counted. */
+        if (frames && s->enabled && s->generation == c->generation[id][n]) {
+            s->pcm_pos += frames;
+            /* Also wakes a drain shorter than period_size. */
+            queue_work(zg01_period_wq, &s->period_work);
+        }
+        c->completed_frames[id][n] = 0;
+    }
+    zg01_feedback_pending(&dev->feedback, id);
+    if (!dev->feedback.plans)
+        c->stats.feedback_starved++;
+    zg01_feedback_pump(dev);
+unlock:
     spin_unlock_irqrestore(&dev->lock, flags);
-
-    if (game.period_elapsed)
-        queue_work(zg01_period_wq, &game.s->period_work);
-    if (vo.period_elapsed)
-        queue_work(zg01_period_wq, &vo.s->period_work);
-
-    chain_resubmit(c, urb);
 }
 
-/*
- * EP 0x81 IN completion: Voice In capture.  Packet format (108 bytes):
- *   8-byte header, 6 frames x 16 bytes (L4 R4 + 8 pad), 4-byte trailer.
- */
+/* IN is a shared clock source, independent of whether capture is open.
+ * Header word 1 is payload bytes; word 0 is an observed packet sequence.
+ * Only validated 5/6/7-frame packets supply capture or feedback. */
 static void zg01_iso_in(struct urb *urb)
 {
     struct zg01_chain *c = urb->context;
@@ -653,68 +994,66 @@ static void zg01_iso_in(struct urb *urb)
     struct zg01_stream *s = &dev->streams[ZG01_VOICE_IN];
     struct snd_pcm_substream *sub;
     struct snd_pcm_runtime *rt;
+    struct zg01_feedback_plan plan = {0};
     unsigned long flags;
-    unsigned int old_pos = 0;
-    bool period_elapsed = false;
-    int i, f;
-
-    if (urb->status && urb->status != -EXDEV &&
-        urb->status != -ENOENT && urb->status != -ECONNRESET &&
-        urb->status != -ESHUTDOWN)
-        dev_warn_ratelimited(&dev->udev->dev, "in URB status %d\n",
-                             urb->status);
+    unsigned int old_pos, i, f;
+    bool valid = urb->status == 0 && urb->number_of_packets == ISO_PKTS_IN;
 
     spin_lock_irqsave(&dev->lock, flags);
-
+    zg01_usb_stats_account(&c->stats, urb, true, ktime_get_ns());
+    zg01_in_trace_account(&dev->in_trace, urb, ktime_get_ns());
     sub = s->substream;
-    rt = (sub && sub->runtime && sub->runtime->dma_area &&
+    rt = (s->enabled && sub && sub->runtime && sub->runtime->dma_area &&
           snd_pcm_running(sub)) ? sub->runtime : NULL;
+    old_pos = s->pcm_pos;
+    if (!atomic_read(&c->kill) && !atomic_read(&dev->disconnecting)) {
+        for (i = 0; i < urb->number_of_packets && i < ISO_PKTS_IN; i++) {
+            const struct usb_iso_packet_descriptor *p = &urb->iso_frame_desc[i];
+            unsigned int frames = 0;
 
-    if (urb->status == 0 && rt) {
-        unsigned int bpf = rt->frame_bits / 8;
-        unsigned int buf_bytes = rt->buffer_size * bpf;
-        unsigned int period_size = rt->period_size;
-
-        old_pos = s->pcm_pos;
-
-        for (i = 0; i < urb->number_of_packets; i++) {
-            unsigned int pkt_len = urb->iso_frame_desc[i].actual_length;
-            u8 *pkt;
-            unsigned int write_frame;
-            unsigned int write_off;
-
-            if (pkt_len != 108)
+            if (!urb->status && urb->transfer_buffer_length >= 0)
+                frames = zg01_packet_frames(urb->transfer_buffer,
+                            urb->transfer_buffer_length, p->offset,
+                            p->actual_length, p->length, p->status);
+            if (!frames) {
+                c->stats.feedback_invalid++;
+                valid = false;
                 continue;
+            }
+            c->stats.feedback_valid++;
+            plan.frames[i] = frames;
+            if (!rt)
+                continue;
+            for (f = 0; f < frames; f++) {
+                unsigned int off = (s->pcm_pos % rt->buffer_size) * 8;
 
-            pkt = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
-
-            for (f = 0; f < 6; f++) {
-                u8 *usb_frame = pkt + 8 + f * 16;
-
-                write_frame = s->pcm_pos % rt->buffer_size;
-                write_off = write_frame * bpf;
-                if (write_off + 8 <= buf_bytes) {
-                    memcpy(rt->dma_area + write_off, usb_frame, 8);
-                } else {
-                    unsigned int first = buf_bytes - write_off;
-                    memcpy(rt->dma_area + write_off, usb_frame, first);
-                    memcpy(rt->dma_area, usb_frame + first, 8 - first);
-                }
+                memcpy(rt->dma_area + off,
+                       urb->transfer_buffer + p->offset + 8 + f * 16, 8);
                 s->pcm_pos++;
             }
         }
-
-        if (period_size > 0 &&
-            (s->pcm_pos / period_size) != (old_pos / period_size))
-            period_elapsed = true;
+        if (rt && s->pcm_pos != old_pos)
+            queue_work(zg01_period_wq, &s->period_work);
+        if (!atomic_read(&dev->out_chain.kill) &&
+            (dev->feedback.pending || atomic_read(&dev->out_chain.inflight)) &&
+            !dev->feedback_fault) {
+            if (!valid && (dev->feedback_started ||
+                          ++dev->feedback_startup_urbs >= MAX_URBS))
+                zg01_feedback_xrun(dev);
+        }
+        if (valid && !dev->feedback_fault && !atomic_read(&dev->out_chain.kill) &&
+            (dev->feedback.pending || atomic_read(&dev->out_chain.inflight))) {
+            dev->last_plan = plan;
+            dev->have_last_plan = true;
+            if (!zg01_feedback_push(&dev->feedback, &plan)) {
+                c->stats.feedback_overflow++;
+                zg01_feedback_xrun(dev);
+            }
+        }
+        zg01_feedback_pump(dev);
     }
-
-    spin_unlock_irqrestore(&dev->lock, flags);
-
-    if (period_elapsed)
-        queue_work(zg01_period_wq, &s->period_work);
-
     chain_resubmit(c, urb);
+    spin_unlock_irqrestore(&dev->lock, flags);
 }
 
 /* ================================================================== */
@@ -753,8 +1092,8 @@ static int zg01_pcm_open(struct snd_pcm_substream *substream)
     runtime->hw.periods_max = 64;
 
     if (s->direction == SNDRV_PCM_STREAM_CAPTURE) {
-        runtime->hw.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_16000;
-        runtime->hw.rate_min = 16000;
+        runtime->hw.rates = SNDRV_PCM_RATE_48000;
+        runtime->hw.rate_min = 48000;
         runtime->hw.rate_max = 48000;
         runtime->hw.buffer_bytes_max = PCM_BUFFER_BYTES_MAX_VOICE;
         runtime->hw.period_bytes_min = PCM_PERIOD_BYTES_MIN_VOICE;
@@ -808,12 +1147,22 @@ static int zg01_pcm_close(struct snd_pcm_substream *substream)
     mutex_lock(&dev->state_mutex);
     s->opened = false;
     s->running = false;
+    spin_lock_irqsave(&dev->lock, flags);
+    s->enabled = false;
+    s->generation++;
+    s->xrun_generation = 0;
+    s->substream = NULL;
+    spin_unlock_irqrestore(&dev->lock, flags);
     if (!chain_consumers_running(dev, c))
         zg01_chain_stop(dev, c);
+    if (!chain_consumers_running(dev, &dev->in_chain))
+        zg01_chain_stop(dev, &dev->in_chain);
     mutex_unlock(&dev->state_mutex);
 
-    flush_work(&c->cleanup_work);
-    cancel_delayed_work_sync(&c->quiesce_work);
+    flush_work(&dev->out_chain.cleanup_work);
+    flush_work(&dev->in_chain.cleanup_work);
+    cancel_delayed_work_sync(&dev->out_chain.quiesce_work);
+    cancel_delayed_work_sync(&dev->in_chain.quiesce_work);
     flush_work(&s->period_work);
     flush_work(&s->xrun_work);
 
@@ -831,7 +1180,7 @@ static int zg01_pcm_hw_params(struct snd_pcm_substream *substream,
         return -EINVAL;
     if (params_format(hw_params) != SNDRV_PCM_FORMAT_S32_LE)
         return -EINVAL;
-    if (params_rate(hw_params) != 48000 && params_rate(hw_params) != 16000)
+    if (params_rate(hw_params) != 48000)
         return -EINVAL;
 
     return 0;
@@ -847,11 +1196,20 @@ static int zg01_pcm_hw_free(struct snd_pcm_substream *substream)
 
     mutex_lock(&dev->state_mutex);
     s->running = false;
+    spin_lock_irqsave(&dev->lock, flags);
+    s->enabled = false;
+    s->generation++;
+    s->xrun_generation = 0;
+    s->substream = NULL;
+    spin_unlock_irqrestore(&dev->lock, flags);
     if (!chain_consumers_running(dev, c))
         zg01_chain_stop(dev, c);
+    if (!chain_consumers_running(dev, &dev->in_chain))
+        zg01_chain_stop(dev, &dev->in_chain);
     mutex_unlock(&dev->state_mutex);
 
-    flush_work(&c->cleanup_work);
+    flush_work(&dev->out_chain.cleanup_work);
+    flush_work(&dev->in_chain.cleanup_work);
     flush_work(&s->period_work);
     flush_work(&s->xrun_work);
 
@@ -900,27 +1258,18 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
         dev->device_initialized = true;
     }
 
-    /*
-     * Ensure this stream's streaming interface is at alt 1.  Safe now:
-     * state_mutex excludes concurrent triggers on the sibling PCMs, so
-     * a live chain cannot be flushed by this call (usb_set_interface
-     * unlinks all URBs on the target interface, even same-alt).
-     */
-    if (s->direction == SNDRV_PCM_STREAM_CAPTURE) {
-        if (atomic_read(&dev->in_chain.inflight) == 0)
-            usb_set_interface(dev->udev, 2, 1);
-    } else {
-        if (atomic_read(&dev->out_chain.inflight) == 0)
+    /* Playback also owns IN for implicit feedback. Never reset a live
+     * interface when capture joins/leaves or either playback PCM joins. */
+    if (atomic_read(&dev->in_chain.inflight) == 0)
+        usb_set_interface(dev->udev, 2, 1);
+    ret = zg01_chain_alloc(dev, &dev->in_chain, ZG01_EP_IN, 2,
+                           ISO_PKTS_IN, ISO_PKT_SIZE_IN, false);
+    if (!ret && s->direction != SNDRV_PCM_STREAM_CAPTURE) {
+        if (!dev->out_chain.allocated || atomic_read(&dev->out_chain.kill))
             usb_set_interface(dev->udev, 1, 1);
-    }
-
-    /* URB pre-allocation for this stream's chain */
-    if (s->direction == SNDRV_PCM_STREAM_CAPTURE)
-        ret = zg01_chain_alloc(dev, &dev->in_chain, ZG01_EP_IN, 2,
-                               ISO_PKTS_IN, ISO_PKT_SIZE_IN, false);
-    else
         ret = zg01_chain_alloc(dev, &dev->out_chain, ZG01_EP_OUT, 1,
                                ISO_PKTS_OUT, ISO_PKT_SIZE_OUT, true);
+    }
     if (ret) {
         mutex_unlock(&dev->state_mutex);
         return ret;
@@ -934,6 +1283,10 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     spin_lock_irqsave(&dev->lock, flags);
     s->substream = substream;
     s->pcm_pos = 0;
+    s->queued_pos = 0;
+    s->generation++;
+    s->enabled = false;
+    s->xrun_generation = 0;
     spin_unlock_irqrestore(&dev->lock, flags);
 
     s->initialized = true;
@@ -950,6 +1303,7 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         ? &dev->in_chain : &dev->out_chain;
     bool rapid;
     int ret;
+    unsigned long flags;
 
     mutex_lock(&dev->state_mutex);
 
@@ -960,13 +1314,31 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
             return -ENOMEM;
         }
         s->running = true;
+        spin_lock_irqsave(&dev->lock, flags);
+        s->enabled = true;
+        s->generation++;
+        s->xrun_generation = 0;
+        s->queued_pos = s->pcm_pos;
+        s->queued_ptr = substream->runtime->status->hw_ptr;
+        s->wait_since_ns = 0;
+        spin_unlock_irqrestore(&dev->lock, flags);
         mutex_unlock(&dev->state_mutex);
 
         /* May sleep (cleanup drain); state re-checked inside. */
         ret = zg01_chain_start(dev, c);
+        if (!ret && c == &dev->out_chain)
+            ret = zg01_chain_start(dev, &dev->in_chain);
         if (ret) {
             mutex_lock(&dev->state_mutex);
             s->running = false;
+            spin_lock_irqsave(&dev->lock, flags);
+            s->enabled = false;
+            s->xrun_generation = 0;
+            spin_unlock_irqrestore(&dev->lock, flags);
+            if (!chain_consumers_running(dev, &dev->out_chain))
+                zg01_chain_stop(dev, &dev->out_chain);
+            if (!chain_consumers_running(dev, &dev->in_chain))
+                zg01_chain_stop(dev, &dev->in_chain);
             mutex_unlock(&dev->state_mutex);
             dev_err(&dev->udev->dev, "chain start failed: %d\n", ret);
         }
@@ -983,6 +1355,11 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         rapid = s->trigger_count > 3;
 
         s->running = false;
+        spin_lock_irqsave(&dev->lock, flags);
+        s->enabled = false;
+        s->generation++;
+        s->xrun_generation = 0;
+        spin_unlock_irqrestore(&dev->lock, flags);
         if (rapid) {
             /* Keep the chain cycling (silence); the quiesce timer
              * stops it if no START follows. */
@@ -993,13 +1370,22 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         }
         if (!chain_consumers_running(dev, c))
             zg01_chain_stop(dev, c);
+        if (!chain_consumers_running(dev, &dev->in_chain))
+            zg01_chain_stop(dev, &dev->in_chain);
         mutex_unlock(&dev->state_mutex);
         return 0;
 
     case SNDRV_PCM_TRIGGER_SUSPEND:
         s->running = false;
+        spin_lock_irqsave(&dev->lock, flags);
+        s->enabled = false;
+        s->generation++;
+        s->xrun_generation = 0;
+        spin_unlock_irqrestore(&dev->lock, flags);
         if (!chain_consumers_running(dev, c))
             zg01_chain_stop(dev, c);
+        if (!chain_consumers_running(dev, &dev->in_chain))
+            zg01_chain_stop(dev, &dev->in_chain);
         mutex_unlock(&dev->state_mutex);
         return 0;
 
@@ -1023,6 +1409,17 @@ static snd_pcm_uframes_t zg01_pcm_pointer(struct snd_pcm_substream *substream)
     return pos % substream->runtime->buffer_size;
 }
 
+static int zg01_pcm_ack(struct snd_pcm_substream *substream)
+{
+    struct zg01_dev *dev = sub_to_stream(substream)->dev;
+    unsigned long flags;
+
+    spin_lock_irqsave(&dev->lock, flags);
+    zg01_feedback_pump(dev);
+    spin_unlock_irqrestore(&dev->lock, flags);
+    return 0;
+}
+
 static int zg01_pcm_ioctl(struct snd_pcm_substream *substream,
                           unsigned int cmd, void *arg)
 {
@@ -1038,6 +1435,7 @@ static const struct snd_pcm_ops zg01_pcm_ops = {
     .prepare = zg01_pcm_prepare,
     .trigger = zg01_pcm_trigger,
     .pointer = zg01_pcm_pointer,
+    .ack = zg01_pcm_ack,
 };
 
 /* ================================================================== */
@@ -1091,14 +1489,22 @@ int zg01_create_pcm_devices(struct zg01_dev *dev)
                                ? PCM_BUFFER_BYTES_MAX_VOICE
                                : PCM_BUFFER_BYTES_MAX_GAME;
 
-        /* Managed minimum = max/8 per PCM (6144 game/VO,
-         * 12288 voice-in), not the smaller hw floor. */
+        /* Managed buffer at FULL size: the prealloc floor is also the
+         * hw_params ceiling (no realloc path), and an 8 KB prealloc
+         * clamps userspace to a 1020-frame ring.  On that ring ALSA's
+         * stale-pointer threshold (~10.6 ms) sits below routine workqueue
+         * latency, which fabricates hw_ptr wraps = false XRUNs. */
         snd_pcm_set_managed_buffer_all(dev->pcm_instances[i],
                                        SNDRV_DMA_TYPE_CONTINUOUS, NULL,
-                                       max / 8, max);
+                                       max, max);
     }
 
-    return 0;
+    ret = snd_card_ro_proc_new(dev->card, "usb_stats", dev,
+                               zg01_usb_stats_read);
+    if (ret)
+        return ret;
+    return snd_card_ro_proc_new(dev->card, "in_trace", dev,
+                                zg01_in_trace_read);
 }
 
 /* ================================================================== */

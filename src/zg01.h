@@ -6,6 +6,7 @@
 #include <linux/workqueue.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
+#include "zg01_feedback.h"
 
 #define VENDOR_ID_YAMAHA 0x0499
 #define PRODUCT_ID_ZG01  0x1513
@@ -24,12 +25,16 @@
 #define ZG01_EP_IN           0x81
 
 #define ISO_PKTS_OUT         32      /* 32 microframes = 4ms per URB */
-#define ISO_PKT_SIZE_OUT     240
+#define ISO_PKT_SIZE_OUT     280     /* up to seven 40-byte frames */
 #define ISO_PKTS_IN          32
-#define ISO_PKT_SIZE_IN      124     /* alloc size; device sends 108 */
+#define ISO_PKT_SIZE_IN      124     /* header + up to seven frames + trailer */
 #define MAX_ISO_PACKET_SIZE  8192
 
 #define MAX_URBS             16      /* 64ms of buffering */
+
+/* Unconsumed frames held back while RUNNING so per-URB retirement can
+ * never land exactly on appl_ptr before the userspace write does. */
+#define ZG01_PLAY_GUARD      (192)
 
 /* PCM device numbers on the single card */
 #define ZG01_PCM_GAME        0
@@ -58,6 +63,12 @@ struct zg01_stream {
     /* Callback-shared state, protected by dev->lock: */
     struct snd_pcm_substream *substream;
     unsigned int pcm_pos;                    /* absolute frame counter */
+    unsigned int queued_pos;                 /* copied, not yet completed */
+    snd_pcm_uframes_t queued_ptr;             /* ALSA boundary epoch */
+    unsigned int generation;                 /* reject pre-STOP completions */
+    unsigned int xrun_generation;            /* deferred failure epoch */
+    bool enabled;                            /* trigger gate under dev->lock */
+    u64 wait_since_ns;                       /* bounded application refill */
 
     /* PCM-op state, protected by dev->state_mutex: */
     bool opened;                             /* open() .. close() */
@@ -86,6 +97,28 @@ struct zg01_stream {
  * every non-resubmit exit decrements inflight, so the counter can never
  * stick.
  */
+/* Diagnostic counters, protected by dev->lock. Cumulative until unplug. */
+struct zg01_usb_stats {
+    u64 completions;
+    u64 cancelled;
+    u64 urb_errors;
+    u64 packets;
+    u64 packet_status[128]; /* index = -errno, zero = success */
+    u64 unknown_status;
+    u64 in_length[ISO_PKT_SIZE_IN + 1]; /* successful packets only */
+    u64 in_length_overflow;
+    u64 out_length_mismatch;
+    u64 out_frames[8];                       /* successful complete packets */
+    u64 last_error_ns;
+    u64 feedback_valid;
+    u64 feedback_invalid;
+    u64 feedback_starved;
+    u64 feedback_overflow;
+    u64 feedback_submit_errors;
+    u64 playback_waits;
+    u64 driver_xruns;                       /* zg01_feedback_xrun calls */
+};
+
 struct zg01_chain {
     struct zg01_dev *dev;
     unsigned int endpoint;
@@ -93,8 +126,12 @@ struct zg01_chain {
     unsigned int iso_pkts;
     unsigned int iso_pkt_size;
 
+    struct zg01_usb_stats stats;
+
     struct urb *urbs[MAX_URBS];
     unsigned char *bufs[MAX_URBS];
+    unsigned int completed_frames[MAX_URBS][2];
+    unsigned int generation[MAX_URBS][2];
 
     bool allocated;                           /* state_mutex */
     bool cleanup_pending;                     /* state_mutex */
@@ -103,6 +140,27 @@ struct zg01_chain {
 
     struct work_struct cleanup_work;          /* kill urbs, clear flags */
     struct delayed_work quiesce_work;         /* stop idle suppressed chain */
+};
+
+#define ZG01_TRACE_RECORDS 256
+
+/* Bounded IN header trace. No sample payload; protected by dev->lock. */
+struct zg01_in_record {
+    u64 seq;
+    u64 completion_ns;
+    unsigned int length;
+    int status;
+    unsigned char header[8];
+    bool header_valid;
+};
+
+struct zg01_in_trace {
+    u64 packets;
+    u64 omitted;
+    unsigned int count;
+    bool have_previous;
+    struct zg01_in_record previous;
+    struct zg01_in_record records[ZG01_TRACE_RECORDS];
 };
 
 struct zg01_dev {
@@ -114,6 +172,13 @@ struct zg01_dev {
     struct zg01_chain out_chain;              /* EP 0x01: game + voice out */
     struct zg01_chain in_chain;               /* EP 0x81: voice in */
     struct snd_pcm *pcm_instances[ZG01_N_STREAMS];
+    struct zg01_in_trace in_trace;
+    struct zg01_feedback_queue feedback;
+    struct zg01_feedback_plan last_plan;     /* dev->lock: gap fallback */
+    bool have_last_plan;                     /* dev->lock */
+    bool feedback_started;                   /* dev->lock: priming complete */
+    bool feedback_fault;                     /* latched until drained restart */
+    unsigned int feedback_startup_urbs;       /* bounded no-feedback startup */
 
     /*
      * dev->lock guards the callback-shared fields (substream pointers,
