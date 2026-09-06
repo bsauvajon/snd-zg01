@@ -57,7 +57,6 @@ static int zg01_probe(struct usb_interface *interface,
     atomic_set(&dev->disconnecting, 0);
     atomic_set(&dev->disconnected, 0);
     dev->device_initialized = false;
-    dev->current_rate = 48000;
     dev->last_open_jiffies = 0;
     dev->open_count = 0;
 
@@ -68,7 +67,6 @@ static int zg01_probe(struct usb_interface *interface,
         s->substream = NULL;
         s->pcm_pos = 0;
         s->opened = false;
-        s->initialized = false;
         s->running = false;
         s->last_trigger_jiffies = 0;
         s->trigger_count = 0;
@@ -155,9 +153,7 @@ static void zg01_disconnect(struct usb_interface *interface)
         return;
     atomic_set(&dev->disconnecting, 1);
 
-    /* Stop and drain everything that can call into ALSA or touch dev. */
-    cancel_delayed_work_sync(&dev->out_chain.quiesce_work);
-    cancel_delayed_work_sync(&dev->in_chain.quiesce_work);
+    /* Stop cancels quiesce work before draining the transports. */
     zg01_stop_all_chains(dev);
     zg01_drain_all_chains(dev);
     flush_workqueue(zg01_period_wq);

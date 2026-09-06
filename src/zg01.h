@@ -28,7 +28,6 @@
 #define ISO_PKT_SIZE_OUT     280     /* up to seven 40-byte frames */
 #define ISO_PKTS_IN          32
 #define ISO_PKT_SIZE_IN      124     /* header + up to seven frames + trailer */
-#define MAX_ISO_PACKET_SIZE  8192
 
 #define MAX_URBS             16      /* 64ms of buffering */
 
@@ -64,11 +63,9 @@ struct zg01_stream {
     unsigned int generation;                 /* reject pre-STOP completions */
     unsigned int xrun_generation;            /* deferred failure epoch */
     bool enabled;                            /* trigger gate under dev->lock */
-    u64 wait_since_ns;                       /* bounded application refill */
 
     /* PCM-op state, protected by dev->state_mutex: */
     bool opened;                             /* open() .. close() */
-    bool initialized;                        /* device init has run */
     bool running;                            /* TRIGGER_START .. STOP */
 
     /* Rapid START/STOP suppression (PipeWire reconfiguration bursts) */
@@ -211,7 +208,6 @@ struct zg01_dev {
     struct mutex state_mutex;
 
     bool device_initialized;                  /* vendor handshake + rate */
-    unsigned int current_rate;
 
     atomic_t disconnecting;                   /* URB resubmission off */
     atomic_t disconnected;                    /* teardown-once latch */

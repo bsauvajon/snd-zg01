@@ -72,7 +72,7 @@ static bool chain_consumers_running(struct zg01_dev *dev, struct zg01_chain *c)
 static void zg01_chain_stop(struct zg01_dev *dev, struct zg01_chain *c);
 static void zg01_feedback_pump(struct zg01_dev *dev);
 static void zg01_feedback_xrun(struct zg01_dev *dev);
-static void zg01_feedback_xrun_in(struct zg01_dev *dev);
+static void zg01_feedback_xrun_all(struct zg01_dev *dev);
 
 /* ================================================================== */
 /* Deferred work handlers                                              */
@@ -356,23 +356,6 @@ unlock:
     return ret;
 }
 
-/* Free URBs and buffers for real (hw_free / disconnect, after drain). */
-static void __maybe_unused zg01_chain_free(struct zg01_chain *c)
-{
-    int i;
-
-    for (i = 0; i < MAX_URBS; i++) {
-        if (c->urbs[i]) {
-            usb_kill_urb(c->urbs[i]);
-            usb_free_urb(c->urbs[i]);
-            c->urbs[i] = NULL;
-        }
-        kfree(c->bufs[i]);
-        c->bufs[i] = NULL;
-    }
-    c->allocated = false;
-}
-
 void zg01_stop_all_chains(struct zg01_dev *dev)
 {
     /* cancel_sync must run OUTSIDE state_mutex: the quiesce handler
@@ -464,7 +447,6 @@ int zg01_set_rate(struct zg01_dev *dev, int rate)
                                         ((u32)large_data[2] << 16) |
                                         ((u32)large_data[3] << 24);
 
-                dev->current_rate = ret_rate;
                 ret = 0;
                 if ((int)ret_rate != rate)
                     dev_warn(&dev->udev->dev,
@@ -725,7 +707,7 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
             /* IN endpoint death (URB kill/shutdown) takes capture down
              * with playback; the pacing source is gone for both. */
             if (c == &dev->in_chain)
-                zg01_feedback_xrun_in(dev);
+                zg01_feedback_xrun_all(dev);
             else
                 zg01_feedback_xrun(dev);
         }
@@ -749,7 +731,7 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
         c->stats.feedback_submit_errors++;
         zg01_chain_drain_locked(c);
         if (c == &dev->in_chain)
-            zg01_feedback_xrun_in(dev);
+            zg01_feedback_xrun_all(dev);
         else
             zg01_feedback_xrun(dev);
         return false;
@@ -822,8 +804,10 @@ static void zg01_feedback_xrun(struct zg01_dev *dev)
     zg01_feedback_xrun_locked(dev, false);
 }
 
-/* The IN endpoint itself failed: capture and playback share its fate. */
-static void zg01_feedback_xrun_in(struct zg01_dev *dev)
+/* Fault playback and notify capture too. This does not drain IN:
+ * callers do that separately for terminal IN errors or resubmit failure.
+ * Invalid feedback also uses this notification scope without killing IN. */
+static void zg01_feedback_xrun_all(struct zg01_dev *dev)
 {
     zg01_feedback_xrun_locked(dev, true);
 }
@@ -860,10 +844,8 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
              * for the bounded fallback window.  This is a continuity
              * policy, not a measured rate-error guarantee. */
             gap_fallback = true;
-            /* Bounded fallback: IN producing no valid packets without any
-             * URB error is a dead clock, not a hiccup.  ~500 ms on
-             * fallback framing, then XRUN (analog of the 16-URB IN-chain
-             * terminal-death budget). */
+            /* Bound fallback to ~500 ms without a fresh valid plan,
+             * then fault playback instead of repeating stale timing. */
             if (dev->feedback_gap_urbs >= ZG01_GAP_FALLBACK_MAX_URBS) {
                 dev->out_chain.stats.feedback_starved++;
                 zg01_feedback_xrun(dev);
@@ -884,13 +866,11 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
              * stall the already-running sibling's submissions (a drain
              * and burst catch-up drives hw_ptr into appl_ptr). */
             if (s->enabled && !oc[n].active) {
-                s->wait_since_ns = 0;
                 limit[n] = 0;
                 continue;
             }
             if (!oc[n].active ||
                 oc[n].rt->status->state == SNDRV_PCM_STATE_DRAINING) {
-                s->wait_since_ns = 0;
                 limit[n] = oc[n].available;   /* drain consumes all */
                 continue;
             }
@@ -905,8 +885,6 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
                  * submitted contributions remain ahead of retirement. */
                 if (s->queued_pos == s->pcm_pos)
                     zg01_stream_xrun(s);
-            } else {
-                s->wait_since_ns = 0;
             }
         }
         if (gap_fallback) {
@@ -980,7 +958,7 @@ static void zg01_iso_out(struct urb *urb)
     if (terminal && zg01_chain_active(c) && !atomic_read(&dev->disconnecting)) {
         zg01_chain_drain_locked(c);
         if (c == &dev->in_chain)
-            zg01_feedback_xrun_in(dev);
+            zg01_feedback_xrun_all(dev);
         else
             zg01_feedback_xrun(dev);
     }
@@ -1063,7 +1041,7 @@ static void zg01_iso_in(struct urb *urb)
             !dev->feedback_fault) {
             if (!valid && (dev->feedback_started ||
                           ++dev->feedback_startup_urbs >= MAX_URBS))
-                zg01_feedback_xrun_in(dev);
+                zg01_feedback_xrun_all(dev);
         }
         if (valid && !dev->feedback_fault && zg01_chain_active(&dev->out_chain) &&
             (dev->feedback.pending || atomic_read(&dev->out_chain.inflight))) {
@@ -1325,8 +1303,6 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     s->xrun_generation = 0;
     spin_unlock_irqrestore(&dev->lock, flags);
 
-    s->initialized = true;
-
     mutex_unlock(&dev->state_mutex);
     return 0;
 }
@@ -1356,7 +1332,6 @@ static int zg01_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         s->xrun_generation = 0;
         s->queued_pos = s->pcm_pos;
         s->queued_ptr = substream->runtime->status->hw_ptr;
-        s->wait_since_ns = 0;
         spin_unlock_irqrestore(&dev->lock, flags);
         mutex_unlock(&dev->state_mutex);
 
@@ -1571,10 +1546,8 @@ void zg01_pm_reset_streams(struct zg01_dev *dev)
      * Suspend has drained both chains to STOPPED before this reset.
      */
     mutex_lock(&dev->state_mutex);
-    for (i = 0; i < ZG01_N_STREAMS; i++) {
+    for (i = 0; i < ZG01_N_STREAMS; i++)
         dev->streams[i].running = false;
-        dev->streams[i].initialized = false;
-    }
     dev->device_initialized = false;
     mutex_unlock(&dev->state_mutex);
 }
