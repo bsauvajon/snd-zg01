@@ -92,11 +92,9 @@ static int zg01_probe(struct usb_interface *interface,
     }
     dev->out_chain.allocated = false;
     dev->in_chain.allocated = false;
-    dev->out_chain.cleanup_pending = false;
-    dev->in_chain.cleanup_pending = false;
-    atomic_set(&dev->out_chain.kill, 0);
+    dev->out_chain.state = ZG01_CHAIN_STOPPED;
+    dev->in_chain.state = ZG01_CHAIN_STOPPED;
     atomic_set(&dev->out_chain.inflight, 0);
-    atomic_set(&dev->in_chain.kill, 0);
     atomic_set(&dev->in_chain.inflight, 0);
     INIT_WORK(&dev->out_chain.cleanup_work, zg01_chain_cleanup_fn);
     INIT_WORK(&dev->in_chain.cleanup_work, zg01_chain_cleanup_fn);

@@ -86,13 +86,21 @@ struct zg01_stream {
  * (silence for a consumer that is not running).  No handoff, no
  * promotion, no piggyback flag set.
  *
- * Chain lifecycle (state_mutex side): allocated -> submitted -> stopped.
- *   stop:  kill=1, unlink all, cleanup_pending=true, cleanup work queued
- *   start: drain pending cleanup, kill=0, submit all (adopt if in flight)
- * The callback resubmits unless disconnecting, kill, or terminal status;
- * every non-resubmit exit decrements inflight, so the counter can never
- * stick.
+ * Transport state is separate from allocation and PCM consumer demand.
+ * dev->lock protects transitions and the submission gate. Process paths
+ * take state_mutex before dev->lock; callbacks take only dev->lock.
+ * STOPPED permits reset, STARTING permits initial IN submits/resubmits,
+ * RUNNING includes OUT waiting for feedback with no URBs submitted.
+ * Only cleanup may move DRAINING to STOPPED, after usb_kill_urb() has
+ * joined every callback of that chain. inflight is accounting, not proof
+ * that cleanup has finished.
  */
+enum zg01_chain_state {
+    ZG01_CHAIN_STOPPED,
+    ZG01_CHAIN_STARTING,
+    ZG01_CHAIN_RUNNING,
+    ZG01_CHAIN_DRAINING,
+};
 /* Diagnostic counters, protected by dev->lock. Cumulative until unplug. */
 struct zg01_usb_stats {
     u64 completions;
@@ -130,11 +138,10 @@ struct zg01_chain {
     unsigned int generation[MAX_URBS][2];
 
     bool allocated;                           /* state_mutex */
-    bool cleanup_pending;                     /* state_mutex */
-    atomic_t kill;                            /* callback: last generation */
-    atomic_t inflight;                        /* URBs still cycling */
+    enum zg01_chain_state state;              /* dev->lock; READ_ONCE snapshots */
+    atomic_t inflight;                        /* URB accounting, not a callback join */
 
-    struct work_struct cleanup_work;          /* kill urbs, clear flags */
+    struct work_struct cleanup_work;          /* sole DRAINING -> STOPPED owner */
     struct delayed_work quiesce_work;         /* stop idle suppressed chain */
 };
 
@@ -186,8 +193,8 @@ struct zg01_dev {
      * dev->lock guards the callback-shared fields (substream pointers,
      * pcm_pos).  Every dereference of substream/runtime/
      * dma_area in the URB callbacks happens inside this lock, and every
-     * clear of those pointers also happens inside it — after the chain
-     * drain guarantees no callback is in flight.  One device, one lock:
+     * clear of those pointers also happens inside it. Sibling transport
+     * may remain active after a stream detaches. One device, one lock:
      * the cross-card mismatch window of the previous multi-card design
      * is gone.
      */
@@ -195,8 +202,8 @@ struct zg01_dev {
 
     /*
      * state_mutex serializes all sleeping PCM operations (open, close,
-     * hw_params, hw_free, prepare, trigger) and every transition of
-     * interface altsettings and chain state.  trigger may sleep (the
+     * hw_params, hw_free, prepare, trigger) and interface altsettings.
+     * Callback fault transitions use dev->lock. trigger may sleep (the
      * PCMs are nonatomic), so check-then-act sequences like "skip the
      * Magic Sequence if anything streams" are now atomic against
      * concurrent triggers on the sibling PCMs.

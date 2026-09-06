@@ -49,6 +49,14 @@ static const char *stream_name(const struct zg01_stream *s)
            (s->pcm_device == ZG01_PCM_GAME ? "Game Out" : "Voice Out");
 }
 
+/* Snapshot for consumer demand; submission decisions must hold dev->lock. */
+static bool zg01_chain_active(struct zg01_chain *c)
+{
+    enum zg01_chain_state state = READ_ONCE(c->state);
+
+    return state == ZG01_CHAIN_STARTING || state == ZG01_CHAIN_RUNNING;
+}
+
 /* Is any consumer of this chain currently running (state_mutex)? */
 static bool chain_consumers_running(struct zg01_dev *dev, struct zg01_chain *c)
 {
@@ -58,7 +66,7 @@ static bool chain_consumers_running(struct zg01_dev *dev, struct zg01_chain *c)
     return dev->streams[ZG01_VOICE_IN].running ||
            dev->streams[ZG01_GAME].running ||
            dev->streams[ZG01_VOICE_OUT].running ||
-           (dev->out_chain.allocated && !atomic_read(&dev->out_chain.kill));
+           (dev->out_chain.allocated && zg01_chain_active(&dev->out_chain));
 }
 
 static void zg01_chain_stop(struct zg01_dev *dev, struct zg01_chain *c);
@@ -119,16 +127,21 @@ void zg01_chain_cleanup_fn(struct work_struct *work)
 {
     struct zg01_chain *c = container_of(work, struct zg01_chain, cleanup_work);
     struct zg01_dev *dev = c->dev;
+    unsigned long flags;
     int i;
 
-    /* usb_kill_urb() waits for every in-flight callback of this chain,
-     * so after this loop no callback can touch dev or the streams. */
+    /* DRAINING blocks all submissions, including the other endpoint's
+     * OUT pump. Join this chain's callbacks; the other chain may run. */
     for (i = 0; i < MAX_URBS; i++)
         if (c->urbs[i])
             usb_kill_urb(c->urbs[i]);
 
     mutex_lock(&dev->state_mutex);
-    c->cleanup_pending = false;
+    spin_lock_irqsave(&dev->lock, flags);
+    WARN_ON_ONCE(c->state != ZG01_CHAIN_DRAINING);
+    WARN_ON_ONCE(atomic_read(&c->inflight));
+    WRITE_ONCE(c->state, ZG01_CHAIN_STOPPED);
+    spin_unlock_irqrestore(&dev->lock, flags);
     mutex_unlock(&dev->state_mutex);
 }
 
@@ -204,7 +217,6 @@ static int zg01_chain_alloc(struct zg01_dev *dev, struct zg01_chain *c,
     }
 
     c->allocated = true;
-    atomic_set(&c->kill, 1);
     return 0;
 
 fail:
@@ -217,117 +229,84 @@ fail:
     return -ENOMEM;
 }
 
-/*
- * Stop a chain.  state_mutex may be held OR NOT (trigger paths hold it;
- * disconnect/suspend do not — the flag transitions are guarded either
- * way because every transition happens under state_mutex... callers
- * that do not hold it must take it around this call).
- *
- * Sets kill so callbacks stop resubmitting and drop the inflight count;
- * cleanup work performs the synchronous kills.
- */
-static void zg01_chain_stop(struct zg01_dev *dev, struct zg01_chain *c)
+/* All stops and faults enter here with dev->lock held, including callbacks.
+ * Publish the submission barrier before queuing the sole drain owner.
+ * No unlink is needed here: the worker joins every URB with usb_kill_urb(). */
+static void zg01_chain_drain_locked(struct zg01_chain *c)
 {
-    int i;
-    unsigned long flags;
+    lockdep_assert_held(&c->dev->lock);
 
-    lockdep_assert_held(&dev->state_mutex);
-
-    if (!c->allocated)
+    if (!zg01_chain_active(c))
         return;
-    if (atomic_read(&c->kill))
-        return;                    /* already stopped or stopping */
-
-    spin_lock_irqsave(&dev->lock, flags);
-    atomic_set(&c->kill, 1);
-    if (c == &dev->out_chain)
-        zg01_feedback_reset(&dev->feedback);
-    spin_unlock_irqrestore(&dev->lock, flags);
-    c->cleanup_pending = true;
-    for (i = 0; i < MAX_URBS; i++)
-        if (c->urbs[i])
-            usb_unlink_urb(c->urbs[i]);
+    WRITE_ONCE(c->state, ZG01_CHAIN_DRAINING);
     queue_work(zg01_cleanup_wq, &c->cleanup_work);
 }
 
-/*
- * Start (or adopt) a chain.  Returns with the chain cycling.  Must be
- * called WITHOUT state_mutex held (it drops/reacquires around the
- * cleanup drain); callers re-check state after return.
- */
-static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
+/* state_mutex serializes consumer changes; dev->lock closes callback races. */
+static void zg01_chain_stop(struct zg01_dev *dev, struct zg01_chain *c)
 {
-    int submitted = 0;
-    int i, ret;
     unsigned long flags;
 
-    if (!c->allocated)
-        return -ENOMEM;
+    lockdep_assert_held(&dev->state_mutex);
+    spin_lock_irqsave(&dev->lock, flags);
+    zg01_chain_drain_locked(c);
+    spin_unlock_irqrestore(&dev->lock, flags);
+}
 
-    /* Async-cancel a pending quiesce; if it wins the race it no-ops
-     * (consumer is running again).  Must NOT be _sync here: the
-     * quiesce handler takes state_mutex. */
-    cancel_delayed_work(&c->quiesce_work);
-
-    mutex_lock(&dev->state_mutex);
-
-    /* Never submit against a device being torn down — disconnect
-     * frees the URBs under this mutex after setting disconnecting. */
-    if (atomic_read(&dev->disconnecting)) {
-        mutex_unlock(&dev->state_mutex);
-        return -ENODEV;
-    }
-
-    while (c->cleanup_pending) {
-        mutex_unlock(&dev->state_mutex);
-        flush_work(&c->cleanup_work);   /* also drains callbacks */
-        mutex_lock(&dev->state_mutex);
-        if (atomic_read(&dev->disconnecting) || !c->allocated) {
-            mutex_unlock(&dev->state_mutex);
-            return -ENODEV;
-        }
-        if (!c->cleanup_pending)
-            continue;
-    }
-
-    /* A terminal URB completion can kill a chain from callback context.
-     * Convert that state into the normal synchronous cleanup path before
-     * a later START can submit or adopt any remaining URBs. */
-    if (atomic_read(&c->kill) && atomic_read(&c->inflight) > 0) {
-        c->cleanup_pending = true;
-        for (i = 0; i < MAX_URBS; i++)
-            if (c->urbs[i])
-                usb_unlink_urb(c->urbs[i]);
-        queue_work(zg01_cleanup_wq, &c->cleanup_work);
-    }
-    while (c->cleanup_pending) {
+/* Return with state_mutex held. The caller must still check state under
+ * dev->lock: a callback may request a drain after this snapshot. */
+static int zg01_chain_wait_cleanup(struct zg01_dev *dev, struct zg01_chain *c)
+{
+    lockdep_assert_held(&dev->state_mutex);
+    while (!atomic_read(&dev->disconnecting) &&
+           READ_ONCE(c->state) == ZG01_CHAIN_DRAINING) {
         mutex_unlock(&dev->state_mutex);
         flush_work(&c->cleanup_work);
         mutex_lock(&dev->state_mutex);
-        if (atomic_read(&dev->disconnecting) || !c->allocated) {
-            mutex_unlock(&dev->state_mutex);
-            return -ENODEV;
-        }
+    }
+    return atomic_read(&dev->disconnecting) ? -ENODEV : 0;
+}
+
+/* Called without state_mutex. Adopt RUNNING, or initialize only STOPPED.
+ * RUNNING OUT may wait for feedback with zero submissions. */
+static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
+{
+    unsigned long flags;
+    int i, ret;
+
+    /* No _sync: quiesce also takes state_mutex. */
+    cancel_delayed_work(&c->quiesce_work);
+    mutex_lock(&dev->state_mutex);
+retry:
+    ret = zg01_chain_wait_cleanup(dev, c);
+    if (ret)
+        goto unlock;
+    if (!c->allocated) {
+        ret = -ENOMEM;
+        goto unlock;
+    }
+    if (!chain_consumers_running(dev, c)) {
+        ret = -ECANCELED;
+        goto unlock;
     }
 
-    if (atomic_read(&dev->disconnecting) || !c->allocated ||
-        !chain_consumers_running(dev, c)) {
-        mutex_unlock(&dev->state_mutex);
-        return -ECANCELED;
-    }
-    /* Take the adoption decision with the callback lock held.  OUT can be
-     * healthy while waiting for feedback with no URB in flight, so pending
-     * URB ownership also marks that chain live.  This recheck closes the
-     * gap between the unlocked cleanup drain and the reset decision. */
     spin_lock_irqsave(&dev->lock, flags);
-    if (!atomic_read(&c->kill) &&
-        (atomic_read(&c->inflight) > 0 ||
-         (c == &dev->out_chain && dev->feedback.pending))) {
+    if (c->state == ZG01_CHAIN_DRAINING) {
         spin_unlock_irqrestore(&dev->lock, flags);
-        mutex_unlock(&dev->state_mutex);
-        return 0;
+        goto retry;
     }
-    atomic_set(&c->kill, 0);
+    if (c->state == ZG01_CHAIN_RUNNING) {
+        spin_unlock_irqrestore(&dev->lock, flags);
+        goto unlock;
+    }
+    /* state_mutex excludes another STARTING owner. STOPPED comes from
+     * initial allocation or a worker that has joined every callback. */
+    if (WARN_ON_ONCE(c->state != ZG01_CHAIN_STOPPED ||
+                     atomic_read(&c->inflight))) {
+        ret = -EIO;
+        spin_unlock_irqrestore(&dev->lock, flags);
+        goto unlock;
+    }
     if (c == &dev->out_chain) {
         zg01_feedback_reset(&dev->feedback);
         dev->have_last_plan = false;
@@ -340,38 +319,39 @@ static int zg01_chain_start(struct zg01_dev *dev, struct zg01_chain *c)
             memset(c->bufs[i], 0, c->iso_pkts * c->iso_pkt_size);
             zg01_feedback_pending(&dev->feedback, i);
         }
+        WRITE_ONCE(c->state, ZG01_CHAIN_RUNNING);
         spin_unlock_irqrestore(&dev->lock, flags);
-        mutex_unlock(&dev->state_mutex);
-        return 0;
+        goto unlock;
     }
+    WRITE_ONCE(c->state, ZG01_CHAIN_STARTING);
     spin_unlock_irqrestore(&dev->lock, flags);
-    atomic_set(&c->inflight, MAX_URBS);
 
-    /* Submit with state_mutex held: disconnect's URB free path also
-     * runs under state_mutex, so a URB can never be freed between
-     * our check and usb_submit_urb. */
+    /* Gate each initial submission against callback faults. Account only
+     * URBs actually submitted, not a reservation for the whole batch. */
     for (i = 0; i < MAX_URBS; i++) {
-        ret = usb_submit_urb(c->urbs[i], GFP_KERNEL);
+        spin_lock_irqsave(&dev->lock, flags);
+        if (atomic_read(&dev->disconnecting) ||
+            c->state != ZG01_CHAIN_STARTING) {
+            ret = -EPIPE;
+        } else {
+            atomic_inc(&c->inflight);
+            ret = usb_submit_urb(c->urbs[i], GFP_ATOMIC);
+            if (ret)
+                atomic_dec(&c->inflight);
+        }
         if (ret)
-            goto fail;
-        submitted++;
+            zg01_chain_drain_locked(c);
+        spin_unlock_irqrestore(&dev->lock, flags);
+        if (ret)
+            goto unlock;
     }
-
-    mutex_unlock(&dev->state_mutex);
-    return 0;
-
-fail:
-    /* URBs never handed to usb_submit_urb can never decrement
-     * inflight via a completion — subtract them here, or the counter
-     * sticks >0 and a later start "adopts" a dead chain forever. */
-    atomic_sub(MAX_URBS - submitted, &c->inflight);
     spin_lock_irqsave(&dev->lock, flags);
-    atomic_set(&c->kill, 1);
+    if (c->state == ZG01_CHAIN_STARTING)
+        WRITE_ONCE(c->state, ZG01_CHAIN_RUNNING);
+    else
+        ret = -EPIPE;
     spin_unlock_irqrestore(&dev->lock, flags);
-    c->cleanup_pending = true;
-    for (i = submitted - 1; i >= 0; i--)
-        usb_unlink_urb(c->urbs[i]);
-    queue_work(zg01_cleanup_wq, &c->cleanup_work);
+unlock:
     mutex_unlock(&dev->state_mutex);
     return ret;
 }
@@ -727,8 +707,8 @@ static void zg01_usb_stats_read(struct snd_info_entry *entry,
     kfree(snapshot);
 }
 
-/* Resubmit gate.  Returns true when the URB was resubmitted; on false
- * the caller must NOT touch the chain again (inflight already dropped). */
+/* Called with dev->lock held. False drops this URB's accounting claim;
+ * only usb_kill_urb(), not that decrement, joins the callback's return. */
 static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
 {
     struct zg01_dev *dev = c->dev;
@@ -737,11 +717,11 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
                     urb->status == -ENOENT ||
                     urb->status == -ECONNRESET;
 
-    if (atomic_read(&dev->disconnecting) || atomic_read(&c->kill) ||
+    if (atomic_read(&dev->disconnecting) || !zg01_chain_active(c) ||
         terminal) {
         if (terminal && !atomic_read(&dev->disconnecting) &&
-            !atomic_read(&c->kill)) {
-            atomic_set(&c->kill, 1);
+            zg01_chain_active(c)) {
+            zg01_chain_drain_locked(c);
             /* IN endpoint death (URB kill/shutdown) takes capture down
              * with playback; the pacing source is gone for both. */
             if (c == &dev->in_chain)
@@ -767,6 +747,7 @@ static bool chain_resubmit(struct zg01_chain *c, struct urb *urb)
          * clicking silently forever.  Queuing work from softirq is
          * safe; the handlers check substream state themselves. */
         c->stats.feedback_submit_errors++;
+        zg01_chain_drain_locked(c);
         if (c == &dev->in_chain)
             zg01_feedback_xrun_in(dev);
         else
@@ -814,7 +795,7 @@ static void zg01_feedback_xrun_locked(struct zg01_dev *dev, bool include_capture
     int first, last, i;
 
     dev->feedback_fault = true;
-    atomic_set(&dev->out_chain.kill, 1);
+    zg01_chain_drain_locked(&dev->out_chain);
     dev->out_chain.stats.driver_xruns++;
 
     /* Stop only the transport that actually died.  OUT-side faults
@@ -847,7 +828,7 @@ static void zg01_feedback_xrun_in(struct zg01_dev *dev)
     zg01_feedback_xrun_locked(dev, true);
 }
 
-/* dev->lock covers submit as well as kill publication: IN callbacks must
+/* dev->lock covers submit as well as DRAINING publication: IN callbacks must
  * never submit OUT after its stop path has begun draining. Maximum two
  * submitted OUT URBs bounds copy-ahead below the smallest playback ring. */
 static void zg01_feedback_pump(struct zg01_dev *dev)
@@ -868,7 +849,7 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
             return;
         dev->feedback_started = true;
     }
-    while (!atomic_read(&dev->disconnecting) && !atomic_read(&c->kill) &&
+    while (!atomic_read(&dev->disconnecting) && zg01_chain_active(c) &&
            atomic_read(&c->inflight) < 2) {
         bool gap_fallback = false;
 
@@ -996,14 +977,14 @@ static void zg01_iso_out(struct urb *urb)
     for (id = 0; id < MAX_URBS && c->urbs[id] != urb; id++)
         ;
     atomic_dec(&c->inflight);
-    if (terminal && !atomic_read(&c->kill) && !atomic_read(&dev->disconnecting)) {
-        atomic_set(&c->kill, 1);
+    if (terminal && zg01_chain_active(c) && !atomic_read(&dev->disconnecting)) {
+        zg01_chain_drain_locked(c);
         if (c == &dev->in_chain)
             zg01_feedback_xrun_in(dev);
         else
             zg01_feedback_xrun(dev);
     }
-    if (id == MAX_URBS || terminal || atomic_read(&c->kill) ||
+    if (id == MAX_URBS || terminal || !zg01_chain_active(c) ||
         atomic_read(&dev->disconnecting))
         goto unlock;
     for (n = 0; n < 2; n++) {
@@ -1049,7 +1030,7 @@ static void zg01_iso_in(struct urb *urb)
     rt = (s->enabled && sub && sub->runtime && sub->runtime->dma_area &&
           snd_pcm_running(sub)) ? sub->runtime : NULL;
     old_pos = s->pcm_pos;
-    if (!atomic_read(&c->kill) && !atomic_read(&dev->disconnecting)) {
+    if (zg01_chain_active(c) && !atomic_read(&dev->disconnecting)) {
         for (i = 0; i < urb->number_of_packets && i < ISO_PKTS_IN; i++) {
             const struct usb_iso_packet_descriptor *p = &urb->iso_frame_desc[i];
             unsigned int frames = 0;
@@ -1077,14 +1058,14 @@ static void zg01_iso_in(struct urb *urb)
         }
         if (rt && s->pcm_pos != old_pos)
             queue_work(zg01_period_wq, &s->period_work);
-        if (!atomic_read(&dev->out_chain.kill) &&
+        if (zg01_chain_active(&dev->out_chain) &&
             (dev->feedback.pending || atomic_read(&dev->out_chain.inflight)) &&
             !dev->feedback_fault) {
             if (!valid && (dev->feedback_started ||
                           ++dev->feedback_startup_urbs >= MAX_URBS))
                 zg01_feedback_xrun_in(dev);
         }
-        if (valid && !dev->feedback_fault && !atomic_read(&dev->out_chain.kill) &&
+        if (valid && !dev->feedback_fault && zg01_chain_active(&dev->out_chain) &&
             (dev->feedback.pending || atomic_read(&dev->out_chain.inflight))) {
             dev->last_plan = plan;
             dev->have_last_plan = true;
@@ -1172,13 +1153,9 @@ unlock:
     return ret;
 }
 
-/*
- * close: stop this stream's claim on its chain, drain everything that
- * can reference the substream, then clear the pointer.  The drain runs
- * WITHOUT state_mutex (cleanup work re-acquires it), the pointer clear
- * runs under dev->lock — after the drain no callback or queued work
- * can still hold the old substream.
- */
+/* Detach this consumer under dev->lock before flushing deferred work.
+ * Sibling transport may continue, but callbacks cannot acquire this
+ * substream after detachment. Flush without state_mutex: cleanup needs it. */
 static int zg01_pcm_close(struct snd_pcm_substream *substream)
 {
     struct zg01_stream *s = sub_to_stream(substream);
@@ -1278,6 +1255,14 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
         return -ENODEV;
     }
 
+    ret = zg01_chain_wait_cleanup(dev, &dev->in_chain);
+    if (!ret)
+        ret = zg01_chain_wait_cleanup(dev, &dev->out_chain);
+    if (ret) {
+        mutex_unlock(&dev->state_mutex);
+        return ret;
+    }
+
     /*
      * Device initialization (vendor handshake + rate).  The Magic
      * Sequence resets both interfaces to alt 0, killing every live URB
@@ -1291,8 +1276,8 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
      * always requested 48000).
      */
     if (!dev->device_initialized &&
-        atomic_read(&dev->out_chain.inflight) == 0 &&
-        atomic_read(&dev->in_chain.inflight) == 0) {
+        READ_ONCE(dev->out_chain.state) == ZG01_CHAIN_STOPPED &&
+        READ_ONCE(dev->in_chain.state) == ZG01_CHAIN_STOPPED) {
         ret = zg01_set_rate(dev, 48000);
         if (ret < 0)
             dev_warn(&dev->udev->dev, "set_rate failed: %d\n", ret);
@@ -1301,7 +1286,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
 
     /* Playback also owns IN for implicit feedback. Never reset a live
      * interface when capture joins/leaves or either playback PCM joins. */
-    if (atomic_read(&dev->in_chain.inflight) == 0) {
+    if (READ_ONCE(dev->in_chain.state) == ZG01_CHAIN_STOPPED) {
         ret = usb_set_interface(dev->udev, 2, 1);
         if (ret < 0) {
             mutex_unlock(&dev->state_mutex);
@@ -1311,7 +1296,7 @@ static int zg01_pcm_prepare(struct snd_pcm_substream *substream)
     ret = zg01_chain_alloc(dev, &dev->in_chain, ZG01_EP_IN, 2,
                            ISO_PKTS_IN, ISO_PKT_SIZE_IN, false);
     if (!ret && s->direction != SNDRV_PCM_STREAM_CAPTURE) {
-        if (!dev->out_chain.allocated || atomic_read(&dev->out_chain.kill)) {
+        if (READ_ONCE(dev->out_chain.state) == ZG01_CHAIN_STOPPED) {
             ret = usb_set_interface(dev->udev, 1, 1);
             if (ret < 0) {
                 mutex_unlock(&dev->state_mutex);
@@ -1583,9 +1568,7 @@ void zg01_pm_reset_streams(struct zg01_dev *dev)
     /*
      * The firmware reset itself across suspend: force the first-prepare
      * path (vendor handshake + rate) on the next open of each stream.
-     * Piggyback/keepalive state no longer exists — chain state is
-     * fully described by the kill/inflight atomics, which the suspend
-     * stop already quiesced.
+     * Suspend has drained both chains to STOPPED before this reset.
      */
     mutex_lock(&dev->state_mutex);
     for (i = 0; i < ZG01_N_STREAMS; i++) {
