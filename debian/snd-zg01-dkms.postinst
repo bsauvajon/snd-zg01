@@ -22,30 +22,27 @@ case "$1" in
         dkms build -m $NAME -v $VERSION || true
         dkms install -m $NAME -v $VERSION || true
         
-        # Install and activate udev rules
-        # (DKMS may not reliably handle BUILT_MODULE_UDEV_RULES activation)
-        if [ -f /usr/src/$NAME-$VERSION/src/90-zg01.rules ]; then
-            cp /usr/src/$NAME-$VERSION/src/90-zg01.rules /etc/udev/rules.d/
-            udevadm control --reload-rules || true
-            udevadm trigger || true
-        fi
-
         # Install modules-load.d file so snd-zg01 is pre-loaded at boot
         # before snd-usb-audio claims the ZG01 via its generic wildcard alias.
         if [ -f /usr/src/$NAME-$VERSION/src/snd-zg01.conf ]; then
             cp /usr/src/$NAME-$VERSION/src/snd-zg01.conf /etc/modules-load.d/
         fi
-        
+
+        # Remove stale udev rule copies from older package versions; the
+        # rule file is obsolete (dead card IDs, redundant modalias load).
+        rm -f /etc/udev/rules.d/90-zg01.rules || true
+        udevadm control --reload-rules 2>/dev/null || true
+
         echo "Yamaha ZG01 driver installed via DKMS"
         echo "The module has been built and installed for your kernel"
         echo ""
         echo "The driver will automatically load when you connect the ZG01."
         echo "If the device is already connected, unplug and reconnect it."
         echo ""
-        echo "Three audio devices will appear:"
-        echo "  - Yamaha ZG01 Game (playback)"
-        echo "  - Yamaha ZG01 Voice Out (playback)"
-        echo "  - Yamaha ZG01 Voice In (capture)"
+        echo "One ALSA card with three PCM devices:"
+        echo "  - Game Out (hw:N,0, playback)"
+        echo "  - Voice Out (hw:N,1, playback)"
+        echo "  - Voice In (hw:N,2, capture)"
         echo ""
         echo "To manually load the driver, run:"
         echo "  sudo modprobe snd-zg01"
