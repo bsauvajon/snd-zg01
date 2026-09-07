@@ -105,6 +105,49 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  build-arch:
+    name: Build Arch package
+    needs: make-draft-release
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          tags: true
+
+      - name: Install build dependencies
+        run: |
+          pacman-key --init
+          pacman -Syu --noconfirm --needed git base-devel sudo
+
+      - name: Point PKGBUILD at the release tag
+        run: |
+          # Build the package from the tagged commit, not from main HEAD.
+          sed -i "s|#branch=main|#tag=${GITHUB_REF_NAME}|" packaging/arch/PKGBUILD
+          grep '^source=' packaging/arch/PKGBUILD
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
+      - name: Build package (unprivileged user)
+        run: |
+          useradd -m build
+          echo 'build ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/build
+          chown -R build:build "$GITHUB_WORKSPACE"
+          su build -c "cd '$GITHUB_WORKSPACE/packaging/arch' && makepkg --syncdeps --cleanbuild --clean --noconfirm"
+        env:
+          HOME: /home/build
+
+      - name: Upload Arch package to release
+        run: |
+          gh release upload ${GITHUB_REF_NAME} \
+            packaging/arch/snd-zg01-dkms-git-*.pkg.tar.zst --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
   publish-apt-repo:
     name: Release APT repository
     needs: [make-draft-release, build-debs]

@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+jobs:
+  build-and-test:
+    name: Kernel build (W=1) + tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential kmod "linux-headers-$(uname -r)"
+
+      - name: Strict kernel build (W=1)
+        run: bash tests/test-kernel-build.sh
+
+      - name: USBPcap normalizer tests
+        run: bash tests/test-capture-normalizer.sh
+
+  arch-packaging:
+    name: Arch package contract
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          pacman-key --init
+          pacman -Syu --noconfirm --needed git dkms linux-headers libarchive sudo
+
+      # makepkg refuses to run as root; create an unprivileged build user
+      - name: Run Arch packaging contract as build user
+        run: |
+          useradd -m build
+          echo 'build ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/build
+          chown -R build:build "$GITHUB_WORKSPACE"
+          su build -c "cd '$GITHUB_WORKSPACE' && bash tests/test-arch-packaging.sh"
+        env:
+          HOME: /home/build
