@@ -17,10 +17,23 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y build-essential kmod "linux-headers-$(uname -r)"
+          # The Azure runner kernel headers (linux-headers-azure) do not export
+          # ALSA symbols (snd_pcm_*), so build against the generic Ubuntu kernel
+          # headers instead of the running kernel.
+          sudo apt-get install -y build-essential kmod linux-headers-generic
 
       - name: Strict kernel build (W=1)
-        run: bash tests/test-kernel-build.sh
+        run: |
+          KDIR=$(ls -d /usr/src/linux-headers-*-generic | sort -V | tail -1)
+          echo "Building against $KDIR"
+          make -C "$KDIR" M="$PWD" clean || true
+          make -C "$KDIR" M="$PWD" -j"$(nproc)" W=1 2>&1 | tee build.log
+          if grep -Eiq '\.(c|h):[0-9]+:[0-9]+.*(warning|error):' build.log; then
+            echo "Compiler warnings or errors found in source files"
+            exit 1
+          fi
+          test -f snd-zg01.ko
+          modinfo snd-zg01.ko | grep -E '^(name|license):'
 
       - name: USBPcap normalizer tests
         run: bash tests/test-capture-normalizer.sh
@@ -37,14 +50,19 @@ jobs:
       - name: Install dependencies
         run: |
           pacman-key --init
-          pacman -Syu --noconfirm --needed git dkms linux-headers libarchive sudo
+          pacman -Syu --noconfirm --needed git dkms linux-headers libarchive sudo alsa-ucm-conf
 
-      # makepkg refuses to run as root; create an unprivileged build user
+      # makepkg refuses to run as root; create an unprivileged build user.
+      # The container runs on the Azure host kernel, so the DKMS build must
+      # target the kernel provided by Arch's linux-headers package instead.
       - name: Run Arch packaging contract as build user
         run: |
           useradd -m build
           echo 'build ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/build
           chown -R build:build "$GITHUB_WORKSPACE"
-          su build -c "cd '$GITHUB_WORKSPACE' && bash tests/test-arch-packaging.sh"
+          KERNEL_VERSION=$(ls /usr/lib/modules | head -1)
+          echo "Container kernel: $(uname -r), headers kernel: $KERNEL_VERSION"
+          test -d "/usr/lib/modules/$KERNEL_VERSION/build"
+          su build -c "cd '$GITHUB_WORKSPACE' && KERNEL_VERSION='$KERNEL_VERSION' bash tests/test-arch-packaging.sh"
         env:
           HOME: /home/build

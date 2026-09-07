@@ -7,6 +7,11 @@ package_dir="$repo_root/packaging/arch"
 test_root=$(mktemp -d /tmp/snd-zg01-arch-test.XXXXXX)
 trap 'rm -rf "$test_root"' EXIT
 
+# Kernel to build the DKMS module against. Defaults to the running kernel,
+# but containers can override it to match the installed kernel-headers package
+# (e.g. Arch's linux-headers in a Docker container on a foreign host kernel).
+kernel_version=${KERNEL_VERSION:-$(uname -r)}
+
 test -f "$package_dir/PKGBUILD"
 test -f "$package_dir/.SRCINFO"
 
@@ -69,16 +74,22 @@ dkms add \
   --dkmstree "$test_root/dkms" \
   --installtree "$test_root/modules"
 
+# Prefer /lib/modules (standard), fall back to /usr/lib/modules (Arch).
+kernel_build_dir="/lib/modules/$kernel_version/build"
+if [ ! -d "$kernel_build_dir" ] && [ -d "/usr/lib/modules/$kernel_version/build" ]; then
+  kernel_build_dir="/usr/lib/modules/$kernel_version/build"
+fi
+
 dkms build \
   -m snd-zg01 \
   -v "$pkgver" \
-  -k "$(uname -r)" \
+  -k "$kernel_version" \
   --sourcetree "$test_root/root/usr/src" \
   --dkmstree "$test_root/dkms" \
   --installtree "$test_root/modules" \
-  --kernelsourcedir "/lib/modules/$(uname -r)/build"
+  --kernelsourcedir "$kernel_build_dir"
 
-test -f "$test_root/dkms/snd-zg01/$pkgver/$(uname -r)/$(uname -m)/module/snd-zg01.ko"
+test -f "$test_root/dkms/snd-zg01/$pkgver/$kernel_version/$(uname -m)/module/snd-zg01.ko"
 
 dkms remove \
   -m snd-zg01 \
