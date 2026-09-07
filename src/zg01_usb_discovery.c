@@ -188,8 +188,9 @@ int zg01_discover_usb_config(struct zg01_dev *dev)
     return 0;
 }
 
-/* Function to find and configure the best audio endpoint */
-int zg01_find_audio_endpoint(struct zg01_dev *dev, u8 *endpoint_addr, u8 *alt_setting)
+/* Function to find and configure the best audio endpoint (unused,
+ * kept for debugging aid) */
+static int __maybe_unused zg01_find_audio_endpoint(struct zg01_dev *dev, u8 *endpoint_addr, u8 *alt_setting)
 {
     struct usb_interface *interface = dev->interface;
     int i, ep_idx;
