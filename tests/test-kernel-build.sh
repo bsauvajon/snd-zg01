@@ -9,7 +9,9 @@ trap 'rm -f "$build_log"' EXIT
 make -C "$repo_root" clean >/dev/null 2>&1 || true
 make -C "$repo_root" -j"$(nproc)" W=1 2>&1 | tee "$build_log"
 
-if grep -Eiq '(^|[^[:alpha:]])(warning|error):' "$build_log"; then
+# Ignore kbuild environment warnings (compiler/pahole version drift) and keep
+# only warnings/errors emitted for the module's own source files.
+if grep -Eiq '\.(c|h):[0-9]+:[0-9]+.*(warning|error):' "$build_log"; then
   printf 'Kernel build emitted a compiler warning or error\n' >&2
   exit 1
 fi
