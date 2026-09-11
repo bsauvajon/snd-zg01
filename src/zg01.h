@@ -119,6 +119,8 @@ struct zg01_usb_stats {
     u64 feedback_overflow;
     u64 feedback_submit_errors;
     u64 playback_waits;
+    u64 playback_defer;                     /* delivered refill waits */
+    u64 silence_frames;                     /* padded for a running stream */
     u64 driver_xruns;                       /* zg01_feedback_xrun calls */
 };
 

@@ -29,7 +29,14 @@
 
 #define PCM_BUFFER_BYTES_MAX_GAME   (1536 * 32)
 #define PCM_BUFFER_BYTES_MIN_GAME   (1536 * 2)
-#define PCM_PERIOD_BYTES_MIN_GAME   (192 * 8)
+/*
+ * The period must stay comfortably above the two-URB (384-frame) hardware
+ * read-ahead.  With a 192-frame (one URB) period userspace kept a total
+ * delay barely above the read-ahead, so every refill raced the submission
+ * and the pump had to pad URB tails with silence (audible periodic gaps).
+ * A 384-frame floor leaves the ring room to drain.
+ */
+#define PCM_PERIOD_BYTES_MIN_GAME   (384 * 8)
 #define PCM_PERIOD_BYTES_MAX_GAME   (1536 * 8)
 
 #define PCM_BUFFER_BYTES_MAX_VOICE  (48 * 32 * 64)
@@ -645,9 +652,11 @@ static void zg01_usb_stats_print(struct snd_info_buffer *buffer,
     snd_iprintf(buffer, "feedback_valid %llu\nfeedback_invalid %llu\n"
                 "feedback_starved %llu\nfeedback_overflow %llu\n"
                 "feedback_submit_errors %llu\nplayback_waits %llu\n"
+                "playback_defer %llu\nsilence_frames %llu\n"
                 "driver_xruns %llu\n",
                 s->feedback_valid, s->feedback_invalid, s->feedback_starved,
                 s->feedback_overflow, s->feedback_submit_errors, s->playback_waits,
+                s->playback_defer, s->silence_frames,
                 s->driver_xruns);
     for (i = 0; i < ARRAY_SIZE(s->packet_status); i++)
         if (s->packet_status[i])
@@ -824,7 +833,7 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
     struct zg01_feedback_plan plan;
     struct out_consumer oc[2];
     unsigned int limit[2];
-    unsigned int id, used[2], i, f, n;
+    unsigned int id, total, used[2], i, f, n;
     struct urb *urb;
     int ret;
 
@@ -838,13 +847,20 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
     while (!atomic_read(&dev->disconnecting) && zg01_chain_active(c) &&
            atomic_read(&c->inflight) < 2) {
         bool gap_fallback = false;
+        bool defer = false;
 
         if (q->plans && q->pending) {
+            total = 0;
+            for (i = 0; i < ISO_PKTS_OUT; i++)
+                total += q->plan[q->plan_head].frames[i];
             dev->feedback_gap_urbs = 0;
         } else if (dev->have_last_plan && dev->feedback_started) {
             /* Plan gap: keep OUT cadence on the last measured framing
              * for the bounded fallback window.  This is a continuity
              * policy, not a measured rate-error guarantee. */
+            total = 0;
+            for (i = 0; i < ISO_PKTS_OUT; i++)
+                total += dev->last_plan.frames[i];
             gap_fallback = true;
             /* Bound fallback to ~500 ms without a fresh valid plan,
              * then fault playback instead of repeating stale timing. */
@@ -856,8 +872,6 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
         } else {
             break;
         }
-        if (gap_fallback)
-            c->stats.feedback_starved++;
         snap_consumer(dev, ZG01_GAME, &oc[0]);
         snap_consumer(dev, ZG01_VOICE_OUT, &oc[1]);
         for (n = 0; n < 2; n++) {
@@ -876,19 +890,29 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
                 limit[n] = oc[n].available;   /* drain consumes all */
                 continue;
             }
-            /* Consume every committed frame.  If a consumer has no data,
-             * emit silence for that slot and schedule only its XRUN.  The
-             * sibling remains eligible to submit and retire audio. */
+            /* Never build an URB from less than a full URB of committed
+             * frames: the tail would be padded with silence, a periodic
+             * audible gap.  Retire all remaining committed frames only for
+             * the DRAINING case above. */
             limit[n] = oc[n].available;
-            if (!oc[n].available) {
+            if (limit[n] < total) {
                 c->stats.playback_waits++;
-                /* Availability ends at queued_ptr, while pcm_pos marks
-                 * hardware retirement.  Do not report an underrun while
-                 * submitted contributions remain ahead of retirement. */
-                if (s->queued_pos == s->pcm_pos)
+                /* A short URB with audio still in flight is a transient
+                 * refill race, not an underrun: defer so the next userspace
+                 * write or completion refills instead of emitting silence.
+                 * Only a fully drained stream is a real underrun. */
+                if (s->queued_pos != s->pcm_pos)
+                    defer = true;
+                else
                     zg01_stream_xrun(s);
             }
         }
+        if (defer) {
+            c->stats.playback_defer++;
+            return;
+        }
+        if (gap_fallback)
+            c->stats.feedback_starved++;
         if (gap_fallback) {
             plan = dev->last_plan;
             if (!zg01_feedback_pending_take(q, &id))
@@ -920,6 +944,8 @@ static void zg01_feedback_pump(struct zg01_dev *dev)
             }
         }
         for (n = 0; n < 2; n++) {
+            if (oc[n].active && used[n] < total)
+                c->stats.silence_frames += total - used[n];
             c->completed_frames[id][n] = used[n];
             c->generation[id][n] = oc[n].s->generation;
         }

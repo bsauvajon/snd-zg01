@@ -138,6 +138,19 @@ systemctl --user start pipewire.socket pipewire-pulse.socket pipewire.service pi
   the requested length. This reflects controller reporting, not a device ACK.
 - `last_error_ns`: most recent aggregate/packet error or OUT length mismatch.
   It excludes cancellation/shutdown and ordinary IN length variation.
+- `feedback_valid`, `feedback_invalid`, `feedback_starved`, `feedback_overflow`,
+  `feedback_submit_errors`: implicit-feedback plan accounting. `feedback_starved`
+  counts OUT URBs paced from the last plan during a plan gap; `feedback_overflow`
+  counts plans dropped because the queue was full.
+- `playback_waits`: OUT iterations postponed or padded because a running consumer
+  held fewer committed frames than the URB demanded.
+- `playback_defer`: OUT submissions deferred to the next userspace refill or URB
+  completion because a running consumer was momentarily short while audio was
+  still in flight. A small steady rate is normal; it is the anti-silence wait.
+- `silence_frames`: frames padded with silence inside an OUT URB for a running
+  consumer. Must stay zero during normal streaming; a rising value is an audible
+  periodic gap.
+- `driver_xruns`: driver-initiated playback stops (`zg01_feedback_xrun`).
 
 Only nonzero status/length buckets appear. Use snapshot differences for a test
 window; lifetime totals may include previous tests.
