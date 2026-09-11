@@ -44,8 +44,11 @@ sudo dpkg -i snd-zg01-dkms_*.deb
 sudo apt-get install -f   # only if dependencies are missing
 ```
 
-The postinst script builds the module through DKMS and adds the
-modules-load.d entry.
+Either way, the postinst script builds the module through DKMS and adds the
+modules-load.d entry. The package also ships the UCM profile
+(`/usr/share/alsa/ucm2/conf.d/zg01_usb/`), which exposes two outputs (Game
+Out, Voice Out) and one input (Voice In) instead of a single generic stereo
+device.
 
 ## From source
 
