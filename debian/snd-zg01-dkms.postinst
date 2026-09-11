@@ -17,6 +17,24 @@ case "$1" in
         # previous installation.
         modprobe -r zg01_usb zg01_pcm zg01_control zg01_usb_discovery 2>/dev/null || true
 
+        # Drop DKMS state left by previous package versions. On upgrade, dpkg
+        # removes the old source tree while its DKMS entry stays behind with
+        # a dangling source symlink, which makes `dkms status` and the DKMS
+        # kernel hook (autoinstall) fail. Remove every version but this one.
+        if [ -d /var/lib/dkms/$NAME ]; then
+            shopt -s nullglob
+            for dir in /var/lib/dkms/$NAME/*/; do
+                old=$(basename "$dir")
+                case "$old" in
+                    "$VERSION"|kernel-*) continue ;;
+                esac
+                dkms remove -m $NAME -v "$old" --all 2>/dev/null || true
+                rm -rf "/var/lib/dkms/$NAME/$old"
+                rm -rf "/usr/src/$NAME-$old"
+            done
+            shopt -u nullglob
+        fi
+
         # Register with DKMS
         dkms add -m $NAME -v $VERSION || true
         dkms build -m $NAME -v $VERSION || true
