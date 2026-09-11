@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          tags: true
+          fetch-tags: true
 
       - name: Install build dependencies
         run: |
@@ -116,12 +116,12 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          tags: true
+          fetch-tags: true
 
       - name: Install build dependencies
         run: |
           pacman-key --init
-          pacman -Syu --noconfirm --needed git base-devel sudo
+          pacman -Syu --noconfirm --needed git base-devel sudo github-cli
 
       - name: Point PKGBUILD at the release tag
         run: |
