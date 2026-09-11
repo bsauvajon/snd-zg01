@@ -23,7 +23,20 @@ rollback, and warnings about experimental out-of-tree modules.
 
 ## Debian, Ubuntu
 
-Install DKMS and headers, then the package:
+Add the signed APT repository, which serves the latest published release:
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://raw.githubusercontent.com/bsauvajon/snd-zg01/main/apt/snd-zg01.asc \
+  | sudo tee /etc/apt/keyrings/snd-zg01.asc >/dev/null
+curl -fsSL https://raw.githubusercontent.com/bsauvajon/snd-zg01/main/apt/snd-zg01.sources \
+  | sudo tee /etc/apt/sources.list.d/snd-zg01.sources >/dev/null
+sudo apt update
+sudo apt install snd-zg01-dkms
+```
+
+Or install DKMS and headers, then a `.deb` downloaded from the latest GitHub
+release:
 
 ```bash
 sudo apt install dkms linux-headers-$(uname -r)
@@ -31,11 +44,8 @@ sudo dpkg -i snd-zg01-dkms_*.deb
 sudo apt-get install -f   # only if dependencies are missing
 ```
 
-Get the `.deb` from the latest GitHub release. The postinst script builds
-the module through DKMS and adds the modules-load.d entry. The package also
-ships the UCM profile (`/usr/share/alsa/ucm2/conf.d/zg01_usb/`), which is
-what makes the sound settings expose two outputs (Game Out, Voice Out) and
-one input (Voice In) instead of a single generic stereo device.
+The postinst script builds the module through DKMS and adds the
+modules-load.d entry.
 
 ## From source
 
