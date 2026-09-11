@@ -10,8 +10,14 @@ url="https://github.com/bsauvajon/snd-zg01"
 license=('GPL-2.0-or-later')
 depends=('dkms' 'alsa-ucm-conf')
 makedepends=('git')
+optdepends=(
+  'linux-headers: build the module for the stock kernel'
+  'linux-lts-headers: build the module for the LTS kernel'
+  'linux-zen-headers: build the module for the Zen kernel'
+)
 provides=('snd-zg01-dkms')
 conflicts=('snd-zg01-dkms')
+install=snd-zg01-dkms-git.install
 source=("${_pkgname}::git+${url}.git#branch=main")
 sha256sums=('SKIP')
 

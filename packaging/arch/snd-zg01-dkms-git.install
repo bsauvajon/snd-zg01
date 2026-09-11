@@ -1,0 +1,24 @@
+# Kernel headers are optional dependencies: Arch's DKMS hook only builds for
+# kernels whose headers are installed, and registers nothing otherwise. That
+# failure is silent, so warn when the running kernel has no headers.
+
+post_install() {
+    _zg01_warn_missing_headers
+}
+
+post_upgrade() {
+    _zg01_warn_missing_headers
+}
+
+_zg01_warn_missing_headers() {
+    local kver
+    kver=$(uname -r)
+    if [ ! -d "/lib/modules/$kver/build" ]; then
+        printf '%s\n' \
+            "==> No kernel headers found for $kver." \
+            "    DKMS built and registered nothing. Install the matching" \
+            "    headers package (e.g. linux-headers for the stock kernel," \
+            "    or the headers for your kernel flavor) and reinstall" \
+            "    snd-zg01-dkms-git."
+    fi
+}

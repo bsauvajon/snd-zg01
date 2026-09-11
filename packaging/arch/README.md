@@ -17,6 +17,11 @@ For another kernel, install its matching headers instead. Do not install
 `linux-headers` solely because this package says so; DKMS supports multiple
 kernel variants.
 
+The package lists the common header packages as optional dependencies and
+prints a warning if the running kernel has none. Without matching headers,
+Arch's DKMS hook builds and registers nothing, and `dkms status snd-zg01`
+stays empty.
+
 ## Build without installing
 
 ```bash

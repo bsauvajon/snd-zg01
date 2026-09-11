@@ -30,10 +30,13 @@ sinks without moving the mix into userspace.
 
 ### Arch Linux, CachyOS, Omarchy
 
-Build the package, then install it. DKMS hooks build the module for every
-installed kernel with matching headers:
+Install the headers matching your kernel (stock kernels use `linux-headers`),
+then build and install the package. DKMS hooks build the module for every
+installed kernel with matching headers; without them DKMS registers nothing,
+so the package warns at install time when the running kernel has no headers:
 
 ```bash
+sudo pacman -S linux-headers      # or linux-lts-headers / linux-zen-headers
 cd packaging/arch
 makepkg --cleanbuild
 sudo pacman -U snd-zg01-dkms-git-*.pkg.tar.zst

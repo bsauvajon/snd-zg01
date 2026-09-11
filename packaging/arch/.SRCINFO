@@ -3,11 +3,15 @@ pkgbase = snd-zg01-dkms-git
 	pkgver = r94.5b4ac9f
 	pkgrel = 1
 	url = https://github.com/bsauvajon/snd-zg01
+	install = snd-zg01-dkms-git.install
 	arch = any
 	license = GPL-2.0-or-later
 	makedepends = git
 	depends = dkms
 	depends = alsa-ucm-conf
+	optdepends = linux-headers: build the module for the stock kernel
+	optdepends = linux-lts-headers: build the module for the LTS kernel
+	optdepends = linux-zen-headers: build the module for the Zen kernel
 	provides = snd-zg01-dkms
 	conflicts = snd-zg01-dkms
 	source = snd-zg01::git+https://github.com/bsauvajon/snd-zg01.git#branch=main
