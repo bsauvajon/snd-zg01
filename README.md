@@ -17,9 +17,10 @@ three PCM devices:
 | 1 | Voice Out | playback | 48 kHz | shared EP 0x01 with Game Out |
 | 2 | Voice In | capture | 48 kHz | 108 B nominal: 8 B header, 5-7 frames x 16 B, 4 B trailer |
 
-All channels run S32_LE stereo. Both sinks work at the same time. On Arch,
-the package also installs a UCM profile, and PipeWire shows the devices as
-separate sinks named Game Out, Voice Out, and Voice In.
+All channels run S32_LE stereo. Both sinks work at the same time. Both
+packages install a UCM profile, so PipeWire shows the devices as separate
+sinks named Game Out, Voice Out, and Voice In. Without it, userspace falls
+back to the single generic stereo profile and only Game Out is exposed.
 
 A single out chain serves both playback PCMs. When only Voice Out runs, the
 chain sends keepalive silence on the shared endpoint. When both run, the URB

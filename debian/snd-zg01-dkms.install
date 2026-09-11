@@ -1,4 +1,5 @@
 src/ usr/src/snd-zg01-1.0.0/
 dkms.conf usr/src/snd-zg01-1.0.0/
 Makefile usr/src/snd-zg01-1.0.0/
+ucm/conf.d/zg01_usb/zg01_usb.conf usr/share/alsa/ucm2/conf.d/zg01_usb/
 

@@ -32,7 +32,10 @@ sudo apt-get install -f   # only if dependencies are missing
 ```
 
 Get the `.deb` from the latest GitHub release. The postinst script builds
-the module through DKMS and adds the modules-load.d entry.
+the module through DKMS and adds the modules-load.d entry. The package also
+ships the UCM profile (`/usr/share/alsa/ucm2/conf.d/zg01_usb/`), which is
+what makes the sound settings expose two outputs (Game Out, Voice Out) and
+one input (Voice In) instead of a single generic stereo device.
 
 ## From source
 
