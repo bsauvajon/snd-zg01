@@ -2,10 +2,15 @@
 
 ## Arch Linux, CachyOS, Omarchy
 
-Install build tools, DKMS, and headers for the running kernel:
+Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst`) are attached to each
+[GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest):
+download one, install it with `sudo pacman -U <file>`, then reboot.
+
+To build from source instead, install build tools, DKMS, and headers for the
+running kernel:
 
 ```bash
-sudo pacman -S --needed base-devel dkms linux-headers git
+sudo pacman -S --needed base-devel dkms linux-headers git alsa-ucm-conf
 ```
 
 Other kernel variants need their matching headers instead. Build and install:

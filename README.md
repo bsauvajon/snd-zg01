@@ -31,21 +31,32 @@ sinks without moving the mix into userspace.
 
 ### Arch Linux, CachyOS, Omarchy
 
-Install the headers matching your kernel (stock kernels use `linux-headers`),
-then build and install the package. DKMS hooks build the module for every
-installed kernel with matching headers; without them DKMS registers nothing,
-so the package warns at install time when the running kernel has no headers:
+Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst`) are attached to each
+[GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest);
+install the downloaded file with `sudo pacman -U <file>`.
+
+To build it yourself instead, install the build tools, DKMS, and the headers
+for the running kernel:
 
 ```bash
-sudo pacman -S linux-headers      # or linux-lts-headers / linux-zen-headers
+sudo pacman -S --needed base-devel dkms linux-headers git alsa-ucm-conf
+```
+
+Other kernel variants need their matching headers instead (for example
+`linux-lts-headers` or `linux-zen-headers`). Then build and install:
+
+```bash
 cd packaging/arch
 makepkg --cleanbuild
 sudo pacman -U snd-zg01-dkms-git-*.pkg.tar.zst
 ```
 
-The package installs the modules-load.d entry and the UCM profile. Reboot
-after install so `snd-zg01` registers before the generic Yamaha match claims
-the device. See `packaging/arch/README.md` for verification and rollback.
+DKMS hooks build the module for every installed kernel with matching
+headers; without them DKMS registers nothing, so the package warns at install
+time when the running kernel has no headers. The package installs the
+modules-load.d entry and the UCM profile. Reboot after install so `snd-zg01`
+registers before the generic Yamaha match claims the device. See
+`packaging/arch/README.md` for verification and rollback.
 
 ### Debian, Ubuntu
 
