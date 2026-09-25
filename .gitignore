@@ -6,6 +6,7 @@ desc.bInterfaceNumber
 *.save
 *.wav
 capture/*
+captures/*
 *.log
 *.tmp
 .cache

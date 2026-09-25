@@ -35,8 +35,10 @@ jobs:
           test -f snd-zg01.ko
           modinfo snd-zg01.ko | grep -E '^(name|license):'
 
-      - name: USBPcap normalizer tests
-        run: bash tests/test-capture-normalizer.sh
+      - name: Normalizer tests
+        run: |
+          bash tests/test-capture-normalizer.sh
+          bash tests/test-usbmon-normalizer.sh
 
   arch-packaging:
     name: Arch package contract
