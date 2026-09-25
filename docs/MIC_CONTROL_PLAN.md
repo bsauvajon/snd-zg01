@@ -37,10 +37,10 @@ Screenshots: <https://fr.yamaha.com/fr/audio/streaming-gaming/explore/guides/zg-
 
 Note the save behavior differs by screen: the DSP screens (MIC
 SETTINGS, MIC EFFECT, GAME EFFECT, HEADPHONE MONITOR) expose a
-`Save to ZG01` toggle and a `RESET` button, while STREAMING OUTPUT
-MIXER looks like a live mixer (no save toggle in the screenshot). DSP
-edits may therefore only reach the device when saved, whereas
-routing/level changes should appear in a capture immediately.
+`Save to ZG01` action button and a `RESET` button, while STREAMING OUTPUT
+MIXER looks like a live mixer (no save control in the screenshot). On the
+DSP screens, edits apply live and `Save to ZG01` only persists them to
+non-volatile memory; unsaved edits are lost on next power-up.
 
 ## Goal
 
@@ -81,27 +81,44 @@ Out of scope for this plan:
 
 ## What is already known
 
-From `capture/zg01_init.pcap` and Windows playback captures:
+Two transports are involved:
 
-- Control runs over **EP0 vendor requests** (`bmRequestType` `0x40` /
-  `0xc0`).
-- `0xc0 bRequest 7 wValue 0 wLength 3` → `80 bb 00` (already
-  implemented in `src/zg01_control.c`).
-- `0xc0 bRequest 4 wLength 1` → `0x00`; periodic status poll also seen
-  on Windows.
-- `0xc0 bRequest 6 wValue=N wLength 256` → UTF-16LE string with a
-  2-byte length prefix. Two banks: `0x0000-0x0009` playback channel
-  names, `0x8000-0x8003` capture channel names.
-- `0xc0 bRequest 3 wValue=0` → name `Internal`.
-- `0x40 bRequest 11 wValue=0x0060 wLength=0` repeated; purpose unknown.
-- Windows captures taken during audio *playback* contain no parameter
-  traffic. **No ZG Controller capture exists yet**, so the mixer
-  parameter protocol is unknown.
+- **EP0 vendor requests** carry enumeration and status only: `0xc0
+  bRequest 7` -> `80bb00`, `0xc0 bRequest 4` -> 1-byte status poll,
+  `0xc0 bRequest 6` -> UTF-16 channel names, plus standard
+  GET_DESCRIPTOR traffic.
+- **Mixer parameters ride on interface 4 bulk**, not EP0. Host writes go
+  to EP `0x03`, device traffic on EP `0x83`, in 512-byte frames. Each
+  frame is 128 four-byte words (`<type 0x04> <3 data bytes>`), zero
+  padded, terminated by a `05` word.
+
+Observed mic parameter write on EP `0x03` (captured on the MIC SETTINGS
+screen, see `captures/`):
+
+```
+04 f0 43 10  04 3e 14 01  04 01 00 00  04 <id> 00 00  04 00 00 00  04 00 <value>  05 f7 ..
+```
+
+- `id = 0x02`: GATE enable (`value` 0/1)
+- `id = 0x03`: GATE level (a drag to high produced 0x41..0x69)
+
+Other message types seen: `04 f0 43 00` carries preset-name payloads
+(ASCII split across words, e.g. `_Preset Voice`, `Soprano voice`);
+`04 f0 43 20` and `04 f0 43 30` look like query/ack/commit. The `0x83`
+IN stream (192 bytes, continuously varying) is telemetry, probably meters
+plus state.
+
+The level scale is not pinned yet: a drag "high" produced 65..105, while
+the UI shows small integers (GATE 44, COMP 26, LIMITER 42 in the
+screenshot). The byte may be an internal/scaled value or a 0-127 range.
+
+Earlier code only sends the `bRequest 7` handshake; it does not touch the
+interface 4 transport.
 
 The PDF manuals (User Guide, Data Sheet) describe the product at user
 level only: no MIDI implementation chart, no register map. The
-authoritative parameter reference is the ZG Controller **built-in
-operating guide** (the `?` icon), which must be read in the app.
+authoritative parameter reference is the ZG Controller built-in
+operating guide (the `?` icon), read in the app.
 
 ## Capture method
 
@@ -123,13 +140,14 @@ Pass the ZG01 through to the Windows guest with QEMU `usb-host`
 sudo tshark -i usbmon2 -w 00-mic-baseline.pcapng
 ```
 
-### Critical caveat: `Save to ZG01`
+### `Save to ZG01` is a persist action
 
-The screen has a `Save to ZG01` toggle. If it is off, the app may buffer
-changes and never write them to the device, so a capture would show
-nothing. Every action capture must be taken with `Save to ZG01` **on**
-(and, where relevant, a repeat run with it off to see the save
-command itself).
+On the DSP screens, `Save to ZG01` appears once a setting is modified
+and persists it to the device's non-volatile memory; `RESET` cancels
+un-saved edits. Settings are applied **live** as soon as they change, so
+an action capture shows the write even without saving. Capture live
+edits normally; take one extra trace pressing `Save to ZG01` to find the
+persist command.
 
 ### Capture matrix
 
