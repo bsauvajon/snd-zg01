@@ -40,6 +40,9 @@ jobs:
           bash tests/test-capture-normalizer.sh
           bash tests/test-usbmon-normalizer.sh
 
+      - name: Build zgctl
+        run: make -C tools
+
   arch-packaging:
     name: Arch package contract
     runs-on: ubuntu-24.04

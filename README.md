@@ -114,6 +114,28 @@ arecord -D hw:zg01,2 -f S32_LE -r 48000 -c 2 -d 5 test.wav
 Voice In logs bursts of `-ECONNRESET` on the first open. They are benign;
 the chain resubmits.
 
+## Mic controls
+
+The card exposes the mic DSP as ALSA controls: GATE, COMP and LIMITER
+switches and levels, the EQ switch, four EQ band gains, frequencies and
+Q, and the low/high shelf types.  They are written to the device through
+the interface 4 bulk protocol (`docs/MIC_CONTROL_PROTOCOL.md`).
+
+```bash
+make -C tools
+./tools/zgctl list
+./tools/zgctl set 'EQ Band 1 Gain' +6.0
+./tools/zgctl set 'EQ Band 2 Frequency' 1k
+./tools/zgctl set 'Limiter' 42
+```
+
+`zgctl` accepts dB for gains, Hz/kHz for frequencies, ratios for Q and
+on/off for switches; the same controls are reachable with `amixer
+cget/cset`.
+
+Writes reach the device live.  Reading values back is not implemented
+yet: the getters return the last value the driver wrote.
+
 ## DKMS
 
 Both packages install the source to DKMS. DKMS rebuilds the module on kernel
@@ -141,13 +163,16 @@ install. If a pre-2026 package left broken DKMS state, remove
 
 - `docs/PROTOCOL_CAPTURE.md`: capture workflow for knobs, buttons, routing
 - `docs/INITIALIZATION_ANALYSIS.md`: device USB topology and packet formats
+- `docs/MIC_CONTROL_PLAN.md`: mic control implementation plan
+- `docs/MIC_CONTROL_PROTOCOL.md`: decoded mic parameter protocol
 - `packaging/arch/README.md`: Arch packaging, verification, rollback
 
 ## Scope and status
 
 Working: Game Out + Voice Out simultaneous playback, Voice In capture,
-suspend/resume, replug, single module, single card. Not implemented: MIDI,
-other sample rates.
+suspend/resume, replug, single module, single card, and live write of the
+mic GATE/COMP/EQ/LIMITER controls (ALSA + `zgctl`). Not implemented: MIDI,
+other sample rates, reading device state back.
 
 Experimental out-of-tree driver. Kernel updates can break the build; report
 issues with `dmesg` output.

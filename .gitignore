@@ -22,3 +22,4 @@ modules.order
 /.worktrees/
 __pycache__/
 *.py[cod]
+tools/zgctl
