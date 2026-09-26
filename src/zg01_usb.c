@@ -79,8 +79,6 @@ static int zg01_probe(struct usb_interface *interface,
     spin_lock_init(&dev->lock);
     mutex_init(&dev->state_mutex);
     mutex_init(&dev->param_mutex);
-    dev->limiter_enabled = false;
-    dev->limiter_value = 0;
     atomic_set(&dev->disconnecting, 0);
     atomic_set(&dev->disconnected, 0);
     dev->device_initialized = false;

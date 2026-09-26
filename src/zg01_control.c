@@ -5,10 +5,11 @@
  * (mic DSP, EQ, ...) travels on interface 4 as 512-byte bulk frames
  * (host -> EP 0x03, device -> EP 0x83); see docs/MIC_CONTROL_PROTOCOL.md.
  *
- * This file implements that transport and the first consumer: the mic
- * LIMITER block (enable + level).
+ * This file implements that transport and the mic controls (GATE, COMP,
+ * EQ and LIMITER) as ALSA kcontrols.
  */
 
+#include <linux/bitops.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/usb.h>
@@ -77,15 +78,6 @@ static void zg01_put_word(u8 *buf, unsigned int index, u8 a, u8 b, u8 c)
     w[3] = c;
 }
 
-/*
- * Write one parameter.  Layout (docs/MIC_CONTROL_PROTOCOL.md):
- *
- *   04 f0 43 10 | 04 3e 14 01 | 04 01 00 <flag> | 04 <id> 00 00
- *   | 04 00 00 00 | 04 <v2> <v1> <v0> | 05 f7 00 00 | 00...
- *
- * The firmware ignores parameter writes when the host has not been
- * polling the channel, so a keepalive frame is sent first.
- */
 static int zg01_bulk_out(struct zg01_dev *dev, const u8 *buf, unsigned int len)
 {
     int actual = 0;
@@ -104,6 +96,7 @@ static int zg01_bulk_out(struct zg01_dev *dev, const u8 *buf, unsigned int len)
     return 0;
 }
 
+/* The app polls the channel; a keepalive precedes each write. */
 static int zg01_param_keepalive(struct zg01_dev *dev)
 {
     unsigned char *buf;
@@ -125,6 +118,15 @@ static int zg01_param_keepalive(struct zg01_dev *dev)
     return ret;
 }
 
+/*
+ * Write one parameter.  Layout (docs/MIC_CONTROL_PROTOCOL.md):
+ *
+ *   04 f0 43 10 | 04 3e 14 01 | 04 01 00 <flag> | 04 <id> 00 00
+ *   | 04 00 00 00 | 04 <v2> <v1> <v0> | 05 f7 00 00 | 00...
+ *
+ * The terminator word's first byte is 0x05; a 0x04 there makes the
+ * firmware ignore the whole frame.
+ */
 int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value)
 {
     unsigned char *buf;
@@ -148,7 +150,6 @@ int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value)
     zg01_put_word(buf, 4, 0x00, 0x00, 0x00);
     zg01_put_word(buf, 5, (value >> 16) & 0xff,
                   (value >> 8) & 0xff, value & 0xff);
-    /* Terminator word: type 0x05, not a 0x04 data word. */
     buf[24] = 0x05;
     buf[25] = 0xf7;
     buf[26] = 0x00;
@@ -164,13 +165,10 @@ int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value)
 }
 
 /*
- * A read response echoes the request and carries the value:
- *
- *   04 f0 43 10 | 04 3e 14 01 | 04 01 00 02 | 04 <id> 00 00
- *   | 04 00 00 00 | 04 <v2> <v1> <v0> | 05 f7 00 00
- *
- * The 0x83 stream also carries 192-byte level-meter frames, so scan the
- * buffer for the matching response rather than assuming an offset.
+ * Read a parameter through the EP 0x83 flag-0x02 space.  This returns
+ * the value for EQ-space ids; mic-space ids (GATE/COMP/LIMITER) answer
+ * with a fixed status instead, and their values come from the device
+ * state dump, which is not decoded yet.
  */
 static int zg01_param_parse(const u8 *buf, unsigned int len, u8 id,
                             u32 *value)
@@ -233,7 +231,6 @@ int zg01_param_read(struct zg01_dev *dev, u8 id, u32 *value)
     if (ret)
         goto out_unlock;
 
-    /* The response is interleaved with the meter stream. */
     ret = -ETIMEDOUT;
     for (attempt = 0; attempt < 20; attempt++) {
         actual = 0;
@@ -256,109 +253,249 @@ out:
     return ret;
 }
 
-/* --- LIMITER kcontrols --- */
+/*
+ * Value conversions between the user-facing kcontrol units and the raw
+ * device parameter.  See docs/MIC_CONTROL_PROTOCOL.md.
+ */
+enum zg01_conv {
+    CONV_ID,       /* raw == user (switches, 0..100 levels, shapes)  */
+    CONV_GAIN,     /* user in 0.1 dB, raw = 308 * (user + 180) / 180  */
+    CONV_FREQ,     /* user in Hz, raw piecewise (f / 2f / 2f+32768)   */
+    CONV_Q,        /* user in 0.01 Q, raw = 12 * log2(Q / 0.5)        */
+};
 
-static int limiter_switch_info(struct snd_kcontrol *kcontrol,
-                               struct snd_ctl_elem_info *uinfo)
+/* log2(x) in 1/256 units, for x >= 1. */
+static unsigned int zg01_log2_fp(unsigned int x)
 {
-    uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+    unsigned int e = fls(x) - 1;
+    unsigned long long m = (unsigned long long)x << (31 - e);
+    unsigned int frac =
+        (unsigned int)(((m - 0x80000000ULL) << 8) >> 31);
+
+    return e * 256 + frac;
+}
+
+/* 2^(v / 256) * 256. */
+static unsigned int zg01_exp2_fp(unsigned int v)
+{
+    unsigned int i = v >> 8;
+    unsigned int f = v & 0xff;
+    unsigned int base = 256 + (f * 177) / 256;
+
+    return base << i;
+}
+
+static u32 zg01_q100_to_raw(unsigned int q100)
+{
+    unsigned int l = zg01_log2_fp(q100);
+    unsigned int l50 = zg01_log2_fp(50);
+
+    return (12 * (l - l50)) / 256;
+}
+
+static unsigned int zg01_raw_to_q100(u32 raw)
+{
+    unsigned int v = (raw * 256) / 12;
+
+    return (50 * zg01_exp2_fp(v)) >> 8;
+}
+
+/* Measured Hz -> raw points (docs/MIC_CONTROL_PROTOCOL.md). */
+static const struct { u32 hz; u32 raw; } zg01_freq_table[] = {
+    { 20, 20 }, { 50, 50 }, { 100, 100 }, { 200, 328 }, { 500, 884 },
+    { 1000, 1896 }, { 2000, 3920 }, { 5000, 9992 }, { 10000, 19984 },
+    { 15000, 29976 }, { 16383, 32766 }, { 16384, 65536 },
+    { 17000, 66664 }, { 20000, 72736 },
+};
+
+static u32 zg01_freq_to_raw(long hz)
+{
+    unsigned int i;
+
+    if (hz <= (long)zg01_freq_table[0].hz)
+        return zg01_freq_table[0].raw;
+
+    for (i = 1; i < ARRAY_SIZE(zg01_freq_table); i++) {
+        u32 h0 = zg01_freq_table[i - 1].hz;
+        u32 h1 = zg01_freq_table[i].hz;
+
+        if (hz <= (long)h1) {
+            u32 r0 = zg01_freq_table[i - 1].raw;
+            u32 r1 = zg01_freq_table[i].raw;
+
+            return r0 + (u32)(((u64)(hz - h0) * (r1 - r0)) / (h1 - h0));
+        }
+    }
+
+    return zg01_freq_table[ARRAY_SIZE(zg01_freq_table) - 1].raw;
+}
+
+static long zg01_raw_to_freq(u32 raw)
+{
+    unsigned int i;
+
+    if (raw <= zg01_freq_table[0].raw)
+        return zg01_freq_table[0].hz;
+
+    for (i = 1; i < ARRAY_SIZE(zg01_freq_table); i++) {
+        u32 r0 = zg01_freq_table[i - 1].raw;
+        u32 r1 = zg01_freq_table[i].raw;
+
+        if (raw <= r1) {
+            u32 h0 = zg01_freq_table[i - 1].hz;
+            u32 h1 = zg01_freq_table[i].hz;
+
+            return h0 + (long)(((u64)(raw - r0) * (h1 - h0)) / (r1 - r0));
+        }
+    }
+
+    return zg01_freq_table[ARRAY_SIZE(zg01_freq_table) - 1].hz;
+}
+
+static u32 zg01_user_to_dev(int conv, long user)
+{
+    switch (conv) {
+    case CONV_GAIN:
+        return (u32)((308 * (user + 180) + 90) / 180);
+    case CONV_FREQ:
+        return zg01_freq_to_raw(user);
+    case CONV_Q:
+        return zg01_q100_to_raw((unsigned int)user);
+    default:
+        return (u32)user;
+    }
+}
+
+static long zg01_dev_to_user(int conv, u32 dev)
+{
+    switch (conv) {
+    case CONV_GAIN:
+        return (180L * dev + 154) / 308 - 180;
+    case CONV_FREQ:
+        return zg01_raw_to_freq(dev);
+    case CONV_Q:
+        return zg01_raw_to_q100(dev);
+    default:
+        return dev;
+    }
+}
+
+struct zg01_param_ctl {
+    const char *name;
+    u8 id;
+    u8 flag;
+    int type;
+    long min;
+    long max;
+    int conv;
+    u32 def;       /* raw default used to seed the cache */
+};
+
+static const struct zg01_param_ctl zg01_param_ctls[] = {
+    { "Gate Capture Switch", ZG01_PARAM_GATE_ENABLE, ZG01_PARAM_FLAG_MIC,
+      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
+    { "Gate", ZG01_PARAM_GATE_VALUE, ZG01_PARAM_FLAG_MIC,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 100, CONV_ID, 0 },
+    { "Compressor Capture Switch", ZG01_PARAM_COMP_ENABLE, ZG01_PARAM_FLAG_MIC,
+      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
+    { "Compressor", ZG01_PARAM_COMP_VALUE, ZG01_PARAM_FLAG_MIC,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 100, CONV_ID, 0 },
+    { "Limiter Capture Switch", ZG01_PARAM_LIMITER_ENABLE, ZG01_PARAM_FLAG_MIC,
+      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
+    { "Limiter", ZG01_PARAM_LIMITER_VALUE, ZG01_PARAM_FLAG_MIC,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 100, CONV_ID, 0 },
+
+    { "EQ Capture Switch", ZG01_PARAM_EQ_ENABLE, ZG01_PARAM_FLAG_MIC,
+      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
+    { "EQ Low Shape", ZG01_PARAM_LOW_SHAPE, ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 0 },
+    { "EQ High Shape", ZG01_PARAM_HIGH_SHAPE, ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 0 },
+
+    { "EQ Band 1 Gain", ZG01_PARAM_EQ_GAIN(0), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 308 },
+    { "EQ Band 2 Gain", ZG01_PARAM_EQ_GAIN(1), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 308 },
+    { "EQ Band 3 Gain", ZG01_PARAM_EQ_GAIN(2), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 308 },
+    { "EQ Band 4 Gain", ZG01_PARAM_EQ_GAIN(3), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 308 },
+
+    { "EQ Band 1 Frequency", ZG01_PARAM_EQ_FREQ(0), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 20, 1000, CONV_FREQ, 80 },
+    { "EQ Band 2 Frequency", ZG01_PARAM_EQ_FREQ(1), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 20, 20000, CONV_FREQ, 259 },
+    { "EQ Band 3 Frequency", ZG01_PARAM_EQ_FREQ(2), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 20, 20000, CONV_FREQ, 6248 },
+    { "EQ Band 4 Frequency", ZG01_PARAM_EQ_FREQ(3), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 500, 20000, CONV_FREQ, 14988 },
+
+    { "EQ Band 1 Q", ZG01_PARAM_EQ_Q(0), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 800, CONV_Q, 12 },
+    { "EQ Band 2 Q", ZG01_PARAM_EQ_Q(1), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 800, CONV_Q, 12 },
+    { "EQ Band 3 Q", ZG01_PARAM_EQ_Q(2), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 800, CONV_Q, 12 },
+    { "EQ Band 4 Q", ZG01_PARAM_EQ_Q(3), ZG01_PARAM_FLAG_EQ,
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 800, CONV_Q, 12 },
+};
+
+static const struct zg01_param_ctl *zg01_ctl_of(struct snd_kcontrol *kcontrol)
+{
+    return (const struct zg01_param_ctl *)kcontrol->private_value;
+}
+
+static int zg01_ctl_info(struct snd_kcontrol *kcontrol,
+                         struct snd_ctl_elem_info *uinfo)
+{
+    const struct zg01_param_ctl *c = zg01_ctl_of(kcontrol);
+
+    uinfo->type = c->type;
     uinfo->count = 1;
-    uinfo->value.integer.min = 0;
-    uinfo->value.integer.max = 1;
+    uinfo->value.integer.min = c->min;
+    uinfo->value.integer.max = c->max;
     return 0;
 }
 
 /*
- * The kcontrol getters return the driver's cached value.  Reading a mic
- * parameter back from the device is not done through the EP 0x83
- * type-30 response (that echoes a status, not the value); the app reads
- * values from the full state dump the device pushes after a type-20
- * request.  Decoding that dump is a separate task, so the cache is the
- * source of truth until then (it reflects the last value written).
+ * The getters return the driver cache: the per-id read reply is a
+ * status, not the value, and the device state dump that carries real
+ * values is not decoded yet.  The cache reflects the last write.
  */
-
-static int limiter_switch_get(struct snd_kcontrol *kcontrol,
-                              struct snd_ctl_elem_value *ucontrol)
+static int zg01_ctl_get(struct snd_kcontrol *kcontrol,
+                        struct snd_ctl_elem_value *ucontrol)
 {
     struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+    const struct zg01_param_ctl *c = zg01_ctl_of(kcontrol);
 
-    ucontrol->value.integer.value[0] = dev->limiter_enabled;
+    ucontrol->value.integer.value[0] =
+        zg01_dev_to_user(c->conv, dev->param_cache[c->id]);
     return 0;
 }
 
-static int limiter_switch_put(struct snd_kcontrol *kcontrol,
-                              struct snd_ctl_elem_value *ucontrol)
+static int zg01_ctl_put(struct snd_kcontrol *kcontrol,
+                        struct snd_ctl_elem_value *ucontrol)
 {
     struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
-    bool on = ucontrol->value.integer.value[0] != 0;
+    const struct zg01_param_ctl *c = zg01_ctl_of(kcontrol);
+    long user = ucontrol->value.integer.value[0];
+    u32 raw;
     int ret;
 
-    if (dev->limiter_enabled == on)
+    if (user < c->min || user > c->max)
+        return -EINVAL;
+
+    raw = zg01_user_to_dev(c->conv, user);
+    if (dev->param_cache[c->id] == raw)
         return 0;
 
-    ret = zg01_param_write(dev, ZG01_PARAM_LIMITER_ENABLE,
-                           ZG01_PARAM_FLAG_MIC, on ? 1 : 0);
+    ret = zg01_param_write(dev, c->id, c->flag, raw);
     if (ret)
         return ret;
 
-    dev->limiter_enabled = on;
+    dev->param_cache[c->id] = raw;
     return 1;
 }
-
-static int limiter_value_info(struct snd_kcontrol *kcontrol,
-                              struct snd_ctl_elem_info *uinfo)
-{
-    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
-    uinfo->count = 1;
-    uinfo->value.integer.min = 0;
-    uinfo->value.integer.max = 100;
-    return 0;
-}
-
-static int limiter_value_get(struct snd_kcontrol *kcontrol,
-                             struct snd_ctl_elem_value *ucontrol)
-{
-    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
-
-    ucontrol->value.integer.value[0] = dev->limiter_value;
-    return 0;
-}
-
-static int limiter_value_put(struct snd_kcontrol *kcontrol,
-                             struct snd_ctl_elem_value *ucontrol)
-{
-    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
-    unsigned int value = ucontrol->value.integer.value[0];
-    int ret;
-
-    if (value > 100 || dev->limiter_value == value)
-        return 0;
-
-    ret = zg01_param_write(dev, ZG01_PARAM_LIMITER_VALUE,
-                           ZG01_PARAM_FLAG_MIC, value);
-    if (ret)
-        return ret;
-
-    dev->limiter_value = value;
-    return 1;
-}
-
-static const struct snd_kcontrol_new zg01_limiter_controls[] = {
-    {
-        .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-        .name = "Limiter Capture Switch",
-        .info = limiter_switch_info,
-        .get = limiter_switch_get,
-        .put = limiter_switch_put,
-    },
-    {
-        .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-        .name = "Limiter",
-        .info = limiter_value_info,
-        .get = limiter_value_get,
-        .put = limiter_value_put,
-    },
-};
 
 int zg01_create_controls(struct zg01_dev *dev)
 {
@@ -367,11 +504,22 @@ int zg01_create_controls(struct zg01_dev *dev)
     if (!dev || !dev->card)
         return -ENODEV;
 
-    for (i = 0; i < ARRAY_SIZE(zg01_limiter_controls); i++) {
-        struct snd_kcontrol *kctl =
-            snd_ctl_new1(&zg01_limiter_controls[i], dev);
+    for (i = 0; i < ARRAY_SIZE(zg01_param_ctls); i++) {
+        const struct zg01_param_ctl *c = &zg01_param_ctls[i];
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = c->name,
+            .info = zg01_ctl_info,
+            .get = zg01_ctl_get,
+            .put = zg01_ctl_put,
+            .private_value = (unsigned long)c,
+        };
+        struct snd_kcontrol *kctl;
         int ret;
 
+        dev->param_cache[c->id] = c->def;
+
+        kctl = snd_ctl_new1(&tmpl, dev);
         if (!kctl)
             return -ENOMEM;
         ret = snd_ctl_add(dev->card, kctl);

@@ -41,8 +41,21 @@
 #define ZG01_PARAM_FLAG_EQ   0x02
 
 /* Mic parameter ids (docs/MIC_CONTROL_PROTOCOL.md). */
+#define ZG01_PARAM_GATE_ENABLE     0x02
+#define ZG01_PARAM_GATE_VALUE      0x03
+#define ZG01_PARAM_COMP_ENABLE     0x09
+#define ZG01_PARAM_COMP_VALUE      0x0a
+#define ZG01_PARAM_EQ_ENABLE       0x11
+#define ZG01_PARAM_LOW_SHAPE       0x24
+#define ZG01_PARAM_HIGH_SHAPE      0x27
+#define ZG01_PARAM_EQ_GAIN(n)      (0x28 + (n))
+#define ZG01_PARAM_EQ_FREQ(n)      (0x2c + (n))
+#define ZG01_PARAM_EQ_Q(n)         (0x30 + (n))
 #define ZG01_PARAM_LIMITER_ENABLE  0x21
 #define ZG01_PARAM_LIMITER_VALUE   0x22
+
+/* Cache of raw parameter values, indexed by id (ids reach 0x33). */
+#define ZG01_PARAM_CACHE           0x40
 
 #define ISO_PKTS_OUT         32      /* 32 microframes = 4ms per URB */
 #define ISO_PKT_SIZE_OUT     280     /* up to seven 40-byte frames */
@@ -239,8 +252,7 @@ struct zg01_dev {
      * mic values back the kcontrol getters when the device is idle.
      */
     struct mutex param_mutex;
-    bool limiter_enabled;
-    unsigned int limiter_value;
+    u32 param_cache[ZG01_PARAM_CACHE];
 
     atomic_t disconnecting;                   /* URB resubmission off */
     atomic_t disconnected;                    /* teardown-once latch */

@@ -85,18 +85,18 @@ Q is logarithmic: `0.5 -> 0`, `1 -> 12`, `2 -> 24`, `4 -> 36`, `8 -> 48`,
 so `value = 12 * (log2(Q) + 1)`, i.e. 12 units per octave, band Q from
 0.5 to 8.
 
-Frequency is piecewise (measured on band 2, id `0x2d`; band 1 gave the
-same values up to 1 kHz):
+Frequency is piecewise but not a clean `2f`: the app's own values show
+a small, non-uniform deficit below the 16 kHz boundary, e.g. `1 kHz ->
+1896` (not 2000).  Measured on band 2 (id `0x2d`):
 
 | Hz | 50 | 100 | 200 | 500 | 1000 | 2000 | 5000 | 10000 | 15000 | 17000 | 20000 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | raw | 50 | 100 | 328 | 884 | 1896 | 3920 | 9992 | 19984 | 29976 | 66664 | 72736 |
 
-The data fits `raw = f` for `f <= 100`, `raw = 2f` for
-`100 < f < 16384`, and `raw = 2f + 32768` for `f >= 16384` (16384 = 2^14,
-where `2f` reaches 2^15). Residuals are under ~0.3% and look like the
-app's own slider quantization. Band ranges: band 1 20 Hz-1 kHz, bands 2
-and 3 20 Hz-20 kHz, band 4 500 Hz-20 kHz; the underlying scale is shared.
+The +32768 offset appears for `f >= 16384` (16384 = 2^14, where `2f`
+reaches 2^15), so the driver interpolates this measured table rather
+than a formula.  Band ranges: band 1 20 Hz-1 kHz, bands 2 and 3
+20 Hz-20 kHz, band 4 500 Hz-20 kHz; the underlying scale is shared.
 
 Shape: `0x24` is the low-frequency shelf type and `0x27` the
 high-frequency shelf type; in shelf mode the band Q is hidden (band 1 for
