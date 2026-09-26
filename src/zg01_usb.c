@@ -20,6 +20,16 @@
 struct workqueue_struct *zg01_cleanup_wq;
 struct workqueue_struct *zg01_period_wq;
 
+static struct usb_driver zg01_driver;
+
+/*
+ * Vendor-specific interfaces 3 (MIDI) and 4 (mixer parameter bulk on EP
+ * 0x03/0x83).  snd-usb-audio matches these, so the anchor interface's
+ * probe claims them before the core probes them.  priv is NULL: the
+ * anchor interface alone owns teardown.
+ */
+static const int zg01_claimed_interfaces[] = { 3, ZG01_PARAM_IFACE };
+
 static void zg01_card_private_free(struct snd_card *card)
 {
     struct zg01_dev *dev = card->private_data;
@@ -52,8 +62,25 @@ static int zg01_probe(struct usb_interface *interface,
     dev->interface = interface;
     card->private_free = zg01_card_private_free;
 
+    for (int i = 0; i < ARRAY_SIZE(zg01_claimed_interfaces); i++) {
+        int num = zg01_claimed_interfaces[i];
+        struct usb_interface *extra = usb_ifnum_to_if(udev, num);
+
+        if (!extra) {
+            dev_warn(&interface->dev, "interface %d not found\n", num);
+            continue;
+        }
+        if (usb_driver_claim_interface(&zg01_driver, extra, NULL))
+            dev_warn(&interface->dev,
+                     "interface %d already claimed by %s\n", num,
+                     extra->dev.driver ? extra->dev.driver->name : "?");
+    }
+
     spin_lock_init(&dev->lock);
     mutex_init(&dev->state_mutex);
+    mutex_init(&dev->param_mutex);
+    dev->limiter_enabled = false;
+    dev->limiter_value = 0;
     atomic_set(&dev->disconnecting, 0);
     atomic_set(&dev->disconnected, 0);
     dev->device_initialized = false;
@@ -124,6 +151,12 @@ static int zg01_probe(struct usb_interface *interface,
         goto err_free_card;
     }
 
+    err = zg01_create_controls(dev);
+    if (err) {
+        dev_err(&interface->dev, "control creation failed: %d\n", err);
+        goto err_free_card;
+    }
+
     err = snd_card_register(card);
     if (err) {
         dev_err(&interface->dev, "card registration failed: %d\n", err);
@@ -141,9 +174,14 @@ err_free_card:
 
 static void zg01_disconnect(struct usb_interface *interface)
 {
-    struct zg01_dev *dev = usb_get_intfdata(interface);
+    struct zg01_dev *dev;
     int i;
 
+    /* Only the anchor interface (1) owns the card teardown. */
+    if (interface->cur_altsetting->desc.bInterfaceNumber != 1)
+        return;
+
+    dev = usb_get_intfdata(interface);
     if (!dev)
         return;
 

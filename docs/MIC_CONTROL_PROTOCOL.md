@@ -125,22 +125,30 @@ pressed, absent otherwise. Settings apply live; Save only persists them.
 
 ## Reads
 
+The parameter write frame ends with a terminator word of type `0x05`
+(`05 f7 00 00`); a `0x04` there makes the firmware ignore the frame.
+The app also sends a keepalive about once a second:
+
+```
+04 f0 43 10 | 04 3e 14 00 | 07 04 00 f7
+```
+
 At screen open the app issues read requests on EP `0x03`:
 
 - `04 f0 43 20 | 04 3e 14 01 | 04 01 00 00 | 04 00 00 <id> | 05 f7`
 - `04 f0 43 30 | 04 3e 14 01 | 04 01 00 02 | 04 <id> 00 00 | 06 00 f7`
   (one per id, e.g. `0x08..0x0b`)
 
-The device answers on EP `0x83` with frames that echo the query and
-carry the value, e.g. for id `0x08`:
+The `04 f0 43 30` form is answered on EP `0x83` with a fixed status, not
+the parameter value; e.g. for id `0x08` it returned both `04 00 00 00`
+and `04 00 00 01`, and for the mic LIMITER id `0x22` it always returns
+`04 00 00 01` regardless of the value written.  The mic value space is
+therefore not readable through this request.
 
-```
-04 f0 43 10 | 04 3e 14 01 | 04 01 00 02 | 04 08 00 00 | 04 00 00 00 | 04 00 00 00 | 05 f7 00 00
-```
-
-On a full open the device also pushes a dense state dump (several
-512-byte `0x83` frames) listing many parameter ids and values; that is
-the most complete read source but is not decoded yet.
+The `04 f0 43 20` form makes the device push a **full state dump** on EP
+`0x83`: several 512-byte frames of parameter descriptors (counts, min/max,
+defaults and names such as `_Mic Eq`).  That dump is the real read source;
+it is not decoded yet.
 
 ## Other observed frames
 
@@ -153,10 +161,12 @@ the most complete read source but is not decoded yet.
 
 ## Open questions
 
-- Checksum/terminator semantics (the trailing `f7`, and why type is
-  `0x05` for parameter writes but `0x07` for save/keepalive).
-- EQ value id and EQ band addressing (likely ids `0x11-0x20`).
+- Meaning of the trailing `f7`, and why the terminator type is `0x05`
+  for parameter writes but `0x07` for save/keepalive.
+- The full 512-byte state dump layout (the read source for values).
 - GATE/COMP sub-parameter ids (attack, release, ratio, knee, ...).
-- Whether a read is required before a write, or writes are independent.
-- The earlier GATE drag reached `0x69` (105) while the UI range appears
-  to be 0-100; confirm the upper bound.
+- Whether a keepalive or an initial state read is required before the
+  firmware accepts writes.
+- MIC EQ values: the earlier GATE drag reached `0x69` (105), but
+  controlled writes at 0/50/100 gave 0/0x32/0x64, so the scale is 0-100
+  and the 105 was a transient drag value.

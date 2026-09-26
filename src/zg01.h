@@ -25,6 +25,25 @@
 #define ZG01_EP_OUT          0x01
 #define ZG01_EP_IN           0x81
 
+/*
+ * Mixer parameters travel on interface 4 as 512-byte bulk frames
+ * (host -> EP 0x03, device -> EP 0x83), not on EP0.  See
+ * docs/MIC_CONTROL_PROTOCOL.md for the frame layout and value encodings.
+ */
+#define ZG01_PARAM_IFACE     4
+#define ZG01_PARAM_EP_OUT    0x03
+#define ZG01_PARAM_EP_IN     0x83
+#define ZG01_PARAM_FRAME     512
+#define ZG01_PARAM_TIMEOUT   1000  /* ms */
+
+/* Write-frame word 2 flag: 0x00 for GATE/COMP/LIMITER, 0x02 for EQ. */
+#define ZG01_PARAM_FLAG_MIC  0x00
+#define ZG01_PARAM_FLAG_EQ   0x02
+
+/* Mic parameter ids (docs/MIC_CONTROL_PROTOCOL.md). */
+#define ZG01_PARAM_LIMITER_ENABLE  0x21
+#define ZG01_PARAM_LIMITER_VALUE   0x22
+
 #define ISO_PKTS_OUT         32      /* 32 microframes = 4ms per URB */
 #define ISO_PKT_SIZE_OUT     280     /* up to seven 40-byte frames */
 #define ISO_PKTS_IN          32
@@ -213,6 +232,16 @@ struct zg01_dev {
 
     bool device_initialized;                  /* vendor handshake + rate */
 
+    /*
+     * Interface 4 parameter transport.  param_mutex serializes the
+     * bulk request/response so a control put cannot interleave with a
+     * concurrent get or with another control's transfer.  The cached
+     * mic values back the kcontrol getters when the device is idle.
+     */
+    struct mutex param_mutex;
+    bool limiter_enabled;
+    unsigned int limiter_value;
+
     atomic_t disconnecting;                   /* URB resubmission off */
     atomic_t disconnected;                    /* teardown-once latch */
 
@@ -238,6 +267,9 @@ void zg01_chain_quiesce_fn(struct work_struct *work);
 
 /* zg01_control.c */
 int zg01_init_control(struct zg01_dev *dev);
+int zg01_create_controls(struct zg01_dev *dev);
+int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value);
+int zg01_param_read(struct zg01_dev *dev, u8 id, u32 *value);
 
 /* zg01_usb_discovery.c (best-effort, debug only) */
 int zg01_discover_usb_config(struct zg01_dev *dev);
