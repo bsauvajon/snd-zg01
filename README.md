@@ -127,11 +127,13 @@ make -C tools
 ./tools/zgctl set 'EQ Band 1 Gain' +6.0
 ./tools/zgctl set 'EQ Band 2 Frequency' 1k
 ./tools/zgctl set 'Limiter' 42
+./tools/zgctl save          # persist the current settings to the device
 ```
 
 `zgctl` accepts dB for gains, Hz/kHz for frequencies, ratios for Q and
 on/off for switches; the same controls are reachable with `amixer
-cget/cset`.
+cget/cset`.  `zgctl save` (the `Save to ZG01` control) persists the
+current settings to the device's non-volatile memory.
 
 Writes reach the device live.  Reading values back is not implemented
 yet: the getters return the last value the driver wrote.

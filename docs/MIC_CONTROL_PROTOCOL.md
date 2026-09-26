@@ -167,6 +167,8 @@ it is not decoded yet.
 - GATE/COMP sub-parameter ids (attack, release, ratio, knee, ...).
 - Whether a keepalive or an initial state read is required before the
   firmware accepts writes.
+- The `RESET` / reload frame (restore the persisted config) is not
+  captured yet; only `Save to ZG01` and the EQ `apply` commands are known.
 - MIC EQ values: the earlier GATE drag reached `0x69` (105), but
   controlled writes at 0/50/100 gave 0/0x32/0x64, so the scale is 0-100
   and the 105 was a transient drag value.

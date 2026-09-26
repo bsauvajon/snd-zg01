@@ -165,6 +165,44 @@ int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value)
 }
 
 /*
+ * Persist the current settings to the device's non-volatile memory
+ * (`Save to ZG01`):
+ *
+ *   04 f0 43 30 | 04 3e 14 03 | 04 02 01 00 | 07 00 01 f7
+ */
+int zg01_param_save(struct zg01_dev *dev)
+{
+    unsigned char *buf;
+    int ret;
+
+    if (!dev || !dev->udev)
+        return -ENODEV;
+
+    ret = zg01_param_keepalive(dev);
+    if (ret)
+        return ret;
+
+    buf = kzalloc(ZG01_PARAM_FRAME, GFP_KERNEL);
+    if (!buf)
+        return -ENOMEM;
+
+    zg01_put_word(buf, 0, 0xf0, 0x43, 0x30);
+    zg01_put_word(buf, 1, 0x3e, 0x14, 0x03);
+    zg01_put_word(buf, 2, 0x02, 0x01, 0x00);
+    buf[12] = 0x07;
+    buf[13] = 0x00;
+    buf[14] = 0x01;
+    buf[15] = 0xf7;
+
+    ret = zg01_bulk_out(dev, buf, ZG01_PARAM_FRAME);
+    kfree(buf);
+
+    if (ret)
+        dev_dbg(&dev->interface->dev, "save failed: %d\n", ret);
+    return ret;
+}
+
+/*
  * Read a parameter through the EP 0x83 flag-0x02 space.  This returns
  * the value for EQ-space ids; mic-space ids (GATE/COMP/LIMITER) answer
  * with a fixed status instead, and their values come from the device
@@ -497,6 +535,35 @@ static int zg01_ctl_put(struct snd_kcontrol *kcontrol,
     return 1;
 }
 
+/* Write-only action control: writing 1 persists the current settings. */
+static int zg01_save_info(struct snd_kcontrol *kcontrol,
+                          struct snd_ctl_elem_info *uinfo)
+{
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    uinfo->count = 1;
+    uinfo->value.integer.min = 0;
+    uinfo->value.integer.max = 1;
+    return 0;
+}
+
+static int zg01_save_get(struct snd_kcontrol *kcontrol,
+                         struct snd_ctl_elem_value *ucontrol)
+{
+    ucontrol->value.integer.value[0] = 0;
+    return 0;
+}
+
+static int zg01_save_put(struct snd_kcontrol *kcontrol,
+                         struct snd_ctl_elem_value *ucontrol)
+{
+    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+
+    if (!ucontrol->value.integer.value[0])
+        return 0;
+
+    return zg01_param_save(dev);
+}
+
 int zg01_create_controls(struct zg01_dev *dev)
 {
     unsigned int i;
@@ -520,6 +587,24 @@ int zg01_create_controls(struct zg01_dev *dev)
         dev->param_cache[c->id] = c->def;
 
         kctl = snd_ctl_new1(&tmpl, dev);
+        if (!kctl)
+            return -ENOMEM;
+        ret = snd_ctl_add(dev->card, kctl);
+        if (ret)
+            return ret;
+    }
+
+    {
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = "Save to ZG01",
+            .info = zg01_save_info,
+            .get = zg01_save_get,
+            .put = zg01_save_put,
+        };
+        struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
+        int ret;
+
         if (!kctl)
             return -ENOMEM;
         ret = snd_ctl_add(dev->card, kctl);

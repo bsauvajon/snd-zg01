@@ -43,11 +43,13 @@ static void usage(void)
             "usage: %s [-c CARD] list\n"
             "       %s [-c CARD] get CONTROL\n"
             "       %s [-c CARD] set CONTROL VALUE\n"
+            "       %s [-c CARD] save\n"
             "\n"
             "CARD defaults to the card whose driver is zg01_usb.\n"
             "VALUES: Gain in dB (+6.0), Frequency in Hz (1k, 7.5kHz),\n"
-            "        Q as a ratio (2.0), switches on/off.\n",
-            progname, progname, progname);
+            "        Q as a ratio (2.0), switches on/off.\n"
+            "save persists the current settings to the device.\n",
+            progname, progname, progname, progname);
 }
 
 /* Find a card by id or driver name in /proc/asound/cards. */
@@ -344,6 +346,21 @@ static int cmd_set(int fd, const char *name, const char *raw)
     return 0;
 }
 
+static int cmd_save(int fd)
+{
+    struct snd_ctl_elem_id id;
+
+    if (find_by_name(fd, "Save to ZG01", &id) < 0) {
+        fprintf(stderr, "%s: 'Save to ZG01' control not found\n", progname);
+        return 1;
+    }
+    if (elem_write(fd, &id, 1) < 0) {
+        fprintf(stderr, "%s: save failed: %s\n", progname, strerror(errno));
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *card = NULL;
@@ -400,6 +417,11 @@ int main(int argc, char **argv)
     }
     if (!strcmp(cmd, "set") && argc == 4) {
         index = cmd_set(fd, argv[2], argv[3]);
+        close(fd);
+        return index;
+    }
+    if (!strcmp(cmd, "save") && argc == 2) {
+        index = cmd_save(fd);
         close(fd);
         return index;
     }
