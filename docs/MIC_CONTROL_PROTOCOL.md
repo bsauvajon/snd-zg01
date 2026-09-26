@@ -56,6 +56,64 @@ GATE `0x02-0x08`, COMP `0x09-0x10`, EQ `0x11-0x20`, LIMITER `0x21+`.
 Those correspond to the sub-parameters of each block (attack, release,
 ratio, EQ bands, ...) and are still unmapped.
 
+### EQ ids
+
+EQ edits reach the card live (no `Save to ZG01` needed). They use the
+same write frame but with `word2 = 04 01 00 02`:
+
+```
+04 f0 43 10 | 04 3e 14 01 | 04 01 00 02 | 04 <id> 00 00 | 04 00 00 00 | 04 00 <val> | 05 f7
+```
+
+Observed ids:
+
+| Id | Meaning | Values seen |
+|---|---|---|
+| `0x24` | Low Shape type | `0`, `1` |
+| `0x27` | High Shape type | `0`, `1` |
+| `0x28` | band 1 gain | `0`..`616` |
+| `0x29` | band 2 gain | `0`..`616` |
+| `0x2a` | band 3 gain | `0`..`616` |
+| `0x2b` | band 4 gain | `0`..`616` |
+| `0x2c` | band 1 frequency | `20`, `1896` |
+| `0x30` | Q (band still to confirm) | `0`, `48` |
+
+Gain is linear in dB: `0 dB -> 308`, `+18 dB -> 616`, `-18 dB -> 0`,
+so `value = 308 + 17.111 * dB` (range `0`..`616` for +/-18 dB).
+
+Q is logarithmic: `0.5 -> 0`, `1 -> 12`, `2 -> 24`, `4 -> 36`, `8 -> 48`,
+so `value = 12 * (log2(Q) + 1)`, i.e. 12 units per octave, band Q from
+0.5 to 8.
+
+Frequency is piecewise (measured on band 2, id `0x2d`; band 1 gave the
+same values up to 1 kHz):
+
+| Hz | 50 | 100 | 200 | 500 | 1000 | 2000 | 5000 | 10000 | 15000 | 17000 | 20000 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| raw | 50 | 100 | 328 | 884 | 1896 | 3920 | 9992 | 19984 | 29976 | 66664 | 72736 |
+
+The data fits `raw = f` for `f <= 100`, `raw = 2f` for
+`100 < f < 16384`, and `raw = 2f + 32768` for `f >= 16384` (16384 = 2^14,
+where `2f` reaches 2^15). Residuals are under ~0.3% and look like the
+app's own slider quantization. Band ranges: band 1 20 Hz-1 kHz, bands 2
+and 3 20 Hz-20 kHz, band 4 500 Hz-20 kHz; the underlying scale is shared.
+
+Shape: `0x24` is the low-frequency shelf type and `0x27` the
+high-frequency shelf type; in shelf mode the band Q is hidden (band 1 for
+low shape, band 4 for high shape).
+
+Id layout: gains `0x28`-`0x2b` (bands 1-4), frequencies `0x2c`-`0x2f`,
+Q `0x30`-`0x33`.
+
+The companion `04 f0 43 00` preset block that the app sends after each
+OK stores the band-1 gain as `0x0168` (`360`), a different (0.1 dB)
+scale than the live write, and truncates the frequency value to its low
+bits; the live write is what the card accepts.
+
+After each EQ OK the app also sends the full `04 f0 43 00` preset block
+and an apply command `04 f0 43 30 | 04 3e 14 03 | 04 02 06 00 | 07 00 01 f7`.
+
+
 ## Save (`Save to ZG01`, EP 0x03)
 
 ```
