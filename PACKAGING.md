@@ -1,12 +1,16 @@
 # Debian packaging
 
-The Debian package `snd-zg01-dkms` installs the driver source to DKMS. DKMS
-builds the module for the current kernel at install time and rebuilds it on
-kernel updates.
+Two packages are built from this tree:
+
+- `snd-zg01-dkms` (Architecture: all): the driver source, built by DKMS on
+  the target machine.
+- `snd-zg01-tools` (Architecture: amd64 arm64): the `zgctl` control CLI, a
+  compiled binary.  It is a separate package because a binary cannot ship
+  in an architecture-independent package.
 
 ## Package contents
 
-The package installs:
+The `snd-zg01-dkms` package installs:
 
 1. Source files to `/usr/src/snd-zg01-1.0.0/`:
    - `src/zg01_usb.c`, `src/zg01_pcm.c`, `src/zg01_control.c`,
@@ -20,6 +24,9 @@ The package installs:
    - registers, builds, and installs through DKMS
    - copies `src/snd-zg01.conf` to `/etc/modules-load.d/`
    - removes stale `90-zg01.rules` copies from older package versions
+
+The `snd-zg01-tools` package installs `/usr/bin/zgctl` and recommends
+`snd-zg01-dkms`.
 
 The postrm script unloads the module, removes the DKMS state, the stale
 udev rule copies from older package versions, and the modules-load.d entry.
@@ -36,11 +43,13 @@ Or manually:
 ```bash
 make clean
 debuild -us -uc -b
-ls -lh ../snd-zg01-dkms_*.deb
+ls -lh ../snd-zg01-dkms_*.deb ../snd-zg01-tools_*.deb
 ```
 
-The build writes `snd-zg01-dkms_*_all.deb`, a buildinfo file, and a changes
-file to the parent directory.
+The build writes `snd-zg01-dkms_*_all.deb`, `snd-zg01-tools_*_<arch>.deb`,
+a buildinfo file, and a changes file to the parent directory.  `debian/rules`
+runs `make tools` for the CLI and skips the kernel build (DKMS does that at
+install time).
 
 ## Release a new version
 
@@ -57,15 +66,17 @@ debian/
 ├── changelog                # package version history
 ├── control                  # metadata, depends on dkms
 ├── copyright                # GPL-2+
-├── rules                    # debhelper + dkms, skips the build step
+├── rules                    # debhelper + dkms, builds the CLI
 ├── snd-zg01-dkms.dkms       # DKMS registration
 ├── snd-zg01-dkms.install    # maps sources to /usr/src/snd-zg01-1.0.0/
 ├── snd-zg01-dkms.postinst   # build, install, modules-load setup
-└── snd-zg01-dkms.postrm     # unload, deregister, clean state
+├── snd-zg01-dkms.postrm     # unload, deregister, clean state
+└── snd-zg01-tools.install   # maps tools/zgctl to /usr/bin/
 ```
 
-`debian/rules` skips the normal build. DKMS compiles the module when the
-package installs, against the running kernel's headers.
+`debian/rules` skips the normal build, runs `make tools` for the CLI, and
+lets DKMS compile the module when the package installs, against the running
+kernel's headers.
 
 ## Lintian
 
@@ -75,9 +86,15 @@ Use `dch` for new entries and ignore the rest.
 
 ## APT repository and releases
 
-`.github/workflows/release-apt.yml` builds the package on a `v*` tag,
-creates a draft GitHub release, uploads the `.deb`, and publishes a signed
-APT repository as release assets.
+`.github/workflows/release-apt.yml` builds the packages on a `v*` tag,
+creates a draft GitHub release, uploads the `.deb` files (and the Arch
+packages), and publishes a signed APT repository as release assets.
+
+The APT repository is a flat `Packages` index serving every architecture
+in one file; APT picks the entry that matches the host, so a single
+repository carries both the `all` DKMS package and the architecture-
+dependent `snd-zg01-tools` package.  The Arch `zgctl` package is built
+separately (`packaging/arch-zgctl/PKGBUILD`).
 
 Trigger a release:
 

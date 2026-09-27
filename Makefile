@@ -20,5 +20,13 @@ endif
 all:
 	$(MAKE) -C $(KDIR) M=$(PWD) $(if $(LLVM),LLVM=$(LLVM)) modules
 
+# Userspace CLI.  Kept out of `all` because kbuild drives that target
+# for the module build; packaging calls `make tools` explicitly.
+tools:
+	$(MAKE) -C tools
+
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C tools clean
+
+.PHONY: all tools clean

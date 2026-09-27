@@ -31,9 +31,10 @@ sinks without moving the mix into userspace.
 
 ### Arch Linux, CachyOS, Omarchy
 
-Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst`) are attached to each
+Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst` and
+`zgctl-git-*.pkg.tar.zst`) are attached to each
 [GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest);
-install the downloaded file with `sudo pacman -U <file>`.
+install the downloaded files with `sudo pacman -U <file>`.
 
 To build it yourself instead, install the build tools, DKMS, and the headers
 for the running kernel:
@@ -69,13 +70,16 @@ curl -fsSL https://raw.githubusercontent.com/bsauvajon/snd-zg01/main/apt/snd-zg0
 curl -fsSL https://raw.githubusercontent.com/bsauvajon/snd-zg01/main/apt/snd-zg01.sources \
   | sudo tee /etc/apt/sources.list.d/snd-zg01.sources >/dev/null
 sudo apt update
-sudo apt install snd-zg01-dkms
+sudo apt install snd-zg01-dkms snd-zg01-tools
 ```
+
+`snd-zg01-tools` is optional and ships `zgctl`; install only
+`snd-zg01-dkms` for the driver alone.
 
 Or download the `.deb` from the latest release and install it manually:
 
 ```bash
-sudo dpkg -i snd-zg01-dkms_*.deb
+sudo dpkg -i snd-zg01-dkms_*.deb snd-zg01-tools_*_amd64.deb
 sudo apt-get install -f   # only if dependencies are missing
 ```
 

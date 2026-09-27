@@ -22,3 +22,17 @@ Description: DKMS driver for Yamaha ZG01 USB audio interface
  .
  The module will be automatically rebuilt for new kernel versions
  using DKMS (Dynamic Kernel Module Support).
+
+Package: snd-zg01-tools
+Section: sound
+Architecture: amd64 arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: snd-zg01-dkms
+Description: Control CLI for the Yamaha ZG01 driver
+ zgctl lists and sets the Yamaha ZG01 mic DSP controls exposed by the
+ snd-zg01 driver: the GATE, compressor, equalizer and limiter, plus
+ saving and reloading the device settings.  It talks to the ALSA control
+ device directly and needs no libasound.
+ .
+ This package is architecture dependent (it ships a compiled binary);
+ the snd-zg01-dkms package stays architecture independent.

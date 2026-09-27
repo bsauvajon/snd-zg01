@@ -23,3 +23,11 @@ modules.order
 __pycache__/
 *.py[cod]
 tools/zgctl
+
+# debhelper build artifacts
+/debian/.debhelper/
+/debian/files
+/debian/*.substvars
+/debian/debhelper-build-stamp
+/debian/snd-zg01-dkms/
+/debian/snd-zg01-tools/

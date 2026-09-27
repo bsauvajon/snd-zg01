@@ -1,10 +1,14 @@
 #!/usr/bin/make -f
 
+export DEB_BUILD_OPTIONS += noautodbgsym
+
 %:
 	dh $@
 
 override_dh_auto_configure:
 override_dh_auto_build:
+	$(MAKE) tools
 override_dh_auto_test:
 override_dh_auto_install:
 override_dh_auto_clean:
+	$(MAKE) -C tools clean

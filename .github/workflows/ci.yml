@@ -69,5 +69,6 @@ jobs:
           echo "Container kernel: $(uname -r), headers kernel: $KERNEL_VERSION"
           test -d "/usr/lib/modules/$KERNEL_VERSION/build"
           su build -c "cd '$GITHUB_WORKSPACE' && KERNEL_VERSION='$KERNEL_VERSION' bash tests/test-arch-packaging.sh"
+          su build -c "cd '$GITHUB_WORKSPACE' && bash tests/test-arch-zgctl-packaging.sh"
         env:
           HOME: /home/build

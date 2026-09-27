@@ -1,0 +1,30 @@
+# Maintainer: Yamaha ZG01 Driver Contributors
+
+_pkgname=snd-zg01
+pkgname=zgctl-git
+pkgver=r94.5b4ac9f
+pkgrel=1
+pkgdesc="Control CLI for the Yamaha ZG01 driver (git)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/bsauvajon/snd-zg01"
+license=('GPL-2.0-or-later')
+depends=('glibc')
+makedepends=('git')
+optdepends=('snd-zg01-dkms-git: the driver exposing the controls')
+provides=('zgctl')
+conflicts=('zgctl')
+source=("${_pkgname}::git+${url}.git#branch=main")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${_pkgname}"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  make -C "${_pkgname}" tools
+}
+
+package() {
+  install -Dm755 "${_pkgname}/tools/zgctl" "${pkgdir}/usr/bin/zgctl"
+}
