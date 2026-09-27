@@ -535,9 +535,11 @@ static int zg01_ctl_info(struct snd_kcontrol *kcontrol,
 }
 
 /*
- * The getters return the driver cache: the per-id read reply is a
- * status, not the value, and the device state dump that carries real
- * values is not decoded yet.  The cache reflects the last write.
+ * The getters return the driver cache: the device exposes no usable
+ * per-parameter read (its replies are statuses) and the state dump is
+ * not decoded, so the cache is the source of truth.  It is seeded with
+ * the built-in defaults at load and updated on every successful write;
+ * settings changed outside the driver are not reflected.
  */
 static int zg01_ctl_get(struct snd_kcontrol *kcontrol,
                         struct snd_ctl_elem_value *ucontrol)

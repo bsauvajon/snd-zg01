@@ -157,9 +157,27 @@ and `04 00 00 01`, and for the mic LIMITER id `0x22` it always returns
 therefore not readable through this request.
 
 The `04 f0 43 20` form makes the device push a **full state dump** on EP
-`0x83`: several 512-byte frames of parameter descriptors (counts, min/max,
-defaults and names such as `_Mic Eq`).  That dump is the real read source;
-it is not decoded yet.
+`0x83`: several 512-byte frames that mix parameter descriptors with DSP
+coefficient blocks (biquads), not a simple `id -> value` table.  The
+dump is not decoded: diffs between known states do not expose the UI
+values directly.
+
+## Reading values: current behaviour
+
+The device exposes no usable per-parameter read, and the state dump is
+not decoded, so the driver's kcontrol getters return the **last value the
+driver wrote** (a cache).  This is the official, documented behaviour.
+
+Consequences:
+
+- After a fresh load the cache holds the built-in defaults (80/170/3.15k/
+  7.5kHz, Q 1, everything off), not the device's current state.
+- Settings changed outside the driver (ZG Controller on Windows, or a
+  `Reset to ZG01`) are not reflected until the corresponding control is
+  written from Linux.
+- `Save to ZG01` / `Reset to ZG01` do not refresh the cache.
+
+Decoding the state dump, if ever wanted, is a separate investigation.
 
 ## Other observed frames
 
@@ -174,12 +192,9 @@ it is not decoded yet.
 
 - Meaning of the trailing `f7`, and why the terminator type is `0x05`
   for parameter writes but `0x07` for save/keepalive.
-- The full 512-byte state dump layout (the read source for values).
+- The full 512-byte state dump layout (mixed descriptors and DSP
+  coefficients).
 - GATE/COMP sub-parameter ids (attack, release, ratio, knee, ...).
-- Whether a keepalive or an initial state read is required before the
-  firmware accepts writes.
-- The state dump that the type-20 request triggers (the read source for
-  values) is not decoded yet.
 - MIC EQ values: the earlier GATE drag reached `0x69` (105), but
   controlled writes at 0/50/100 gave 0/0x32/0x64, so the scale is 0-100
   and the 105 was a transient drag value.

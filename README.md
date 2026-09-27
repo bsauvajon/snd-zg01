@@ -137,8 +137,12 @@ cget/cset`.  `zgctl save` (the `Save to ZG01` control) persists the
 current settings to the device's non-volatile memory; `zgctl reset`
 (the `Reset to ZG01` control) reloads the persisted settings.
 
-Writes reach the device live.  Reading values back is not implemented
-yet: the getters return the last value the driver wrote.
+Writes reach the device live.  Reading values back is not implemented:
+the getters return the **last value the driver wrote** (a cache seeded
+with the built-in defaults at load).  Settings changed outside the driver
+(ZG Controller on Windows, or `reset`) are therefore not reflected until
+the control is written again from Linux.  This is the documented
+behaviour; see `docs/MIC_CONTROL_PROTOCOL.md`.
 
 ## DKMS
 
