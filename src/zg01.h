@@ -283,6 +283,7 @@ int zg01_create_controls(struct zg01_dev *dev);
 int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value);
 int zg01_param_read(struct zg01_dev *dev, u8 id, u32 *value);
 int zg01_param_save(struct zg01_dev *dev);
+int zg01_param_reset(struct zg01_dev *dev);
 
 /* zg01_usb_discovery.c (best-effort, debug only) */
 int zg01_discover_usb_config(struct zg01_dev *dev);

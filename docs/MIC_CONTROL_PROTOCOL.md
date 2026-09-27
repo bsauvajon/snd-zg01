@@ -123,6 +123,17 @@ and an apply command `04 f0 43 30 | 04 3e 14 03 | 04 02 06 00 | 07 00 01 f7`.
 Present exactly once in the two captures where `Save to ZG01` was
 pressed, absent otherwise. Settings apply live; Save only persists them.
 
+## Reset / reload (`RESET`, EP 0x03)
+
+```
+04 f0 43 30 | 04 3e 14 03 | 04 02 04 00 | 07 00 01 f7 | 00...
+```
+
+Same shape as save, with code `0x04` instead of `0x01`. Observed once,
+right after disabling the GATE and pressing `RESET`; the app then
+re-reads the whole state (type-20 request plus type-30 per-id reads).
+It reloads the persisted settings, dropping unsaved edits.
+
 ## Reads
 
 The parameter write frame ends with a terminator word of type `0x05`
@@ -167,8 +178,8 @@ it is not decoded yet.
 - GATE/COMP sub-parameter ids (attack, release, ratio, knee, ...).
 - Whether a keepalive or an initial state read is required before the
   firmware accepts writes.
-- The `RESET` / reload frame (restore the persisted config) is not
-  captured yet; only `Save to ZG01` and the EQ `apply` commands are known.
+- The state dump that the type-20 request triggers (the read source for
+  values) is not decoded yet.
 - MIC EQ values: the earlier GATE drag reached `0x69` (105), but
   controlled writes at 0/50/100 gave 0/0x32/0x64, so the scale is 0-100
   and the 105 was a transient drag value.
