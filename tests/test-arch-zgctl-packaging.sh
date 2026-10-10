@@ -28,32 +28,15 @@ test_root=$(mktemp -d /tmp/snd-zg01-zgctl-test.XXXXXX)
 trap 'rm -rf "$test_root"' EXIT
 cp -a "$repo_root/packaging/arch-zgctl/." "$test_root/"
 
-# The PKGBUILD fetches branch=main, which on a pull request does not carry this
-# packaging yet - the `tools` target and this directory arrive with the same
-# change - so a package built from the default source could never satisfy this
-# contract.  Stage the tree under test as a throwaway git repository instead:
-# the source stays a git source (so pkgver() works) but holds this commit.
-# Build outputs are left out, otherwise a stale tools/zgctl would satisfy
-# `make tools` without compiling anything.
-stage="$test_root/src"
-mkdir -p "$stage/snd-zg01"
-tar -C "$repo_root" \
-    --exclude=.git --exclude='*.o' --exclude='*.ko' --exclude='*.mod' \
-    --exclude='*.mod.*' --exclude='*.cmd' --exclude=Module.symvers \
-    --exclude=.tmp_versions --exclude='tools/zgctl' \
-    -cf - . | tar -C "$stage/snd-zg01" -xf -
-(
-  cd "$stage/snd-zg01"
-  git init -q -b main
-  git -c user.name=ci -c user.email=ci@example.invalid -c commit.gpgsign=false \
-      add -A
-  git -c user.name=ci -c user.email=ci@example.invalid -c commit.gpgsign=false \
-      commit -qm 'tree under test'
-)
+# Build the package from the tree under test: the PKGBUILD fetches branch=main
+# by default, which on a pull request does not carry this packaging yet.
+# shellcheck source=lib/stage-source.sh
+. "$repo_root/tests/lib/stage-source.sh"
+stage=$(zg01_stage_source_tree "$repo_root" "$test_root/stage")
 
 (
   cd "$test_root"
-  ZG01_SOURCE="git+file://$stage/snd-zg01#branch=main" \
+  ZG01_SOURCE="git+file://$stage#branch=main" \
     PKGDEST="$test_root/packages" makepkg --cleanbuild --clean --noconfirm
 )
 

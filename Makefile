@@ -17,8 +17,11 @@ LLVM = 1
 endif
 endif
 
+# $(CURDIR), not $(PWD): PWD is inherited from whoever runs make, so
+# `make -C <repo>` from another directory told kbuild to build the caller's
+# directory instead of this one and failed.
 all:
-	$(MAKE) -C $(KDIR) M=$(PWD) $(if $(LLVM),LLVM=$(LLVM)) modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR) $(if $(LLVM),LLVM=$(LLVM)) modules
 
 # Userspace CLI.  Kept out of `all` because kbuild drives that target
 # for the module build; packaging calls `make tools` explicitly.
@@ -26,7 +29,7 @@ tools:
 	$(MAKE) -C tools
 
 clean:
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
 	$(MAKE) -C tools clean
 
 .PHONY: all tools clean
