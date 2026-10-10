@@ -49,6 +49,9 @@ jobs:
       - name: Device map tests
         run: bash tests/test-device-map.sh
 
+      - name: Control address tests
+        run: bash tests/test-control-addresses.sh
+
       - name: Build zgctl
         run: make -C tools
 

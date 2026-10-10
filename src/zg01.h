@@ -40,26 +40,56 @@
 #define ZG01_PARAM_FRAME     512
 #define ZG01_PARAM_TIMEOUT   1000  /* ms */
 
-/* Write-frame word 2 flag: 0x00 for GATE/COMP/LIMITER, 0x02 for EQ. */
-#define ZG01_PARAM_FLAG_MIC  0x00
-#define ZG01_PARAM_FLAG_EQ   0x02
+/*
+ * Parameters are addressed, not numbered: a parameter is one byte in a
+ * page, its address is page * 256 + offset, and the two bytes the write
+ * frame carries (the old "flag" and "id") are that address split into
+ * two base-128 digits, because a system exclusive data byte holds 7 bits.
+ * docs/DEVICE_PARAMETER_MAP.md has the whole map and the evidence, and
+ * tools/vendor/extract-device-map.py regenerates it.
+ */
+#define ZG01_PARAM_PAGES       2       /* pages the driver addresses */
+#define ZG01_PARAM_PAGE_SIZE   0x100   /* offsets per page */
+#define ZG01_ADDR(page, offset) ((u16)((page) * ZG01_PARAM_PAGE_SIZE + (offset)))
 
-/* Mic parameter ids (docs/MIC_CONTROL_PROTOCOL.md). */
-#define ZG01_PARAM_GATE_ENABLE     0x02
-#define ZG01_PARAM_GATE_VALUE      0x03
-#define ZG01_PARAM_COMP_ENABLE     0x09
-#define ZG01_PARAM_COMP_VALUE      0x0a
-#define ZG01_PARAM_EQ_ENABLE       0x11
-#define ZG01_PARAM_LOW_SHAPE       0x24
-#define ZG01_PARAM_HIGH_SHAPE      0x27
-#define ZG01_PARAM_EQ_GAIN(n)      (0x28 + (n))
-#define ZG01_PARAM_EQ_FREQ(n)      (0x2c + (n))
-#define ZG01_PARAM_EQ_Q(n)         (0x30 + (n))
-#define ZG01_PARAM_LIMITER_ENABLE  0x21
-#define ZG01_PARAM_LIMITER_VALUE   0x22
+/* Page 0: the microphone chain and the rest of the DSP. */
+#define ZG01_PARAM_P48V_ENABLE        ZG01_ADDR(0, 0x00)
+#define ZG01_PARAM_MUTE_ENABLE        ZG01_ADDR(0, 0x01)
+#define ZG01_PARAM_GATE_ENABLE        ZG01_ADDR(0, 0x02)
+#define ZG01_PARAM_GATE_VALUE         ZG01_ADDR(0, 0x03)
+#define ZG01_PARAM_GATE_THRESHOLD     ZG01_ADDR(0, 0x04)
+#define ZG01_PARAM_GATE_RANGE         ZG01_ADDR(0, 0x05)
+#define ZG01_PARAM_GATE_ATTACK        ZG01_ADDR(0, 0x06)
+#define ZG01_PARAM_GATE_HOLD          ZG01_ADDR(0, 0x07)
+#define ZG01_PARAM_GATE_DECAY         ZG01_ADDR(0, 0x08)
+#define ZG01_PARAM_COMP_ENABLE        ZG01_ADDR(0, 0x09)
+#define ZG01_PARAM_COMP_VALUE         ZG01_ADDR(0, 0x0a)
+#define ZG01_PARAM_COMP_THRESHOLD     ZG01_ADDR(0, 0x0b)
+#define ZG01_PARAM_COMP_RATIO         ZG01_ADDR(0, 0x0c)
+#define ZG01_PARAM_COMP_ATTACK        ZG01_ADDR(0, 0x0d)
+#define ZG01_PARAM_COMP_RELEASE       ZG01_ADDR(0, 0x0e)
+#define ZG01_PARAM_COMP_KNEE          ZG01_ADDR(0, 0x0f)
+#define ZG01_PARAM_COMP_OUTGAIN       ZG01_ADDR(0, 0x10)
+#define ZG01_PARAM_EQ_ENABLE          ZG01_ADDR(0, 0x11)
+#define ZG01_PARAM_LIMITER_ENABLE     ZG01_ADDR(0, 0x21)
+#define ZG01_PARAM_LIMITER_VALUE      ZG01_ADDR(0, 0x22)
+#define ZG01_PARAM_LIMITER_THRESHOLD  ZG01_ADDR(0, 0x23)
+#define ZG01_PARAM_LIMITER_ATTACK     ZG01_ADDR(0, 0x24)
+#define ZG01_PARAM_LIMITER_RELEASE    ZG01_ADDR(0, 0x25)
+#define ZG01_PARAM_LIMITER_KNEE       ZG01_ADDR(0, 0x26)
+#define ZG01_PARAM_LIMITER_OUTGAIN    ZG01_ADDR(0, 0x27)
 
-/* Cache of raw parameter values, indexed by id (ids reach 0x33). */
-#define ZG01_PARAM_CACHE           0x40
+/* Page 1: the four-band EQ (the one the application's EQ page drives). */
+#define ZG01_PARAM_LOW_SHAPE          ZG01_ADDR(1, 0x24)
+#define ZG01_PARAM_HIGH_SHAPE         ZG01_ADDR(1, 0x27)
+#define ZG01_PARAM_EQ_GAIN(n)         ZG01_ADDR(1, 0x28 + (n))
+#define ZG01_PARAM_EQ_FREQ(n)         ZG01_ADDR(1, 0x2c + (n))
+#define ZG01_PARAM_EQ_Q(n)            ZG01_ADDR(1, 0x30 + (n))
+
+/* Cache of the raw device values, keyed by address: page 0 offset 0x24
+ * and page 1 offset 0x24 are different parameters (LIMITER attack and EQ
+ * low shape), so an id-only cache would serve the wrong value. */
+#define ZG01_PARAM_CACHE  ZG01_PARAM_PAGES * ZG01_PARAM_PAGE_SIZE
 
 #define ISO_PKTS_OUT         32      /* 32 microframes = 4ms per URB */
 #define ISO_PKT_SIZE_OUT     280     /* up to seven 40-byte frames */
@@ -256,7 +286,7 @@ struct zg01_dev {
      * mic values back the kcontrol getters when the device is idle.
      */
     struct mutex param_mutex;
-    u32 param_cache[ZG01_PARAM_CACHE];
+    u32 param_cache[ZG01_PARAM_PAGES][ZG01_PARAM_PAGE_SIZE];
 
     atomic_t disconnecting;                   /* URB resubmission off */
     atomic_t disconnected;                    /* teardown-once latch */
@@ -284,8 +314,8 @@ void zg01_chain_quiesce_fn(struct work_struct *work);
 /* zg01_control.c */
 int zg01_init_control(struct zg01_dev *dev);
 int zg01_create_controls(struct zg01_dev *dev);
-int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value);
-int zg01_param_read(struct zg01_dev *dev, u8 id, u32 *value);
+int zg01_param_write(struct zg01_dev *dev, u16 addr, u32 value);
+int zg01_param_read(struct zg01_dev *dev, u16 addr, u32 *value);
 int zg01_param_save(struct zg01_dev *dev);
 int zg01_param_reset(struct zg01_dev *dev);
 

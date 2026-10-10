@@ -114,9 +114,13 @@ carries the SysEx end (`0x05` + `F7`).  A `0x04` in place of that closing
 
 ## Parameter IDs
 
-The mic parameter names, ranges and defaults come from the vendor MemAPI
-library (`MicGate*`, `MicComp*`, `MicEq*`, `MicLimiter*`, see
-`docs/VENDOR_PACKAGE.md`); the ids are the ones observed on the wire.
+A parameter is addressed, not numbered: `<flag> <id>` are the two
+base-128 digits of one device address, `address = page * 256 + offset`
+(so `<flag>` is `0x00` for page 0 and `0x02` for page 1).  The whole map -
+375 parameters with their names - is in
+`docs/DEVICE_PARAMETER_MAP.md`, extracted from the vendor library; the
+table below is the subset the captures pinned, with the vendor model's
+ranges and defaults (`docs/VENDOR_PACKAGE.md`).
 
 | Block | Id | Vendor name | Range / default |
 |---|---|---|---|
@@ -208,6 +212,47 @@ still unexplained (see open questions).
 
 After each EQ OK the app also sends the full `04 f0 43 00` preset block
 and an apply command `04 f0 43 30 | 04 3e 14 03 | 04 02 06 00 | 07 00 01 f7`.
+
+## Driver controls
+
+The driver exposes 39 mixer controls for this block: P48V and mute, the
+GATE / COMP / LIMITER switches and levels, the dynamics sub-parameters
+(threshold, range, times, knee, out gain) and the four-band EQ.  Each row
+of the table in `src/zg01_control.c` names a device address from
+`docs/DEVICE_PARAMETER_MAP.md`, and
+`tests/test-control-addresses.sh` checks that every one of them resolves
+to the expected device parameter with the vendor model's bounds.
+
+Units are stated only where they are established:
+
+| Control family | Advertised unit | Why |
+|---|---|---|
+| EQ gain | 0.1 dB, 0 dB = device 180 | vendor model range 0..360, EQ needs cut and boost |
+| EQ frequency | Hz | device value is the frequency |
+| EQ Q | 0.01 of the vendor ratio, floor 0.50 | device = `12 * log2(Q / 0.5)` |
+| switches, levels, and the dynamics sub-parameters | device steps | the physical unit of those steps is not established |
+
+The last row is deliberate: the GATE/COMP/LIMITER thresholds, times, knee
+and out gain travel as device steps whose meaning in dB or ms is unknown,
+so the controls publish the vendor model's bounds and no conversion.  A
+capture of the Windows application moving one of them at a known value
+pins the unit (`tools/param-frames.py diff --label`), and the conversion
+can then be added to `zg01_codec.h` with the evidence.
+
+Note also that the Windows **MIC SETTINGS** screen only offers a switch
+and a 0-100 slider per block: these sub-parameters exist in the device
+and in the vendor model, but no screen of the application was captured
+driving them, so the driver is ahead of the reference here.  Treat them
+as unverified: the frame is the proven one, the values are not.
+
+Two further notes for maintainers:
+
+- the value cache is keyed by *address*, not by an id: page 0 offset
+  `0x24` (LIMITER attack) and page 1 offset `0x24` (EQ low shape) are
+  different parameters and an id-only cache served one for the other;
+- `Mute Capture Switch` follows the device parameter `mic_mute_onf`, so
+  writing 1 mutes the microphone.  That polarity is read from the
+  vendor's naming and has not been confirmed on hardware yet.
 
 ## Save (`Save to ZG01`, EP 0x03)
 

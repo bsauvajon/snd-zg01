@@ -61,6 +61,14 @@ In scope:
 - Write enable/disable and the main value of GATE, COMP, LIMITER.
 - Read and write the EQ preset; read and write EQ bands (from `EDIT`).
 
+The first milestone (enable and value of GATE, COMP, LIMITER plus the EQ
+bands) is implemented, and the driver now also exposes the dynamics
+sub-parameters of those blocks - threshold, range, times, knee and out
+gain.  Those have **no control on the Windows MIC SETTINGS screen**: they
+come from the device parameter map, they use the same proven write frame,
+but their effect and their units in dB or ms are not confirmed on
+hardware yet (see "Driver controls" in `docs/MIC_CONTROL_PROTOCOL.md`).
+
 Out of scope for this plan:
 
 - Other ZG Controller screens (ZG SURROUND, FOCUS MODE/EQ, 3D CHAT

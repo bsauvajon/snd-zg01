@@ -14,7 +14,7 @@ blocks as the application screens:
 
 | Block | Parameters | Driver today |
 |---|---|---|
-| Mic: GATE, COMP, EQ, LIMITER, mute, P48V | 54 | 21 controls: switches, levels, EQ switch, 2 shapes, 4 gains, 4 frequencies, 4 Q |
+| Mic: GATE, COMP, EQ, LIMITER, mute, P48V | 54 | 39 controls: P48V, mute, switches and levels, the GATE/COMP/LIMITER sub-parameters (threshold, range, times, knee, out gain), EQ switch, 2 shapes, 4 gains, 4 frequencies, 4 Q |
 | MIC EFFECT: voice changer, SE, echo, reverb, tone control, transpose | 69 | none |
 | GAME EFFECT: EQ, de-esser, surround | 101 | none |
 | Monitor / headphone: 4-band EQ, levels, select | 27 | none |
