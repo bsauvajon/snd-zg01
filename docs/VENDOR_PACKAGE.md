@@ -121,6 +121,14 @@ The ZG01 library also carries a second, index-based MIC EQ family
 captured frequency bytes decode to plain Hz, which matches the `V21`-`V24`
 family - so it is left aside here.
 
+Several EQ families coexist for a reason: the ZG Controller EQ editor
+takes a `bandNums` property of 4 or 10 and drives every band through a
+`YQParameterAccessor` that carries a `paramID`, while the package ships
+both a ZG01 and a ZG02 library (the ZG02 one is snake_case, e.g.
+`mic_eq_lo_g`).  A family has to be matched to the device and the screen
+before its ids are trusted, which is what the captured ranges did for the
+four-band MIC EQ.
+
 ## Caveats
 
 - The descriptor slots were decoded by structure (name pointer at offset
