@@ -136,6 +136,25 @@ four-band MIC EQ.
   inference, corroborated by the captured bytes for the EQ gains and
   frequencies and by the raw levels for GATE/COMP/LIMITER.  Treat a value
   that contradicts a capture as an open question, not as the truth.
+- **The model does not carry the wire address of a parameter.**  The
+  descriptor holds the name, bounds, default, a per-parameter key and a
+  pointer to the library's own copy of the value, but no id:
+  `tools/vendor/probe-wire-id.py` checks the three places where it could
+  live and finds none of them -
+  no descriptor slot equals a captured id (0/21 for every one of the 14
+  slots), the key is not a CRC-16 or Fletcher checksum of the name
+  (0/1102 for each of six variants), the table is not ordered by wire
+  address, and every identifier-style name has exactly one pointer in the
+  image (0/383 outside the descriptor table, so there is no parallel
+  name -> address array; the numeric labels such as `-0.25` do share a
+  pointer array, but those are display strings, not parameters).  The
+  address is therefore computed by the library's code, which the captures
+  or a disassembly session must recover (see `docs/FEATURE_PARITY.md`).
+- The library is small enough for the disassembly route: 261 functions by
+  the `.pdata` exception directory, ~95 KB of `.text`, a SysEx fragment
+  table at `0x18002cf00` (`f0 43 40 3e`, `f0 43 10 3e 14`,
+  `f0 43 30 3e 14`, `f0 43 00`), and a parameter-command dispatcher that
+  is a jump table over `0x100..0x122`.
 - Yamaha's EULA forbids reverse engineering and redistribution of the
   software, while interoperability analysis of a purchased device is what
   this project is about.  Keep the vendor archive, the extracted payload

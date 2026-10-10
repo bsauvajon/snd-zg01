@@ -180,7 +180,10 @@ install. If a pre-2026 package left broken DKMS state, remove
 - `docs/PROTOCOL_CAPTURE.md`: capture workflow for knobs, buttons, routing
 - `docs/INITIALIZATION_ANALYSIS.md`: device USB topology and packet formats
 - `docs/MIC_CONTROL_PLAN.md`: mic control implementation plan
-- `docs/MIC_CONTROL_PROTOCOL.md`: decoded mic parameter protocol
+- `docs/MIC_CONTROL_PROTOCOL.md`: decoded mixer parameter protocol
+- `docs/VENDOR_PACKAGE.md`: parameter model extracted from the Windows package
+- `docs/PARAMETER_INVENTORY.md`: every parameter the vendor application drives
+- `docs/FEATURE_PARITY.md`: what is left to reach ZG Controller parity
 - `packaging/arch/README.md`: Arch packaging, verification, rollback
 
 ## Scope and status
@@ -189,6 +192,10 @@ Working: Game Out + Voice Out simultaneous playback, Voice In capture,
 suspend/resume, replug, single module, single card, and live write of the
 mic GATE/COMP/EQ/LIMITER controls (ALSA + `zgctl`). Not implemented: MIDI,
 other sample rates, reading device state back.
+
+The vendor application drives 383 parameters across its seven screens;
+`docs/FEATURE_PARITY.md` maps what the driver covers today (the mic DSP
+block) and what each remaining block needs.
 
 Experimental out-of-tree driver. Kernel updates can break the build; report
 issues with `dmesg` output.
