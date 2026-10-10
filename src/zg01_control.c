@@ -3,7 +3,11 @@
  *
  * EP0 vendor request 7 is the device handshake.  Every mixer setting
  * (mic DSP, EQ, ...) travels on interface 4 as 512-byte bulk frames
- * (host -> EP 0x03, device -> EP 0x83); see docs/MIC_CONTROL_PROTOCOL.md.
+ * (host -> EP 0x03, device -> EP 0x83).  Those frames are USB-MIDI
+ * event packets carrying Yamaha system exclusive messages
+ * (F0 43 10 3E 14 ... F7), so values are sent as big-endian base-128
+ * digits, not as raw bytes; see docs/MIC_CONTROL_PROTOCOL.md and the
+ * value codec in zg01_codec.h.
  *
  * This file implements that transport and the mic controls (GATE, COMP,
  * EQ and LIMITER) as ALSA kcontrols.
@@ -17,6 +21,7 @@
 #include <sound/tlv.h>
 
 #include "zg01.h"
+#include "zg01_codec.h"
 #include "zg01_control.h"
 
 int zg01_init_control(struct zg01_dev *dev)
@@ -65,8 +70,10 @@ int zg01_init_control(struct zg01_dev *dev)
 }
 
 /*
- * Frame helpers.  A frame is 128 four-byte words; the first byte of a
- * word is a type (0x04 data, 0x05/0x07 terminator, 0x00 padding).
+ * Frame helpers.  A frame is 128 four-byte USB-MIDI event packets; the
+ * first byte of a packet is its code index number (CIN): 0x04 while a
+ * system exclusive message continues, 0x05/0x06/0x07 when it ends and
+ * the packet carries 1, 2 or 3 data bytes.  0x00 marks padding.
  */
 static void zg01_put_word(u8 *buf, unsigned int index, u8 a, u8 b, u8 c)
 {
@@ -122,18 +129,25 @@ static int zg01_param_keepalive(struct zg01_dev *dev)
  * Write one parameter.  Layout (docs/MIC_CONTROL_PROTOCOL.md):
  *
  *   04 f0 43 10 | 04 3e 14 01 | 04 01 00 <flag> | 04 <id> 00 00
- *   | 04 00 00 00 | 04 <v2> <v1> <v0> | 05 f7 00 00 | 00...
+ *   | 04 00 00 00 | 04 <d0> <d1> <d2> | 05 f7 00 00 | 00...
  *
- * The terminator word's first byte is 0x05; a 0x04 there makes the
+ * <d0> <d1> <d2> are the big-endian base-128 digits of the value (see
+ * zg01_codec.h): 1 kHz is written as 00 07 68, not as 0x07 0x68 of a
+ * hexadecimal 16-bit value.  The terminator packet's CIN is 0x05 (the
+ * sys exclusive message ends with one byte); a 0x04 there makes the
  * firmware ignore the whole frame.
  */
 int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value)
 {
+    unsigned char digits[ZG01_VALUE_DIGITS];
     unsigned char *buf;
     int ret;
 
     if (!dev || !dev->udev)
         return -ENODEV;
+
+    if (value > ZG01_VALUE_MAX)
+        return -ERANGE;
 
     ret = zg01_param_keepalive(dev);
     if (ret)
@@ -143,13 +157,14 @@ int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value)
     if (!buf)
         return -ENOMEM;
 
+    zg01_value_encode(value, digits);
+
     zg01_put_word(buf, 0, 0xf0, 0x43, 0x10);
     zg01_put_word(buf, 1, 0x3e, 0x14, 0x01);
     zg01_put_word(buf, 2, 0x01, 0x00, flag);
     zg01_put_word(buf, 3, id, 0x00, 0x00);
     zg01_put_word(buf, 4, 0x00, 0x00, 0x00);
-    zg01_put_word(buf, 5, (value >> 16) & 0xff,
-                  (value >> 8) & 0xff, value & 0xff);
+    zg01_put_word(buf, 5, digits[0], digits[1], digits[2]);
     buf[24] = 0x05;
     buf[25] = 0xf7;
     buf[26] = 0x00;
@@ -245,7 +260,8 @@ int zg01_param_reset(struct zg01_dev *dev)
  * Read a parameter through the EP 0x83 flag-0x02 space.  This returns
  * the value for EQ-space ids; mic-space ids (GATE/COMP/LIMITER) answer
  * with a fixed status instead, and their values come from the device
- * state dump, which is not decoded yet.
+ * state dump, which is not decoded yet.  Reply payloads are base-128
+ * digit sequences like the writes.
  */
 static int zg01_param_parse(const u8 *buf, unsigned int len, u8 id,
                             u32 *value)
@@ -264,9 +280,7 @@ static int zg01_param_parse(const u8 *buf, unsigned int len, u8 id,
         if (buf[i + 16] != 0x04 || buf[i + 24] != 0x05 ||
             buf[i + 25] != 0xf7)
             continue;
-        *value = ((u32)buf[i + 21] << 16) |
-                 ((u32)buf[i + 22] << 8) |
-                 (u32)buf[i + 23];
+        *value = (u32)zg01_value_decode(buf + i + 21);
         return 0;
     }
 
@@ -331,113 +345,25 @@ out:
 }
 
 /*
- * Value conversions between the user-facing kcontrol units and the raw
- * device parameter.  See docs/MIC_CONTROL_PROTOCOL.md.
+ * Value conversions between the user-facing kcontrol units and the
+ * device parameter.  See docs/MIC_CONTROL_PROTOCOL.md and zg01_codec.h.
  */
 enum zg01_conv {
-    CONV_ID,       /* raw == user (switches, 0..100 levels, shapes)  */
-    CONV_GAIN,     /* user in 0.1 dB, raw = 308 * (user + 180) / 180  */
-    CONV_FREQ,     /* user in Hz, raw piecewise (f / 2f / 2f+32768)   */
-    CONV_Q,        /* user in 0.01 Q, raw = 12 * log2(Q / 0.5)        */
+    CONV_ID,       /* raw == user (switches, 0..100 mixer levels)    */
+    CONV_GAIN,     /* user in 0.1 dB, device = 180 + user            */
+    CONV_FREQ,     /* user in Hz, device == user                     */
+    CONV_Q,        /* user in 0.01 Q, device = 12 * log2(Q / 0.5)    */
 };
-
-/* log2(x) in 1/256 units, for x >= 1. */
-static unsigned int zg01_log2_fp(unsigned int x)
-{
-    unsigned int e = fls(x) - 1;
-    unsigned long long m = (unsigned long long)x << (31 - e);
-    unsigned int frac =
-        (unsigned int)(((m - 0x80000000ULL) << 8) >> 31);
-
-    return e * 256 + frac;
-}
-
-/* 2^(v / 256) * 256. */
-static unsigned int zg01_exp2_fp(unsigned int v)
-{
-    unsigned int i = v >> 8;
-    unsigned int f = v & 0xff;
-    unsigned int base = 256 + (f * 177) / 256;
-
-    return base << i;
-}
-
-static u32 zg01_q100_to_raw(unsigned int q100)
-{
-    unsigned int l = zg01_log2_fp(q100);
-    unsigned int l50 = zg01_log2_fp(50);
-
-    return (12 * (l - l50)) / 256;
-}
-
-static unsigned int zg01_raw_to_q100(u32 raw)
-{
-    unsigned int v = (raw * 256) / 12;
-
-    return (50 * zg01_exp2_fp(v)) >> 8;
-}
-
-/* Measured Hz -> raw points (docs/MIC_CONTROL_PROTOCOL.md). */
-static const struct { u32 hz; u32 raw; } zg01_freq_table[] = {
-    { 20, 20 }, { 50, 50 }, { 100, 100 }, { 200, 328 }, { 500, 884 },
-    { 1000, 1896 }, { 2000, 3920 }, { 5000, 9992 }, { 10000, 19984 },
-    { 15000, 29976 }, { 16383, 32766 }, { 16384, 65536 },
-    { 17000, 66664 }, { 20000, 72736 },
-};
-
-static u32 zg01_freq_to_raw(long hz)
-{
-    unsigned int i;
-
-    if (hz <= (long)zg01_freq_table[0].hz)
-        return zg01_freq_table[0].raw;
-
-    for (i = 1; i < ARRAY_SIZE(zg01_freq_table); i++) {
-        u32 h0 = zg01_freq_table[i - 1].hz;
-        u32 h1 = zg01_freq_table[i].hz;
-
-        if (hz <= (long)h1) {
-            u32 r0 = zg01_freq_table[i - 1].raw;
-            u32 r1 = zg01_freq_table[i].raw;
-
-            return r0 + (u32)(((u64)(hz - h0) * (r1 - r0)) / (h1 - h0));
-        }
-    }
-
-    return zg01_freq_table[ARRAY_SIZE(zg01_freq_table) - 1].raw;
-}
-
-static long zg01_raw_to_freq(u32 raw)
-{
-    unsigned int i;
-
-    if (raw <= zg01_freq_table[0].raw)
-        return zg01_freq_table[0].hz;
-
-    for (i = 1; i < ARRAY_SIZE(zg01_freq_table); i++) {
-        u32 r0 = zg01_freq_table[i - 1].raw;
-        u32 r1 = zg01_freq_table[i].raw;
-
-        if (raw <= r1) {
-            u32 h0 = zg01_freq_table[i - 1].hz;
-            u32 h1 = zg01_freq_table[i].hz;
-
-            return h0 + (long)(((u64)(raw - r0) * (h1 - h0)) / (r1 - r0));
-        }
-    }
-
-    return zg01_freq_table[ARRAY_SIZE(zg01_freq_table) - 1].hz;
-}
 
 static u32 zg01_user_to_dev(int conv, long user)
 {
     switch (conv) {
     case CONV_GAIN:
-        return (u32)((308 * (user + 180) + 90) / 180);
+        return (u32)zg01_gain_user_to_dev(user);
     case CONV_FREQ:
-        return zg01_freq_to_raw(user);
+        return (u32)zg01_freq_user_to_dev(user);
     case CONV_Q:
-        return zg01_q100_to_raw((unsigned int)user);
+        return (u32)zg01_q_user_to_dev(user);
     default:
         return (u32)user;
     }
@@ -447,11 +373,11 @@ static long zg01_dev_to_user(int conv, u32 dev)
 {
     switch (conv) {
     case CONV_GAIN:
-        return (180L * dev + 154) / 308 - 180;
+        return zg01_gain_dev_to_user(dev);
     case CONV_FREQ:
-        return zg01_raw_to_freq(dev);
+        return zg01_freq_dev_to_user(dev);
     case CONV_Q:
-        return zg01_raw_to_q100(dev);
+        return zg01_q_dev_to_user(dev);
     default:
         return dev;
     }
@@ -469,52 +395,71 @@ struct zg01_param_ctl {
 };
 
 static const struct zg01_param_ctl zg01_param_ctls[] = {
+    /*
+     * The cache is seeded with the vendor defaults (docs/VENDOR_PACKAGE.md):
+     * GATE, COMP and LIMITER levels default to 50, their switches to off
+     * except the limiter switch, and the EQ to the flat vendor state
+     * (0 dB gains, Q 1.00, shelf shapes on, see below).
+     */
     { "Gate Capture Switch", ZG01_PARAM_GATE_ENABLE, ZG01_PARAM_FLAG_MIC,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
     { "Gate", ZG01_PARAM_GATE_VALUE, ZG01_PARAM_FLAG_MIC,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 100, CONV_ID, 0 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 100, CONV_ID, 50 },
     { "Compressor Capture Switch", ZG01_PARAM_COMP_ENABLE, ZG01_PARAM_FLAG_MIC,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
     { "Compressor", ZG01_PARAM_COMP_VALUE, ZG01_PARAM_FLAG_MIC,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 100, CONV_ID, 0 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 100, CONV_ID, 50 },
     { "Limiter Capture Switch", ZG01_PARAM_LIMITER_ENABLE, ZG01_PARAM_FLAG_MIC,
-      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
+      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
     { "Limiter", ZG01_PARAM_LIMITER_VALUE, ZG01_PARAM_FLAG_MIC,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 100, CONV_ID, 0 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 100, CONV_ID, 50 },
 
     { "EQ Capture Switch", ZG01_PARAM_EQ_ENABLE, ZG01_PARAM_FLAG_MIC,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
     { "EQ Low Shape", ZG01_PARAM_LOW_SHAPE, ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 0 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 1 },
     { "EQ High Shape", ZG01_PARAM_HIGH_SHAPE, ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 0 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 1 },
 
+    /*
+     * EQ defaults are the vendor ones (docs/VENDOR_PACKAGE.md): gains at
+     * 0 dB (device 180), band frequencies at 100 Hz / 500 Hz / 2.5 kHz /
+     * 10 kHz, Q at 1.00 (device 12).
+     */
     { "EQ Band 1 Gain", ZG01_PARAM_EQ_GAIN(0), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 308 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, ZG01_GAIN_USER_MIN, ZG01_GAIN_USER_MAX,
+      CONV_GAIN, ZG01_GAIN_DEV_ZERO },
     { "EQ Band 2 Gain", ZG01_PARAM_EQ_GAIN(1), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 308 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, ZG01_GAIN_USER_MIN, ZG01_GAIN_USER_MAX,
+      CONV_GAIN, ZG01_GAIN_DEV_ZERO },
     { "EQ Band 3 Gain", ZG01_PARAM_EQ_GAIN(2), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 308 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, ZG01_GAIN_USER_MIN, ZG01_GAIN_USER_MAX,
+      CONV_GAIN, ZG01_GAIN_DEV_ZERO },
     { "EQ Band 4 Gain", ZG01_PARAM_EQ_GAIN(3), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 308 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, ZG01_GAIN_USER_MIN, ZG01_GAIN_USER_MAX,
+      CONV_GAIN, ZG01_GAIN_DEV_ZERO },
 
     { "EQ Band 1 Frequency", ZG01_PARAM_EQ_FREQ(0), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 20, 1000, CONV_FREQ, 80 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 20, 1000, CONV_FREQ, 100 },
     { "EQ Band 2 Frequency", ZG01_PARAM_EQ_FREQ(1), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 20, 20000, CONV_FREQ, 260 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 20, 20000, CONV_FREQ, 500 },
     { "EQ Band 3 Frequency", ZG01_PARAM_EQ_FREQ(2), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 20, 20000, CONV_FREQ, 6248 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 20, 20000, CONV_FREQ, 2500 },
     { "EQ Band 4 Frequency", ZG01_PARAM_EQ_FREQ(3), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 500, 20000, CONV_FREQ, 14988 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 500, 20000, CONV_FREQ, 10000 },
 
     { "EQ Band 1 Q", ZG01_PARAM_EQ_Q(0), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 800, CONV_Q, 12 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, ZG01_Q_USER_MIN, ZG01_Q_USER_MAX,
+      CONV_Q, 12 },
     { "EQ Band 2 Q", ZG01_PARAM_EQ_Q(1), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 800, CONV_Q, 12 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, ZG01_Q_USER_MIN, ZG01_Q_USER_MAX,
+      CONV_Q, 12 },
     { "EQ Band 3 Q", ZG01_PARAM_EQ_Q(2), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 800, CONV_Q, 12 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, ZG01_Q_USER_MIN, ZG01_Q_USER_MAX,
+      CONV_Q, 12 },
     { "EQ Band 4 Q", ZG01_PARAM_EQ_Q(3), ZG01_PARAM_FLAG_EQ,
-      SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 800, CONV_Q, 12 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, ZG01_Q_USER_MIN, ZG01_Q_USER_MAX,
+      CONV_Q, 12 },
 };
 
 static const struct zg01_param_ctl *zg01_ctl_of(struct snd_kcontrol *kcontrol)

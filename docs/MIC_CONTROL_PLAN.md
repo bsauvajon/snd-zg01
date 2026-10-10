@@ -108,9 +108,11 @@ Other message types seen: `04 f0 43 00` carries preset-name payloads
 IN stream (192 bytes, continuously varying) is telemetry, probably meters
 plus state.
 
-The level scale is not pinned yet: a drag "high" produced 65..105, while
-the UI shows small integers (GATE 44, COMP 26, LIMITER 42 in the
-screenshot). The byte may be an internal/scaled value or a 0-127 range.
+The level scale is pinned: GATE, COMP and LIMITER levels are plain 0..100
+integers (`MicGateLevel`/`MicCompLevel`/`MicLimiterLevel`, default 50), and
+every value is carried as base-128 SysEx digits - see the corrected
+analysis in `docs/MIC_CONTROL_PROTOCOL.md`.  The 105 seen during a drag was
+a transient slider value, not a different scale.
 
 Earlier code only sends the `bRequest 7` handshake; it does not touch the
 interface 4 transport.

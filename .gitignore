@@ -23,6 +23,12 @@ modules.order
 __pycache__/
 *.py[cod]
 tools/zgctl
+*.zgpreset
+
+# Vendor package artefacts (docs/VENDOR_PACKAGE.md): never commit these
+/vendor/
+TOOLS_for_ZG*.zip
+Install_ZG.exe
 
 # debhelper build artifacts
 /debian/.debhelper/

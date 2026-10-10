@@ -137,7 +137,11 @@ make -C tools
 
 `zgctl` accepts dB for gains, Hz/kHz for frequencies, ratios for Q and
 on/off for switches; the same controls are reachable with `amixer
-cget/cset`.  `zgctl save` (the `Save to ZG01` control) persists the
+cget/cset`.  Gains cover -18.0..+18.0 dB in 0.1 dB steps, Q spans
+0.5..16 (12 steps per octave) and every band frequency is taken in plain
+Hz inside its own range; the controls start from the vendor defaults
+(100 Hz / 500 Hz / 2.5 kHz / 10 kHz, Q 1, gains 0 dB, gate and compressor
+levels 50).  `zgctl save` (the `Save to ZG01` control) persists the
 current settings to the device's non-volatile memory; `zgctl reset`
 (the `Reset to ZG01` control) reloads the persisted settings.
 

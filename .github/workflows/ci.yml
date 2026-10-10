@@ -40,6 +40,9 @@ jobs:
           bash tests/test-capture-normalizer.sh
           bash tests/test-usbmon-normalizer.sh
 
+      - name: Parameter codec tests
+        run: bash tests/test-param-codec.sh
+
       - name: Build zgctl
         run: make -C tools
 

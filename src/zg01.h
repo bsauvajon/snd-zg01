@@ -27,8 +27,12 @@
 
 /*
  * Mixer parameters travel on interface 4 as 512-byte bulk frames
- * (host -> EP 0x03, device -> EP 0x83), not on EP0.  See
- * docs/MIC_CONTROL_PROTOCOL.md for the frame layout and value encodings.
+ * (host -> EP 0x03, device -> EP 0x83), not on EP0.  Each 4-byte unit of
+ * a frame is a USB-MIDI event packet whose first byte is a code index
+ * number, so the payload is a Yamaha system exclusive message
+ * (F0 43 10 3E 14 ... F7) and its data bytes are limited to 7 bits.
+ * See docs/MIC_CONTROL_PROTOCOL.md for the frame layout and the
+ * base-128 value encoding implemented in zg01_codec.h.
  */
 #define ZG01_PARAM_IFACE     4
 #define ZG01_PARAM_EP_OUT    0x03
