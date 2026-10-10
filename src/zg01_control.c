@@ -1017,6 +1017,9 @@ int zg01_create_controls(struct zg01_dev *dev)
 
     /* The cache is indexed by address: every address must fit a page. */
     BUILD_BUG_ON(ZG01_PARAM_EQ_Q(3) >= ZG01_PARAM_CACHE);
+    /* The highest address in the table, so a future block that reaches past
+     * the cache is a build failure rather than an out-of-bounds write. */
+    BUILD_BUG_ON(ZG01_PARAM_GAME_EQ_Q(9) >= ZG01_PARAM_CACHE);
 
     for (i = 0; i < ARRAY_SIZE(zg01_param_ctls); i++) {
         const struct zg01_param_ctl *c = &zg01_param_ctls[i];
