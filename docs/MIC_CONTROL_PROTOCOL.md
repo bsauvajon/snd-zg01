@@ -7,9 +7,11 @@ for ZG* (see `docs/VENDOR_PACKAGE.md`).  This describes the device
 protocol, not the driver.
 
 Status: the mic parameter **write** and **save** paths are decoded and EQ
-band values are decoded exactly; the read path is partially decoded. The
-GATE/COMP/LIMITER sub-parameter ids and the `f0 43 00` preset block are
-not mapped yet.
+band values are decoded exactly; the read path is partially decoded. Every
+parameter's address is known from the vendor library rather than from a
+capture (`docs/DEVICE_PARAMETER_MAP.md`), so the sub-parameters that were
+never captured are labelled from the map; the `f0 43 00` preset block is
+still not mapped.
 
 ## Transport: USB-MIDI packets carrying Yamaha system exclusive
 
@@ -50,8 +52,11 @@ F0 43 10 | 3E 14 01 | 01 00 <flag> | <id> 00 00 | 00 00 00 | 00 00 00 | <d0> <d1
 ```
 
 `F0 43 10` is Yamaha + device id 0x10, `3E 14` is the parameter-change
-command, and `<flag>` is `0x00` for the GATE/COMP/LIMITER block, `0x02`
-for the EQ block.
+command, and `<flag> <id>` is the parameter's address, split into its two
+base-128 digits (below).  `0x00` is the high digit of the GATE/COMP/LIMITER
+block because those offsets are below `0x80`, and `0x02` the high digit of
+the EQ block because it lives on page 1 - the digit is not a block
+selector, it is half of the address.
 
 ## Value encoding: base-128 digits
 
@@ -115,8 +120,22 @@ carries the SysEx end (`0x05` + `F7`).  A `0x04` in place of that closing
 ## Parameter IDs
 
 A parameter is addressed, not numbered: `<flag> <id>` are the two
-base-128 digits of one device address, `address = page * 256 + offset`
-(so `<flag>` is `0x00` for page 0 and `0x02` for page 1).  The whole map -
+base-128 digits of one device address, `address = page * 256 + offset`,
+so `flag = address / 128` and `id = address % 128`.  Which gives three
+spaces, not two:
+
+| Address | `flag` | `id` |
+|---|---|---|
+| page 0, offset `0x00`-`0x7f` | `0x00` | the offset |
+| page 0, offset `0x80`-`0xff` | `0x01` | `offset - 0x80` |
+| page 1, offset `0x00`-`0x76` | `0x02` | the offset |
+
+The middle row is what the game effect, binaural and monitor parameters
+need, and it is derived rather than captured: a page 0 offset of `0x80`
+and above does not fit the seven bits of the `id` byte, so it cannot
+travel any other way, and the application writes into that space (its
+monitor page binds `mon_hp_vol` and `mon_sp_vol` to volume sliders).
+`docs/EFFECTS_CONTROL_PLAN.md` has the whole argument.  The whole map -
 375 parameters with their names - is in
 `docs/DEVICE_PARAMETER_MAP.md`, extracted from the vendor library; the
 table below is the subset the captures pinned, with the vendor model's
@@ -190,10 +209,13 @@ order the id groups (`0x28`, `0x2c`, `0x30`) follow.
 
 The device names behind these ids are the page-1 records
 `mic_eq_v2_1_ONF`-`mic_eq_v2_4_ONF` (`0x20`-`0x23`), then
-`mic_eq_v2_1_SHAPE` (`0x24`) onwards; the GAME EQ is the same four-band
-block at `0x34`-`0x47` (`game_eq_v2_*`), which this driver does not
-expose yet.  Both are on page 1, so their `<flag>` digit is always `0x02`
-(`docs/DEVICE_PARAMETER_MAP.md`).
+`mic_eq_v2_1_SHAPE` (`0x24`) onwards.  The GAME EQ follows immediately:
+`game_eq_v2_1_ONF`-`game_eq_v2_10_ONF` (`0x34`-`0x3d`), then the gains
+(`0x3e`-`0x47`), frequencies (`0x48`-`0x51`) and Q (`0x52`-`0x5b`) of the
+same ten bands - ten bands, not four, and it is the block the
+application's GAME EFFECT EQ page drives.  Both are on page 1, so their
+`<flag>` digit is always `0x02` (`docs/DEVICE_PARAMETER_MAP.md`,
+`docs/EFFECTS_CONTROL_PLAN.md`).
 
 The band frequency is *not* restricted to a grid by the protocol: the
 device takes any Hz value inside the band's range.  The vendor interface
@@ -215,13 +237,19 @@ and an apply command `04 f0 43 30 | 04 3e 14 03 | 04 02 06 00 | 07 00 01 f7`.
 
 ## Driver controls
 
-The driver exposes 39 mixer controls for this block: P48V and mute, the
-GATE / COMP / LIMITER switches and levels, the dynamics sub-parameters
-(threshold, range, times, knee, out gain) and the four-band EQ.  Each row
-of the table in `src/zg01_control.c` names a device address from
+The driver exposes **208 mixer controls**: the 39 of the microphone DSP
+block (P48V and mute, the GATE / COMP / LIMITER switches and levels, the
+dynamics sub-parameters and the four-band EQ), the 69 of the microphone
+effect chain and the 100 of the game effect chain.  Each row of the table
+in `src/zg01_control.c` names a device address from
 `docs/DEVICE_PARAMETER_MAP.md`, and
 `tests/test-control-addresses.sh` checks that every one of them resolves
 to the expected device parameter with the vendor model's bounds.
+
+The two effect blocks have their own record:
+`docs/EFFECTS_CONTROL_PLAN.md` - the correspondence between the vendor
+names and the device names, the unit chosen for each family, and the
+address-digit question the game effect chain raised.
 
 Units are stated only where they are established:
 
@@ -340,12 +368,19 @@ Decoding the state dump, if ever wanted, is a separate investigation.
 
 ## Open questions
 
-- GATE/COMP/LIMITER sub-parameter ids (attack, release, ratio, knee,
-  hold, ...) and their value units.
+- The value units of the GATE/COMP/LIMITER sub-parameter steps: their ids
+  come from the map, the meaning of a threshold or a time in dB or ms does
+  not.
 - The `f0 43 00` preset block layout and value encoding.
 - The full 512-byte state dump layout (mixed descriptors and DSP
   coefficients).
-- Meaning of the unused ids between the blocks (`0x25`, `0x26`, `0x34+`).
+- The exact frame the application sends at page 0 offsets `0x80`-`0xff`:
+  the digit follows from the encoding and the space is in use, but no
+  capture of such a write has been decoded yet
+  (`docs/EFFECTS_CONTROL_PLAN.md`).
+- The 1/12-octave grid behind the index-valued frequencies
+  (`VoiceTc*Freq`, the game EQ M and S bands): the vendor bounds fit it,
+  no value read back from the device has confirmed it.
 - A GATE drag was once seen to send `0x69` (105) where controlled writes
   give 0..100 (`0x32` = 50): the scale is 0..100 per the vendor model, so
   that 105 was a transient drag value, but it is not proven that the

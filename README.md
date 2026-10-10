@@ -118,12 +118,18 @@ arecord -D hw:zg01,2 -f S32_LE -r 48000 -c 2 -d 5 test.wav
 Voice In logs bursts of `-ECONNRESET` on the first open. They are benign;
 the chain resubmits.
 
-## Mic controls
+## Mixer controls
 
-The card exposes the mic DSP as ALSA controls: GATE, COMP and LIMITER
-switches and levels, the EQ switch, four EQ band gains, frequencies and
-Q, and the low/high shelf types.  They are written to the device through
-the interface 4 bulk protocol (`docs/MIC_CONTROL_PROTOCOL.md`).
+The card exposes 208 mixer controls as ALSA controls.  The microphone DSP
+block came first: GATE, COMP and LIMITER switches and levels, the EQ
+switch, four EQ band gains, frequencies and Q, and the low/high shelf
+types.  The microphone effect chain (voice changer, radio/tremolo, voice
+reverb, tone control, sound effect, echo) and the game effect chain
+(three effect slots, the game FX switch and type, the de-esser, the M and
+S four-band EQs and the ten-band game EQ) follow it.  They are written to
+the device through the interface 4 bulk protocol
+(`docs/MIC_CONTROL_PROTOCOL.md`); the two effect blocks have their own
+record in `docs/EFFECTS_CONTROL_PLAN.md`.
 
 ```bash
 make -C tools
@@ -131,6 +137,8 @@ make -C tools
 ./tools/zgctl set 'EQ Band 1 Gain' +6.0
 ./tools/zgctl set 'EQ Band 2 Frequency' 1k
 ./tools/zgctl set 'Limiter' 42
+./tools/zgctl set 'Voice Reverb Wet' 40
+./tools/zgctl set 'Game EQ Band 1 Gain' +3.0
 ./tools/zgctl save          # persist the current settings to the device
 ./tools/zgctl reset         # reload the persisted settings
 ```
@@ -141,7 +149,12 @@ cget/cset`.  Gains cover -18.0..+18.0 dB in 0.1 dB steps, Q spans
 0.5..16 (12 steps per octave) and every band frequency is taken in plain
 Hz inside its own range; the controls start from the vendor defaults
 (100 Hz / 500 Hz / 2.5 kHz / 10 kHz, Q 1, gains 0 dB, gate and compressor
-levels 50).  `zgctl save` (the `Save to ZG01` control) persists the
+levels 50).  The effect controls keep the same units where the vendor
+model establishes them (the 0..360 gains in 0.1 dB, the 0..60 bandwidths
+in 0.01 Q, the ten-band game EQ in Hz) and publish device steps
+otherwise; the tone-control and game EQ M/S band frequencies are indices
+on a 1/12-octave grid, which `docs/EFFECTS_CONTROL_PLAN.md` documents.
+`zgctl save` (the `Save to ZG01` control) persists the
 current settings to the device's non-volatile memory; `zgctl reset`
 (the `Reset to ZG01` control) reloads the persisted settings.
 
@@ -181,21 +194,24 @@ install. If a pre-2026 package left broken DKMS state, remove
 - `docs/INITIALIZATION_ANALYSIS.md`: device USB topology and packet formats
 - `docs/MIC_CONTROL_PLAN.md`: mic control implementation plan
 - `docs/MIC_CONTROL_PROTOCOL.md`: decoded mixer parameter protocol
+- `docs/EFFECTS_CONTROL_PLAN.md`: the microphone and game effect chains
 - `docs/VENDOR_PACKAGE.md`: parameter model extracted from the Windows package
 - `docs/PARAMETER_INVENTORY.md`: every parameter the vendor application drives
+- `docs/DEVICE_PARAMETER_MAP.md`: the address of every parameter the device registers
 - `docs/FEATURE_PARITY.md`: what is left to reach ZG Controller parity
 - `packaging/arch/README.md`: Arch packaging, verification, rollback
 
 ## Scope and status
 
 Working: Game Out + Voice Out simultaneous playback, Voice In capture,
-suspend/resume, replug, single module, single card, and live write of the
-mic GATE/COMP/EQ/LIMITER controls (ALSA + `zgctl`). Not implemented: MIDI,
-other sample rates, reading device state back.
+suspend/resume, replug, single module, single card, and live write of 208
+mixer controls (the mic DSP block, the microphone effect chain and the
+game effect chain) through ALSA and `zgctl`. Not implemented: MIDI, other
+sample rates, reading device state back.
 
 The vendor application drives 383 parameters across its seven screens;
-`docs/FEATURE_PARITY.md` maps what the driver covers today (the mic DSP
-block) and what each remaining block needs.
+`docs/FEATURE_PARITY.md` maps what the driver covers today (208 of the
+map's 375 parameters) and what each remaining block needs.
 
 Experimental out-of-tree driver. Kernel updates can break the build; report
 issues with `dmesg` output.
