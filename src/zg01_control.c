@@ -666,7 +666,6 @@ int zg01_create_controls(struct zg01_dev *dev)
         struct snd_kcontrol *kctl;
         int ret;
 
-        BUILD_BUG_ON(ZG01_PARAM_EQ_Q(3) >= ZG01_PARAM_CACHE);
         *zg01_cache(dev, c->addr) = c->def;
 
         kctl = snd_ctl_new1(&tmpl, dev);

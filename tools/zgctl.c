@@ -13,6 +13,8 @@
  *         zgctl set "EQ Band 2 Frequency" 1k
  *         zgctl set "EQ Band 3 Q" 2.0
  *         zgctl set "Limiter Capture Switch" on
+ *         zgctl set "Gate Threshold" 40     (device steps, see
+ *         zgctl set "Compressor Ratio" 30    docs/MIC_CONTROL_PROTOCOL.md)
  */
 
 #include <ctype.h>
