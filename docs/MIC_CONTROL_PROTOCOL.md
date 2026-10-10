@@ -131,17 +131,40 @@ library (`MicGate*`, `MicComp*`, `MicEq*`, `MicLimiter*`, see
 Enable writes use value `0`/`1`.  The gaps suggest per-block id ranges:
 GATE `0x02-0x08`, COMP `0x09-0x10`, EQ `0x11-0x20`, LIMITER `0x21+`.
 
-Unmapped ids in the same write space: the blocks' sub-parameters exist
-in the vendor model, but their ids were not identified in the captures
-yet.  Their names and ranges, useful to label a capture, are
-`MicGateThreshold` 1..73 (default 23), `MicGateRange` 0..73 (17),
-`MicGateAttack` 57..283 (237), `MicGateHold` 0..213 (101),
-`MicGateDecay` 24..300 (188), `MicCompThreshold` 19..73 (52),
-`MicCompRatio` 0..120 (14), `MicCompAttack` 57..283 (237),
-`MicCompRelease` 24..300 (228), `MicCompKnee` 0..2 (1),
-`MicCompOutgain` 0..180 (50), `MicLimiterThreshold` 19..73 (65),
-`MicLimiterAttack` 57..283 (237), `MicLimiterRelease` 24..300 (228),
-`MicLimiterKnee` 0..2 (1), `MicLimiterOutgain` 0..180 (0).
+The rest of the chain is known from the device map
+(`docs/DEVICE_PARAMETER_MAP.md`).  That map lists the id of every
+parameter, extracted from the vendor library's parameter registration and
+checked against these captures: the mic block ids below all come out of
+the library, and the ones this driver uses were confirmed on the wire.
+
+| Id | Device name | Vendor model name, range (default) |
+|---|---|---|
+| `0x00` | `mic_p48v_onf` | P48V on/off |
+| `0x01` | `mic_mute_onf` | mute |
+| `0x04` | `mic_gate_thhold` | `MicGateThreshold` 1..73 (23) |
+| `0x05` | `mic_gate_range` | `MicGateRange` 0..73 (17) |
+| `0x06` | `mic_gate_attack` | `MicGateAttack` 57..283 (237) |
+| `0x07` | `mic_gate_hold` | `MicGateHold` 0..213 (101) |
+| `0x08` | `mic_gate_decay` | `MicGateDecay` 24..300 (188) |
+| `0x0b` | `mic_comp_thhold` | `MicCompThreshold` 19..73 (52) |
+| `0x0c` | `mic_comp_ratio` | `MicCompRatio` 0..120 (14) |
+| `0x0d` | `mic_comp_attack` | `MicCompAttack` 57..283 (237) |
+| `0x0e` | `mic_comp_release` | `MicCompRelease` 24..300 (228) |
+| `0x0f` | `mic_comp_knee` | `MicCompKnee` 0..2 (1) |
+| `0x10` | `mic_comp_outgain` | `MicCompOutgain` 0..180 (50) |
+| `0x12` | `mic_eq_name` | the EQ effect name |
+| `0x13`-`0x17` | `mic_eq_hi_on/sh/g/f/q` | three-band EQ, high band |
+| `0x18`-`0x1b` | `mic_eq_md_*` | three-band EQ, mid band |
+| `0x1c`-`0x20` | `mic_eq_lo_*` | three-band EQ, low band |
+| `0x23` | `mic_limt_thhold` | `MicLimiterThreshold` 19..73 (65) |
+| `0x24` | `mic_limt_attack` | `MicLimiterAttack` 57..283 (237) |
+| `0x25` | `mic_limt_release` | `MicLimiterRelease` 24..300 (228) |
+| `0x26` | `mic_limt_knee` | `MicLimiterKnee` 0..2 (1) |
+| `0x27` | `mic_limt_outgain` | `MicLimiterOutgain` 0..180 (0) |
+
+Note that `0x24`-`0x27` are LIMITER parameters on page 0 while `0x24` is a
+MIC EQ shape on page 1: the two pages are separate address spaces and
+only the `<flag>` digit tells them apart.
 
 ### EQ ids
 
@@ -160,6 +183,13 @@ write frame with `<flag> = 0x02`.
 pinned by the vendor model: it lists exactly four bands whose frequency
 ranges are 20-1000, 20-20000, 20-20000 and 500-20000 Hz, which is the
 order the id groups (`0x28`, `0x2c`, `0x30`) follow.
+
+The device names behind these ids are the page-1 records
+`mic_eq_v2_1_ONF`-`mic_eq_v2_4_ONF` (`0x20`-`0x23`), then
+`mic_eq_v2_1_SHAPE` (`0x24`) onwards; the GAME EQ is the same four-band
+block at `0x34`-`0x47` (`game_eq_v2_*`), which this driver does not
+expose yet.  Both are on page 1, so their `<flag>` digit is always `0x02`
+(`docs/DEVICE_PARAMETER_MAP.md`).
 
 The band frequency is *not* restricted to a grid by the protocol: the
 device takes any Hz value inside the band's range.  The vendor interface
@@ -219,6 +249,13 @@ and `04 00 00 01`, and for the mic LIMITER id `0x22` it always returns
 `04 00 00 01` regardless of the value written.  The mic value space is
 therefore not readable through this request.  Reply payloads use the same
 base-128 digits as the writes.
+
+The ids the application polls here explain the reply: `flag 0x02` with
+ids `0x08`-`0x0b` addresses page 1 offsets `0x08`-`0x0b`, which the device
+map names `dirty_flag_mic`, `dirty_mic_fx`, `dirty_game_fx` and
+`dirty_monitor`.  The application is not reading a value at all, it is
+asking whether a section of the device state changed; the fixed `00 00 00`
+/ `00 00 01` answer is that flag.
 
 The `04 f0 43 20` form makes the device push a **full state dump** on EP
 `0x83`: several 512-byte frames that mix parameter descriptors with DSP

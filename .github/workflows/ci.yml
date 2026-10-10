@@ -43,6 +43,12 @@ jobs:
       - name: Parameter codec tests
         run: bash tests/test-param-codec.sh
 
+      - name: Capture parsing tests
+        run: bash tests/test-param-frames.sh
+
+      - name: Device map tests
+        run: bash tests/test-device-map.sh
+
       - name: Build zgctl
         run: make -C tools
 

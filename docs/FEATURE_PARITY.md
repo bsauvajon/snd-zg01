@@ -37,6 +37,18 @@ level meters are streamed continuously (the ~50 ms 192-byte frames on EP
 
 ## What is already known
 
+**The device address of every parameter is now known**, not just the ones
+captured: the vendor library registers all of them when it loads, and
+`tools/vendor/extract-device-map.py` reads that registration back
+(375 parameters: 256 on page 0, 119 on page 1, with their names).  The
+address travels as two base-128 digits, `address = page * 256 + offset`;
+`docs/DEVICE_PARAMETER_MAP.md` has the full table and the evidence.
+
+So parity no longer needs a capture per control: a control can be
+implemented from the map plus the vendor model's range and default
+(`docs/PARAMETER_INVENTORY.md`), and the capture tool
+(`tools/param-frames.py`) is only needed to confirm a value encoding.
+
 | Piece | State |
 |---|---|
 | Transport | interface 4 bulk, EP `0x03` out / `0x83` in, 512-byte frames |

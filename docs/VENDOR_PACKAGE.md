@@ -129,6 +129,48 @@ both a ZG01 and a ZG02 library (the ZG02 one is snake_case, e.g.
 before its ids are trusted, which is what the captured ranges did for the
 four-band MIC EQ.
 
+## Static analysis of the vendor binaries
+
+What the disassembly of the package established.  Addresses are virtual
+addresses in the image as shipped.
+
+- `MemAPI_ZG01.dll` is a C++ library: 303 KB, **261 functions** by the
+  `.pdata` exception directory, exporting `queryMemAPI` (returns a
+  0x68-byte object whose vtable is at `0x18002d0d8`), `queryMemAPIGUID`
+  and `queryVenderProductID`.
+- **The device parameter map is in the library.**  Its initialiser at
+  `0x180001fe0` builds one 40-byte record per parameter with
+  `mov dword ptr [record+0x20], 0x0001SSII` (kind, page, offset), the name
+  string pointer and a registration call to `0x180009790`.  The scan of
+  that code yields **375 parameters** - 256 offsets on page 0 and 119 on
+  page 1 - which is the map in `docs/DEVICE_PARAMETER_MAP.md`, and it
+  reproduces every address captured from the application.  The extractor
+  is `tools/vendor/extract-device-map.py`; it needs no disassembler
+  because those two instruction encodings are fixed (`c7 05`, `48 8d 15`).
+- Its SysEx machinery is a fragment table at `0x18002cf04`
+  (`f0 43 40 3e`, `f0 43 10 3e 14`, `f0 43 30 3e 14`, `f0 43 00`) plus 21
+  message builders; save, reset and the post-EQ apply match the captures
+  byte for byte (`F0 43 30 3E 14 03 02 01/04/06 <arg> F7`).  A command
+  dispatcher at `0x180012e10` switches on `0x100..0x122` through a jump
+  table at `0x180013394`.
+- Corrections to earlier readings of this library, kept here so they are
+  not repeated:
+  - The write form seen on the wire (`F0 43 10 3E 14 01 01 00 <flag>
+    <id> ...`) is not a byte template and not a literal sequence in any of
+    the three binaries (library, controller executable, USB driver); it is
+    **assembled**, with the address coming from the record table above.
+    That is why no amount of byte-pattern searching found the ids.
+  - The 16-bit key in the descriptor records is **not** a hash of the
+    name: it is the vendor model's own key, and it never equals a wire
+    address (checked on all 21 captured parameters).
+  - The CamelCase vendor names (`MicGateOnf`, `MicEqV21G`, ...) live only
+    in the descriptor records used by `queryMemAPI`; no code in the image
+    references them.  The *device* naming is the snake_case one in the
+    record table, and that table is what carries the addresses.
+- The Yamaha USB driver payload (`Driver/setup.exe` -> `YSUSB64.cab`:
+  `ysusb_bulklib64.dll`, `ysusb_asio64.dll`, `ysusb_w10_64.sys`) contains
+  neither parameter names nor SysEx frames: it is a transport layer.
+
 ## Caveats
 
 - The descriptor slots were decoded by structure (name pointer at offset
