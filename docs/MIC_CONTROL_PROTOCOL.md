@@ -279,3 +279,11 @@ were a "piecewise frequency table with a small deficit", a "gain scale of
 "+32768 offset" above 16 kHz.  They all disappear once the SysEx framing
 and the base-128 digits are taken into account; `tests/test-param-codec.sh`
 pins the corrected mapping against the captured bytes.
+
+Concretely, the previous encoder sent `00 01 9B` for +6.0 dB of EQ gain
+and `00 5D AC` for 12 kHz: `0x9B` and `0xAC` are not valid 7-bit data
+bytes, so the firmware rejects those frames.  Where the digits stayed
+valid the value was simply wrong (+12.0 dB came out as 257 instead of
+300, i.e. +27 dB, and 8 kHz as 8051 Hz).  Only the values that had been
+measured by hand - 1 kHz, 0 dB, +-18 dB - happened to be encoded
+correctly, which is why the defect was not obvious.
