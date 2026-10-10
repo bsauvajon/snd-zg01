@@ -40,7 +40,10 @@ stage=$(zg01_stage_source_tree "$repo_root" "$test_root/stage")
     PKGDEST="$test_root/packages" makepkg --cleanbuild --clean --noconfirm
 )
 
-package=$(find "$test_root/packages" -maxdepth 1 -type f -name 'zgctl-git-*.pkg.tar.zst' -print -quit)
+# makepkg also emits a -debug package whose path matches the same glob; pick
+# the real one explicitly instead of whichever `find` happens to return first.
+package=$(find "$test_root/packages" -maxdepth 1 -type f \
+  -name 'zgctl-git-*.pkg.tar.zst' ! -name '*-debug-*' -print -quit)
 test -n "$package"
 bsdtar -tf "$package" | grep -Fxq 'usr/bin/zgctl'
 bsdtar -xOf "$package" .PKGINFO > "$test_root/PKGINFO"
