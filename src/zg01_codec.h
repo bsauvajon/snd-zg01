@@ -192,15 +192,71 @@ static inline unsigned long zg01_q_user_to_dev(long q_01)
     return (unsigned long)((12u * (l - l50)) / 256u);
 }
 
+/* Smallest user value whose device value is not below dev. */
+static inline long zg01_q_user_at_least(unsigned long dev)
+{
+    long lo = ZG01_Q_USER_MIN, hi = ZG01_Q_USER_MAX, mid;
+
+    while (lo < hi) {
+        mid = lo + (hi - lo) / 2;
+        if ((long)zg01_q_user_to_dev(mid) < (long)dev)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+
+    return lo;
+}
+
+/* Largest user value whose device value is not above dev. */
+static inline long zg01_q_user_at_most(unsigned long dev)
+{
+    long lo = ZG01_Q_USER_MIN, hi = ZG01_Q_USER_MAX, mid;
+
+    while (lo < hi) {
+        mid = lo + (hi - lo + 1) / 2;
+        if ((long)zg01_q_user_to_dev(mid) > (long)dev)
+            hi = mid - 1;
+        else
+            lo = mid;
+    }
+
+    return lo;
+}
+
+/*
+ * The user value reported for a device step.  It must convert back to the
+ * same step: reporting the physical value (0.5 * 2^(dev/12) rounded to 0.01)
+ * did not survive the inverse, so a read followed by a write - exactly what
+ * alsactl store/restore does - moved the setting by one step for 46 of the 61
+ * device values.  The user scale is finer than the device one, so the values
+ * that map to a step form a contiguous interval; the physical value stays the
+ * answer whenever it falls inside it (that keeps the nominal anchors: 0.50,
+ * 1.00 at step 12, 16.0 at the top), otherwise the closest value in the
+ * interval is used.  Cost is two log-scale binary searches, microseconds
+ * against a USB write.
+ */
 static inline long zg01_q_dev_to_user(unsigned long dev)
 {
     unsigned int v;
+    long lower, upper, physical;
 
     if (dev > ZG01_Q_DEV_MAX)
         dev = ZG01_Q_DEV_MAX;
+
+    lower = zg01_q_user_at_least(dev);
+    if ((long)zg01_q_user_to_dev(lower) != (long)dev)
+        return lower;                 /* no user value reports this step */
+    upper = zg01_q_user_at_most(dev);
+
     v = (unsigned int)((dev * 256u) / 12u);
-    /* Round to the nearest 0.01 Q: the device holds 61 values only. */
-    return (long)((50UL * zg01_exp2_fp(v) + 128UL) >> 8);
+    physical = (long)((50UL * zg01_exp2_fp(v) + 128UL) >> 8);
+    if (physical < lower)
+        physical = lower;
+    if (physical > upper)
+        physical = upper;
+
+    return physical;
 }
 
 #endif /* ZG01_CODEC_H */

@@ -125,12 +125,18 @@ int main(void)
 
     /* Mid-scale Q: 0.5 * 2^(30/12) = 2.828 -> 2.83 in 0.01 Q units. */
     check(zg01_q_dev_to_user(30), 283, "device 30 -> Q 2.83");
-    check(zg01_q_dev_to_user(1), 53, "device 1 -> Q 0.53");
+    /*
+     * 0.53 is the physical value of step 1 but converts back to step 0, so
+     * the reported value is the closest one that survives the inverse.
+     */
+    check(zg01_q_dev_to_user(1), 54, "device 1 -> Q 0.54 (round-trips)");
 
     /*
-     * The device holds 61 Q values and the user space 1550, so the
-     * mapping is a quantiser: assert monotonicity and that a device
-     * value survives a round trip to within one step.
+     * The device holds 61 Q values and the user space 1550, so the mapping
+     * is a quantiser: monotonic, and every device value must survive a
+     * round trip exactly.  A get followed by a set - alsactl
+     * store/restore, or any client that reads before writing - must not
+     * move the setting.
      */
     for (q = ZG01_Q_USER_MIN; q <= ZG01_Q_USER_MAX; q++) {
         dev = (long)zg01_q_user_to_dev(q);
@@ -157,8 +163,9 @@ int main(void)
             break;
         }
         back = (long)zg01_q_user_to_dev(q);
-        if (back < dev - 1 || back > dev + 1) {
-            printf("FAIL device %ld -> Q %ld -> device %ld\n", dev, q, back);
+        if (back != dev) {
+            printf("FAIL device %ld -> Q %ld -> device %ld, must be exact\n",
+                   dev, q, back);
             failures++;
             break;
         }
