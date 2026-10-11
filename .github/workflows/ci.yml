@@ -43,6 +43,12 @@ jobs:
       - name: Parameter codec tests
         run: bash tests/test-param-codec.sh
 
+      - name: zgctl unit classification tests
+        run: bash tests/test-zgctl-kinds.sh
+
+      - name: DKMS clean contract
+        run: bash tests/test-dkms-clean.sh
+
       - name: Capture parsing tests
         run: bash tests/test-param-frames.sh
 
