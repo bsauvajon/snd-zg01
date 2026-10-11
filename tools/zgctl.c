@@ -97,13 +97,25 @@ static int ends_with(const char *s, const char *suffix)
     return a >= b && !strcmp(s + a - b, suffix);
 }
 
+static int starts_with(const char *s, const char *prefix)
+{
+    return !strncmp(s, prefix, strlen(prefix));
+}
+
 static enum kind kind_of(const struct snd_ctl_elem_info *info)
 {
     const char *name = (const char *)info->id.name;
 
     if (info->type == SNDRV_CTL_ELEM_TYPE_BOOLEAN)
         return KIND_BOOL;
-    if (ends_with(name, "Gain"))
+    /*
+     * Only the EQ band gains are 0.1 dB around 0 dB.  The dynamics out
+     * gains also end in "Gain" but are raw device steps with no
+     * established unit (docs/MIC_CONTROL_PROTOCOL.md), so they must stay
+     * integers: scaling them by ten both misreports and rejects valid
+     * values.
+     */
+    if (starts_with(name, "EQ Band") && ends_with(name, "Gain"))
         return KIND_GAIN;
     if (ends_with(name, "Frequency"))
         return KIND_FREQ;
