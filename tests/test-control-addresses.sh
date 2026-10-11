@@ -217,6 +217,16 @@ for func in ('zg01_param_write', 'zg01_param_read', 'zg01_param_parse'):
     for macro in ('ZG01_ADDR_FLAG', 'ZG01_ADDR_ID'):
         assert macro in segment, f'{func} does not derive the digits ({macro})'
 
+# a put is a user action and must always reach the device: the cache is
+# seeded from the model defaults and cannot be refreshed (page 0 answers
+# reads with a status, and a reset does not touch it), so deduplicating a
+# write against it swallowed real settings changes.
+put = source.split('zg01_ctl_put(', 1)[1].split('\n}\n', 1)[0]
+assert 'zg01_param_write(dev, c->addr, raw)' in put, \
+    'zg01_ctl_put must write the parameter'
+assert '*zg01_cache(dev, c->addr) == raw' not in put, \
+    'zg01_ctl_put must not skip a write because of the cached value'
+
 print(f'{len(rows)} controls: addresses, bounds and defaults match the device map')
 PY
 

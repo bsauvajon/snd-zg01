@@ -574,9 +574,17 @@ static int zg01_ctl_put(struct snd_kcontrol *kcontrol,
         return -EINVAL;
 
     raw = zg01_user_to_dev(c->conv, user);
-    if (*zg01_cache(dev, c->addr) == raw)
-        return 0;
 
+    /*
+     * Always write.  The cache is seeded with the model defaults, not with
+     * what the device holds (its persisted settings can come from the
+     * Windows application or an earlier session), and nothing can refresh
+     * it: page 0 answers reads with a status rather than a value, and a
+     * Reset to ZG01 reloads the device without touching the cache.  A
+     * "the cached value is already this" shortcut therefore swallowed real
+     * writes - asking for P48V off while the cache said off did nothing
+     * even though phantom power was on.
+     */
     ret = zg01_param_write(dev, c->addr, raw);
     if (ret)
         return ret;
