@@ -14,7 +14,11 @@
 #
 # The expectations below are the vendor model's values, taken from
 # MemAPI_ZG01.dll (docs/PARAMETER_INVENTORY.md); the device names are the
-# ones the library registers (docs/DEVICE_PARAMETER_MAP.md).
+# ones the library registers (docs/DEVICE_PARAMETER_MAP.md).  The effect
+# chain rows were derived the same way and are documented in
+# docs/EFFECTS_CONTROL_PLAN.md, including the correspondence between the
+# vendor's CamelCase names and the device's registered names, which is the
+# one thing neither source carries.
 
 set -euo pipefail
 
@@ -175,6 +179,179 @@ EXPECTED = {
     'EQ Band 2 Q': ('mic_eq_v2_2_Q', 50, 1600, 12),
     'EQ Band 3 Q': ('mic_eq_v2_3_Q', 50, 1600, 12),
     'EQ Band 4 Q': ('mic_eq_v2_4_Q', 50, 1600, 12),
+
+    # Microphone effect chain (docs/EFFECTS_CONTROL_PLAN.md).
+    'Voice Transformer':             ('vic_trn_on', 0, 1, 0),
+    'Voice Transformer Type':        ('vic_trn_type', 0, 1, 0),
+    'Voice Harmony Transpose':       ('vic_trn_hrm_trn', 28, 100, 64),
+    'Voice Harmony Formant':         ('vic_trn_hrm_fmt', 2, 126, 64),
+    'Voice Harmony Level':           ('vic_trn_hrm_lvl', 0, 127, 127),
+    'Voice Harmony Correct':         ('vic_trn_hrm_corr', 0, 100, 64),
+    'Voice Pitch 1':                 ('vic_trn_pit_pit1', 40, 88, 64),
+    'Voice Pitch 1 Fine':            ('vic_trn_pit_fin1', 14, 114, 64),
+    'Voice Pitch 1 Level':           ('vic_trn_pit_lvl1', 0, 127, 100),
+    'Voice Pitch 2':                 ('vic_trn_pit_pit2', 40, 88, 64),
+    'Voice Pitch 2 Fine':            ('vic_trn_pit_fin2', 14, 114, 64),
+    'Voice Pitch 2 Level':           ('vic_trn_pit_lvl2', 0, 127, 100),
+    'Voice Harmony Out Level':       ('voice_harm_level', -180, 180, 180),
+    'Voice Pitch Out Level':         ('voice_pitch_level', -180, 180, 180),
+    'Voice FX':                      ('vic_fx_on', 0, 1, 0),
+    'Voice FX Type':                 ('vic_fx_type', 0, 1, 0),
+    'Voice Radio Cutoff':            ('vic_fx_rdo_cut', 50, 113, 61),
+    'Voice Radio Drive':             ('vic_fx_rdo_drv', 1, 25, 10),
+    'Voice Radio LPF':               ('vic_fx_rdo_lpf', 34, 60, 50),
+    'Voice Radio Out Level':         ('voice_radio_level', -180, 180, 180),
+    'Voice Tremolo Speed':           ('vic_fx_trm_spd', 1, 127, 89),
+    'Voice Tremolo Depth':           ('vic_fx_rdo_dep', 0, 127, 64),
+    'Voice Tremolo Out Level':       ('voice_tremolo_level', -180, 180, 180),
+    'Voice Reverb':                  ('vic_rev_on', 0, 1, 0),
+    'Voice Reverb Wet':              ('vic_rev_wet', 1, 127, 64),
+    'Voice Reverb Type':             ('vic_rev_type', 0, 4, 0),
+    'Voice Reverb Time':             ('vic_rev_time', 0, 57, 25),
+    'Voice Reverb Init Delay':       ('vic_rev_init', 0, 63, 16),
+    'Voice Reverb High Ratio':       ('vic_rev_high', 1, 10, 8),
+    'Voice Reverb Density':          ('vic_rev_dens', 0, 4, 4),
+    'Voice Reverb Diffusion':        ('vic_rev_diff', 0, 10, 10),
+    'Voice Reverb HPF':              ('vic_rev_hpf', 0, 52, 0),
+    'Voice Reverb LPF':              ('vic_rev_lpf', 34, 60, 53),
+    'Voice Tone':                    ('vic_tc_on', 0, 1, 0),
+    'Voice Tone High Switch':        ('vic_tc_hi_on', 0, 1, 1),
+    'Voice Tone High Shape':         ('vic_tc_hi_sh', 0, 1, 1),
+    'Voice Tone High Gain':          ('vic_tc_hi_g', -180, 180, 180),
+    'Voice Tone High Frequency':     ('vic_tc_hi_f', 60, 124, 112),
+    'Voice Tone High Q':             ('vic_tc_hi_q', 50, 1600, 12),
+    'Voice Tone Mid Switch':         ('vic_tc_md_on', 0, 1, 1),
+    'Voice Tone Mid Gain':           ('vic_tc_md_g', -180, 180, 180),
+    'Voice Tone Mid Frequency':      ('vic_tc_md_f', 4, 124, 72),
+    'Voice Tone Mid Q':              ('vic_tc_md_q', 50, 1600, 12),
+    'Voice Tone Low Switch':         ('vic_tc_lo_on', 0, 1, 1),
+    'Voice Tone Low Shape':          ('vic_tc_lo_sh', 0, 1, 1),
+    'Voice Tone Low Gain':           ('vic_tc_lo_g', -180, 180, 180),
+    'Voice Tone Low Frequency':      ('vic_tc_lo_f', 4, 72, 32),
+    'Voice Tone Low Q':              ('vic_tc_lo_q', 50, 1600, 12),
+    'Sound Effect':                  ('se_onf', 0, 1, 0),
+    'Sound Effect Level':            ('se_level', 0, 2, 1),
+    'Sound Effect Level dB':         ('se_db_level', 1, 73, 53),
+    'Sound Effect Frequency':        ('se_freq', 29, 52, 44),
+    'Sound Effect Waveform':         ('se_wave', 0, 3, 0),
+    'Echo':                          ('ech_on', 0, 1, 0),
+    'Echo Stereo':                   ('ech_stereo', 0, 1, 0),
+    'Echo Time':                     ('ech_time', 0, 2, 1),
+    'Echo Delay Level':              ('ech_dly_lvl', 0, 103, 103),
+    'Echo Reverb Level':             ('ech_rev_lvl', 0, 103, 91),
+    'Echo Delay Time':               ('ech_dly_time', 200, 7430, 2400),
+    'Echo Delay High Ratio':         ('ech_dly_hi_rat', 1, 10, 8),
+    'Echo Feedback':                 ('ech_feed', 1, 127, 94),
+    'Echo Reverb Type':              ('ech_rev_type', 0, 4, 0),
+    'Echo Reverb Time':              ('ech_rev_time', 0, 57, 25),
+    'Echo Init Delay':               ('ech_ini_del', 0, 63, 16),
+    'Echo High Ratio':               ('ech_hi_rat', 1, 10, 8),
+    'Echo Density':                  ('ech_dens', 0, 4, 4),
+    'Echo Diffusion':                ('ech_diff', 0, 10, 10),
+    'Echo HPF':                      ('ech_hpf', 0, 52, 0),
+    'Echo LPF':                      ('ech_lpf', 34, 60, 53),
+
+    # Game effect chain.
+    'Game Effect 1':                 ('game_fx_a', 0, 1, 0),
+    'Game Effect 2':                 ('game_fx_b', 0, 1, 0),
+    'Game Effect 3':                 ('game_fx_c', 0, 1, 0),
+    'Game FX':                       ('gam_fx_onf', 0, 1, 0),
+    'Game FX Type':                  ('gam_fx_type', 0, 100, 0),
+    'Game De-esser M Switch':        ('gam_dee_m_on', 0, 1, 0),
+    'Game De-esser M Low Frequency': ('gam_dee_m_lo', 4, 96, 36),
+    'Game De-esser M High Frequency': ('gam_dee_m_hi', 60, 124, 93),
+    'Game De-esser M Threshold':     ('gam_dee_m_thr', 19, 73, 57),
+    'Game De-esser M Ratio':         ('gam_dee_m_rat', 0, 120, 10),
+    'Game De-esser M Attack':        ('gam_dee_m_att', 57, 283, 237),
+    'Game De-esser M Release':       ('gam_dee_m_rel', 24, 300, 228),
+    'Game De-esser M Gain':          ('gam_dee_m_gain', 0, 180, 37),
+    'Game De-esser S Switch':        ('gam_dee_s_onf', 0, 1, 0),
+    'Game De-esser S Low Frequency': ('gam_dee_s_lo', 4, 96, 36),
+    'Game De-esser S High Frequency': ('gam_dee_s_hi', 60, 124, 93),
+    'Game De-esser S Threshold':     ('gam_dee_s_thr', 19, 73, 57),
+    'Game De-esser S Ratio':         ('gam_dee_s_rat', 0, 120, 10),
+    'Game De-esser S Attack':        ('gam_dee_s_att', 57, 283, 237),
+    'Game De-esser S Release':       ('gam_dee_s_rel', 24, 300, 228),
+    'Game De-esser S Gain':          ('gam_dee_s_gain', 0, 180, 37),
+    'Game EQ M':                     ('gam_eq_m_onf', 0, 1, 0),
+    'Game EQ M High Switch':         ('gam_eq_m_hi_on', 0, 1, 1),
+    'Game EQ M High Shape':          ('gam_eq_m_hi_sh', 0, 1, 1),
+    'Game EQ M High Gain':           ('gam_eq_m_hi_g', -180, 180, 180),
+    'Game EQ M High Frequency':      ('gam_eq_m_hi_f', 60, 124, 112),
+    'Game EQ M High Q':              ('gam_eq_m_hi_q', 50, 1600, 12),
+    'Game EQ M Mid High Switch':     ('gam_eq_m_mh_on', 0, 1, 1),
+    'Game EQ M Mid High Gain':       ('gam_eq_m_mh_g', -180, 180, 180),
+    'Game EQ M Mid High Frequency':  ('gam_eq_m_mh_f', 4, 124, 96),
+    'Game EQ M Mid High Q':          ('gam_eq_m_mh_q', 50, 1600, 12),
+    'Game EQ M Mid Low Switch':      ('gam_eq_m_ml_on', 0, 1, 1),
+    'Game EQ M Mid Low Gain':        ('gam_eq_m_ml_g', -180, 180, 180),
+    'Game EQ M Mid Low Frequency':   ('gam_eq_m_ml_f', 4, 124, 72),
+    'Game EQ M Mid Low Q':           ('gam_eq_m_ml_q', 50, 1600, 12),
+    'Game EQ M Low Switch':          ('gam_eq_m_lo_on', 0, 1, 1),
+    'Game EQ M Low Shape':           ('gam_eq_m_lo_sh', 0, 1, 1),
+    'Game EQ M Low Gain':            ('gam_eq_m_lo_g', -180, 180, 180),
+    'Game EQ M Low Frequency':       ('gam_eq_m_lo_f', 4, 72, 32),
+    'Game EQ M Low Q':               ('gam_eq_m_lo_q', 50, 1600, 12),
+    'Game EQ S':                     ('gam_eq_s_onf', 0, 1, 0),
+    'Game EQ S High Switch':         ('gam_eq_s_hi_on', 0, 1, 1),
+    'Game EQ S High Shape':          ('gam_eq_s_hi_sh', 0, 1, 1),
+    'Game EQ S High Gain':           ('gam_eq_s_hi_g', -180, 180, 180),
+    'Game EQ S High Frequency':      ('gam_eq_s_hi_f', 60, 124, 112),
+    'Game EQ S High Q':              ('gam_eq_s_hi_q', 50, 1600, 12),
+    'Game EQ S Mid High Switch':     ('gam_eq_s_mh_on', 0, 1, 1),
+    'Game EQ S Mid High Gain':       ('gam_eq_s_mh_g', -180, 180, 180),
+    'Game EQ S Mid High Frequency':  ('gam_eq_s_mh_f', 4, 124, 96),
+    'Game EQ S Mid High Q':          ('gam_eq_s_mh_q', 50, 1600, 12),
+    'Game EQ S Mid Low Switch':      ('gam_eq_s_ml_on', 0, 1, 1),
+    'Game EQ S Mid Low Gain':        ('gam_eq_s_ml_g', -180, 180, 180),
+    'Game EQ S Mid Low Frequency':   ('gam_eq_s_ml_f', 4, 124, 72),
+    'Game EQ S Mid Low Q':           ('gam_eq_s_ml_q', 50, 1600, 12),
+    'Game EQ S Low Switch':          ('gam_eq_s_lo_on', 0, 1, 1),
+    'Game EQ S Low Shape':           ('gam_eq_s_lo_sh', 0, 1, 1),
+    'Game EQ S Low Gain':            ('gam_eq_s_lo_g', -180, 180, 180),
+    'Game EQ S Low Frequency':       ('gam_eq_s_lo_f', 4, 72, 32),
+    'Game EQ S Low Q':               ('gam_eq_s_lo_q', 50, 1600, 12),
+    'Game EQ':                       ('gam_eq_t_onf', 0, 1, 0),
+    'Game EQ Band 1 Switch':         ('game_eq_v2_1_ONF', 0, 1, 1),
+    'Game EQ Band 1 Gain':           ('game_eq_v2_1_G', -180, 180, 180),
+    'Game EQ Band 1 Frequency':      ('game_eq_v2_1_F', 20, 1000, 31),
+    'Game EQ Band 1 Q':              ('game_eq_v2_1_Q', 50, 1600, 42),
+    'Game EQ Band 2 Switch':         ('game_eq_v2_2_ONF', 0, 1, 1),
+    'Game EQ Band 2 Gain':           ('game_eq_v2_2_G', -180, 180, 180),
+    'Game EQ Band 2 Frequency':      ('game_eq_v2_2_F', 20, 20000, 63),
+    'Game EQ Band 2 Q':              ('game_eq_v2_2_Q', 50, 1600, 42),
+    'Game EQ Band 3 Switch':         ('game_eq_v2_3_ONF', 0, 1, 1),
+    'Game EQ Band 3 Gain':           ('game_eq_v2_3_G', -180, 180, 180),
+    'Game EQ Band 3 Frequency':      ('game_eq_v2_3_F', 20, 20000, 125),
+    'Game EQ Band 3 Q':              ('game_eq_v2_3_Q', 50, 1600, 42),
+    'Game EQ Band 4 Switch':         ('game_eq_v2_4_ONF', 0, 1, 1),
+    'Game EQ Band 4 Gain':           ('game_eq_v2_4_G', -180, 180, 180),
+    'Game EQ Band 4 Frequency':      ('game_eq_v2_4_F', 20, 20000, 250),
+    'Game EQ Band 4 Q':              ('game_eq_v2_4_Q', 50, 1600, 42),
+    'Game EQ Band 5 Switch':         ('game_eq_v2_5_ONF', 0, 1, 1),
+    'Game EQ Band 5 Gain':           ('game_eq_v2_5_G', -180, 180, 180),
+    'Game EQ Band 5 Frequency':      ('game_eq_v2_5_F', 20, 20000, 500),
+    'Game EQ Band 5 Q':              ('game_eq_v2_5_Q', 50, 1600, 42),
+    'Game EQ Band 6 Switch':         ('game_eq_v2_6_ONF', 0, 1, 1),
+    'Game EQ Band 6 Gain':           ('game_eq_v2_6_G', -180, 180, 180),
+    'Game EQ Band 6 Frequency':      ('game_eq_v2_6_F', 20, 20000, 1000),
+    'Game EQ Band 6 Q':              ('game_eq_v2_6_Q', 50, 1600, 42),
+    'Game EQ Band 7 Switch':         ('game_eq_v2_7_ONF', 0, 1, 1),
+    'Game EQ Band 7 Gain':           ('game_eq_v2_7_G', -180, 180, 180),
+    'Game EQ Band 7 Frequency':      ('game_eq_v2_7_F', 20, 20000, 2000),
+    'Game EQ Band 7 Q':              ('game_eq_v2_7_Q', 50, 1600, 42),
+    'Game EQ Band 8 Switch':         ('game_eq_v2_8_ONF', 0, 1, 1),
+    'Game EQ Band 8 Gain':           ('game_eq_v2_8_G', -180, 180, 180),
+    'Game EQ Band 8 Frequency':      ('game_eq_v2_8_F', 20, 20000, 4000),
+    'Game EQ Band 8 Q':              ('game_eq_v2_8_Q', 50, 1600, 42),
+    'Game EQ Band 9 Switch':         ('game_eq_v2_9_ONF', 0, 1, 1),
+    'Game EQ Band 9 Gain':           ('game_eq_v2_9_G', -180, 180, 180),
+    'Game EQ Band 9 Frequency':      ('game_eq_v2_9_F', 20, 20000, 8000),
+    'Game EQ Band 9 Q':              ('game_eq_v2_9_Q', 50, 1600, 42),
+    'Game EQ Band 10 Switch':        ('game_eq_v2_10_ONF', 0, 1, 1),
+    'Game EQ Band 10 Gain':          ('game_eq_v2_10_G', -180, 180, 180),
+    'Game EQ Band 10 Frequency':     ('game_eq_v2_10_F', 500, 20000, 16000),
+    'Game EQ Band 10 Q':             ('game_eq_v2_10_Q', 50, 1600, 42),
 }
 
 by_name = {row['name']: row for row in rows}
@@ -205,7 +382,26 @@ for name, (device, vmin, vmax, vdef) in EXPECTED.items():
         f'they would share one cache slot')
     seen[row['addr']] = name
 
-# the value the driver would put on the wire, decoded back
+# The two bytes the frame carries are the base-128 digits of the address
+# (docs/MIC_CONTROL_PROTOCOL.md): every address of the map must split into
+# two 7-bit digits, and the split must be the address itself - a parameter
+# the driver never derived this way would travel under a wrong digit.
+page0_high = 0
+for addr, dev in sorted(params.items()):
+    flag, param_id = addr // 128, addr % 128
+    assert 0 <= flag <= 0x7f, f'{dev}: high digit 0x{flag:02x} is not 7-bit'
+    assert 0 <= param_id <= 0x7f, f'{dev}: low digit 0x{param_id:02x} is not 7-bit'
+    assert flag * 128 + param_id == addr, f'{dev}: digits do not rebuild 0x{addr:03x}'
+    if addr // 128 == 1:
+        page0_high += 1
+
+# Page 0 offsets at or above 0x80 need the high digit 0x01: that half of the
+# page holds the game effect, binaural and monitor parameters, and the
+# application drives some of them (its monitor volume sliders write page 0
+# offset 0xe9 and 0xea), so the digit cannot be 0x00 as it is for the low
+# half.  The count is pinned so the space stays visible.
+assert page0_high == 128, page0_high
+
 for name, row in by_name.items():
     flag, param_id = row['addr'] // 128, row['addr'] % 128
     assert 0 <= flag <= 0x7f and 0 <= param_id <= 0x7f
