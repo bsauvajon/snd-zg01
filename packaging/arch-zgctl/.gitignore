@@ -1,0 +1,4 @@
+snd-zg01-dkms-git-*.pkg.tar.zst
+zgctl-git-*.pkg.tar.zst
+pkg/
+src/

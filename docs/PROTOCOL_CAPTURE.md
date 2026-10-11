@@ -8,6 +8,41 @@ from observed behavior rather than guessed USB messages.
 Do not capture or redistribute firmware updates. Close unrelated audio and MIDI
 applications, and do not disconnect the ZG01 while its firmware is updating.
 
+## Linux host + Windows guest (usbmon)
+
+When ZG Controller runs in a Windows guest (libvirt/QEMU `usb-host`
+passthrough), capture on the Linux host instead of inside the guest.
+QEMU's `usb-host` keeps the device on the host USB bus, so usbmon sees
+every transfer, responses included, in the format that
+`tools/normalize-usbmon.py` consumes.
+
+```bash
+sudo modprobe usbmon
+lsusb | grep 0499:1513                     # note the bus, e.g. Bus 001
+sudo tcpdump -i usbmon1 -w 00-baseline.pcap
+# perform exactly one action in ZG Controller, then stop with ^C
+```
+
+Use one `usbmonN` interface per host bus (`usbmon1` for Bus 001).
+Capture with tcpdump: it writes classic pcap directly and, unlike
+tshark's dumpcap, does not drop privileges mid-capture.
+
+Normalize on the host:
+
+```bash
+python3 tools/normalize-usbmon.py 00-baseline.pcap --device 1.78 \
+  > 00-baseline.jsonl
+```
+
+`--device BUS.DEV` keeps a single device, because usbmon records carry no
+`idVendor`/`idProduct`. Isochronous audio is skipped by default: it would
+drown the control and bulk traffic. Add `--include-iso` only when the
+streams themselves matter, and note that it emits each usbmon record
+unmerged. Otherwise every control or bulk transfer collapses into one
+JSONL record: the setup fields (`request_type`, `request`, `value`,
+`index`, `length`) plus, for IN transfers, the payload carried by the
+completion.
+
 ## Install the capture tools
 
 Install the current Yamaha ZG Controller, Wireshark, and USBPcap on native

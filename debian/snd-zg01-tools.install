@@ -1,0 +1,2 @@
+tools/zgctl usr/bin/
+debian/zgctl.1 usr/share/man/man1/

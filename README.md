@@ -31,9 +31,10 @@ sinks without moving the mix into userspace.
 
 ### Arch Linux, CachyOS, Omarchy
 
-Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst`) are attached to each
+Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst` and
+`zgctl-git-*.pkg.tar.zst`) are attached to each
 [GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest);
-install the downloaded file with `sudo pacman -U <file>`.
+install the downloaded files with `sudo pacman -U <file>`.
 
 To build it yourself instead, install the build tools, DKMS, and the headers
 for the running kernel:
@@ -69,13 +70,16 @@ curl -fsSL https://raw.githubusercontent.com/bsauvajon/snd-zg01/main/apt/snd-zg0
 curl -fsSL https://raw.githubusercontent.com/bsauvajon/snd-zg01/main/apt/snd-zg01.sources \
   | sudo tee /etc/apt/sources.list.d/snd-zg01.sources >/dev/null
 sudo apt update
-sudo apt install snd-zg01-dkms
+sudo apt install snd-zg01-dkms snd-zg01-tools
 ```
+
+`snd-zg01-tools` is optional and ships `zgctl`; install only
+`snd-zg01-dkms` for the driver alone.
 
 Or download the `.deb` from the latest release and install it manually:
 
 ```bash
-sudo dpkg -i snd-zg01-dkms_*.deb
+sudo dpkg -i snd-zg01-dkms_*.deb snd-zg01-tools_*_amd64.deb
 sudo apt-get install -f   # only if dependencies are missing
 ```
 
@@ -114,6 +118,40 @@ arecord -D hw:zg01,2 -f S32_LE -r 48000 -c 2 -d 5 test.wav
 Voice In logs bursts of `-ECONNRESET` on the first open. They are benign;
 the chain resubmits.
 
+## Mic controls
+
+The card exposes the mic DSP as ALSA controls: GATE, COMP and LIMITER
+switches and levels, the EQ switch, four EQ band gains, frequencies and
+Q, and the low/high shelf types.  They are written to the device through
+the interface 4 bulk protocol (`docs/MIC_CONTROL_PROTOCOL.md`).
+
+```bash
+make -C tools
+./tools/zgctl list
+./tools/zgctl set 'EQ Band 1 Gain' +6.0
+./tools/zgctl set 'EQ Band 2 Frequency' 1k
+./tools/zgctl set 'Limiter' 42
+./tools/zgctl save          # persist the current settings to the device
+./tools/zgctl reset         # reload the persisted settings
+```
+
+`zgctl` accepts dB for gains, Hz/kHz for frequencies, ratios for Q and
+on/off for switches; the same controls are reachable with `amixer
+cget/cset`.  Gains cover -18.0..+18.0 dB in 0.1 dB steps, Q spans
+0.5..16 (12 steps per octave) and every band frequency is taken in plain
+Hz inside its own range; the controls start from the vendor defaults
+(100 Hz / 500 Hz / 2.5 kHz / 10 kHz, Q 1, gains 0 dB, gate and compressor
+levels 50).  `zgctl save` (the `Save to ZG01` control) persists the
+current settings to the device's non-volatile memory; `zgctl reset`
+(the `Reset to ZG01` control) reloads the persisted settings.
+
+Writes reach the device live.  Reading values back is not implemented:
+the getters return the **last value the driver wrote** (a cache seeded
+with the built-in defaults at load).  Settings changed outside the driver
+(ZG Controller on Windows, or `reset`) are therefore not reflected until
+the control is written again from Linux.  This is the documented
+behaviour; see `docs/MIC_CONTROL_PROTOCOL.md`.
+
 ## DKMS
 
 Both packages install the source to DKMS. DKMS rebuilds the module on kernel
@@ -141,13 +179,23 @@ install. If a pre-2026 package left broken DKMS state, remove
 
 - `docs/PROTOCOL_CAPTURE.md`: capture workflow for knobs, buttons, routing
 - `docs/INITIALIZATION_ANALYSIS.md`: device USB topology and packet formats
+- `docs/MIC_CONTROL_PLAN.md`: mic control implementation plan
+- `docs/MIC_CONTROL_PROTOCOL.md`: decoded mixer parameter protocol
+- `docs/VENDOR_PACKAGE.md`: parameter model extracted from the Windows package
+- `docs/PARAMETER_INVENTORY.md`: every parameter the vendor application drives
+- `docs/FEATURE_PARITY.md`: what is left to reach ZG Controller parity
 - `packaging/arch/README.md`: Arch packaging, verification, rollback
 
 ## Scope and status
 
 Working: Game Out + Voice Out simultaneous playback, Voice In capture,
-suspend/resume, replug, single module, single card. Not implemented: MIDI,
-other sample rates.
+suspend/resume, replug, single module, single card, and live write of the
+mic GATE/COMP/EQ/LIMITER controls (ALSA + `zgctl`). Not implemented: MIDI,
+other sample rates, reading device state back.
+
+The vendor application drives 383 parameters across its seven screens;
+`docs/FEATURE_PARITY.md` maps what the driver covers today (the mic DSP
+block) and what each remaining block needs.
 
 Experimental out-of-tree driver. Kernel updates can break the build; report
 issues with `dmesg` output.
