@@ -84,6 +84,20 @@ int main(void)
     expect_kind(KIND_INT, "Game De-esser M Gain", SNDRV_CTL_ELEM_TYPE_INTEGER);
     expect_kind(KIND_INT, "Game De-esser S Gain", SNDRV_CTL_ELEM_TYPE_INTEGER);
 
+    /* selectors are integers: their switch is a separate control */
+    expect_kind(KIND_INT, "Voice Transformer Type", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Voice FX Type", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Voice Tone High Shape", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Voice Tone Low Shape", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Game EQ M High Shape", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Game EQ M Low Shape", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Game EQ S High Shape", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Game EQ S Low Shape", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_BOOL, "Voice Tone High Switch",
+                SNDRV_CTL_ELEM_TYPE_BOOLEAN);
+    expect_kind(KIND_INT, "Sound Effect Level Steps",
+                SNDRV_CTL_ELEM_TYPE_INTEGER);
+
     /* Hz for the mic EQ and the ten-band game EQ only */
     expect_kind(KIND_FREQ, "Game EQ Band 1 Frequency", SNDRV_CTL_ELEM_TYPE_INTEGER);
     expect_kind(KIND_FREQ, "Game EQ Band 10 Frequency", SNDRV_CTL_ELEM_TYPE_INTEGER);

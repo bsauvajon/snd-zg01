@@ -21,6 +21,7 @@
 #include <sound/tlv.h>
 
 #include "zg01.h"
+#include "zg01_addr.h"
 #include "zg01_codec.h"
 #include "zg01_control.h"
 
@@ -130,11 +131,9 @@ static int zg01_param_keepalive_locked(struct zg01_dev *dev)
 
 /*
  * The two bytes the frame carries are the base-128 digits of the address
- * (docs/DEVICE_PARAMETER_MAP.md): page 0 offsets stay below 0x80 so their
- * high digit is 0x00, page 1 offsets land on 0x02 because 0x100 = 2 * 128.
+ * (docs/DEVICE_PARAMETER_MAP.md), defined in zg01_addr.h so the host test
+ * exercises the same macros as the driver.
  */
-#define ZG01_ADDR_FLAG(addr)  ((u8)((addr) / 128))
-#define ZG01_ADDR_ID(addr)    ((u8)((addr) % 128))
 
 /*
  * Write one parameter.  Layout (docs/MIC_CONTROL_PROTOCOL.md):
@@ -567,7 +566,7 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
     { "Voice Transformer", ZG01_PARAM_VIC_TRN_ON,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
     { "Voice Transformer Type", ZG01_PARAM_VIC_TRN_TYPE,
-      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 0 },
     { "Voice Harmony Transpose", ZG01_PARAM_VIC_TRN_HRM_TRN,
       SNDRV_CTL_ELEM_TYPE_INTEGER, 28, 100, CONV_ID, 64 },
     { "Voice Harmony Formant", ZG01_PARAM_VIC_TRN_HRM_FMT,
@@ -595,7 +594,7 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
     { "Voice FX", ZG01_PARAM_VIC_FX_ON,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
     { "Voice FX Type", ZG01_PARAM_VIC_FX_TYPE,
-      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 0 },
     { "Voice Radio Cutoff", ZG01_PARAM_VIC_FX_RDO_CUT,
       SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 113, CONV_ID, 61 },
     { "Voice Radio Drive", ZG01_PARAM_VIC_FX_RDO_DRV,
@@ -635,7 +634,7 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
     { "Voice Tone High Switch", ZG01_PARAM_VIC_TC_HI_ON,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
     { "Voice Tone High Shape", ZG01_PARAM_VIC_TC_HI_SH,
-      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 1 },
     { "Voice Tone High Gain", ZG01_PARAM_VIC_TC_HI_G,
       SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 180 },
     { "Voice Tone High Frequency", ZG01_PARAM_VIC_TC_HI_F,
@@ -653,7 +652,7 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
     { "Voice Tone Low Switch", ZG01_PARAM_VIC_TC_LO_ON,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
     { "Voice Tone Low Shape", ZG01_PARAM_VIC_TC_LO_SH,
-      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 1 },
     { "Voice Tone Low Gain", ZG01_PARAM_VIC_TC_LO_G,
       SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 180 },
     { "Voice Tone Low Frequency", ZG01_PARAM_VIC_TC_LO_F,
@@ -664,7 +663,7 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 0 },
     { "Sound Effect Level", ZG01_PARAM_SE_LEVEL,
       SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 2, CONV_ID, 1 },
-    { "Sound Effect Level dB", ZG01_PARAM_SE_DB_LEVEL,
+    { "Sound Effect Level Steps", ZG01_PARAM_SE_DB_LEVEL,
       SNDRV_CTL_ELEM_TYPE_INTEGER, 1, 73, CONV_ID, 53 },
     { "Sound Effect Frequency", ZG01_PARAM_SE_FREQ,
       SNDRV_CTL_ELEM_TYPE_INTEGER, 29, 52, CONV_ID, 44 },
@@ -757,7 +756,7 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
     { "Game EQ M High Switch", ZG01_PARAM_GAM_EQ_M_HI_ON,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
     { "Game EQ M High Shape", ZG01_PARAM_GAM_EQ_M_HI_SH,
-      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 1 },
     { "Game EQ M High Gain", ZG01_PARAM_GAM_EQ_M_HI_G,
       SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 180 },
     { "Game EQ M High Frequency", ZG01_PARAM_GAM_EQ_M_HI_F,
@@ -783,7 +782,7 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
     { "Game EQ M Low Switch", ZG01_PARAM_GAM_EQ_M_LO_ON,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
     { "Game EQ M Low Shape", ZG01_PARAM_GAM_EQ_M_LO_SH,
-      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 1 },
     { "Game EQ M Low Gain", ZG01_PARAM_GAM_EQ_M_LO_G,
       SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 180 },
     { "Game EQ M Low Frequency", ZG01_PARAM_GAM_EQ_M_LO_F,
@@ -795,7 +794,7 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
     { "Game EQ S High Switch", ZG01_PARAM_GAM_EQ_S_HI_ON,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
     { "Game EQ S High Shape", ZG01_PARAM_GAM_EQ_S_HI_SH,
-      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 1 },
     { "Game EQ S High Gain", ZG01_PARAM_GAM_EQ_S_HI_G,
       SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 180 },
     { "Game EQ S High Frequency", ZG01_PARAM_GAM_EQ_S_HI_F,
@@ -821,7 +820,7 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
     { "Game EQ S Low Switch", ZG01_PARAM_GAM_EQ_S_LO_ON,
       SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
     { "Game EQ S Low Shape", ZG01_PARAM_GAM_EQ_S_LO_SH,
-      SNDRV_CTL_ELEM_TYPE_BOOLEAN, 0, 1, CONV_ID, 1 },
+      SNDRV_CTL_ELEM_TYPE_INTEGER, 0, 1, CONV_ID, 1 },
     { "Game EQ S Low Gain", ZG01_PARAM_GAM_EQ_S_LO_G,
       SNDRV_CTL_ELEM_TYPE_INTEGER, -180, 180, CONV_GAIN, 180 },
     { "Game EQ S Low Frequency", ZG01_PARAM_GAM_EQ_S_LO_F,
