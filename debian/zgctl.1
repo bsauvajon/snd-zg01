@@ -1,0 +1,105 @@
+.TH ZGCTL 1 "September 2026" "snd-zg01-tools" "User Commands"
+.SH NAME
+zgctl \- control the Yamaha ZG01 audio interface driver
+.SH SYNOPSIS
+.B zgctl
+.RB [ \-c
+.IR card ]
+.B list
+.br
+.B zgctl
+.RB [ \-c
+.IR card ]
+.B get
+.IR CONTROL
+.br
+.B zgctl
+.RB [ \-c
+.IR card ]
+.B set
+.IR CONTROL
+.IR VALUE
+.br
+.B zgctl
+.RB [ \-c
+.IR card ]
+.B save
+.br
+.B zgctl
+.RB [ \-c
+.IR card ]
+.B reset
+.SH DESCRIPTION
+.B zgctl
+lists and changes the mixer controls that the
+.B snd-zg01
+driver exposes for the Yamaha ZG01 USB audio interface: the microphone
+GATE, compressor, equalizer and limiter, plus saving and reloading the
+device settings.
+.PP
+It talks to the ALSA control device directly and needs no libasound.
+.PP
+The card is found automatically by its driver name
+.RB ( zg01_usb ).
+Use
+.B \-c
+to select another card by id or driver name.
+.SH COMMANDS
+.TP
+.B list
+List every control with its current value.
+.TP
+.BI get " CONTROL"
+Print one control.
+.TP
+.BI set " CONTROL VALUE"
+Write one control.
+.TP
+.B save
+Persist the current settings to the device's non-volatile memory
+(the
+.RB \(lq Save to ZG01 \(rq
+control).
+.TP
+.B reset
+Reload the persisted settings, dropping unsaved changes
+(the
+.RB \(lq Reset to ZG01 \(rq
+control).
+.SH VALUES
+.TP
+.B Gains
+In dB, for example
+.BR +6.0 " or " \-3.5 .
+.TP
+.B Frequencies
+In Hz, with
+.B k
+or
+.B kHz
+suffixes, for example
+.BR 1k " or " 7.5kHz .
+.TP
+.B Q
+As a ratio, for example
+.BR 2.0 .
+.TP
+.B Switches
+.BR on " or " off .
+.SH EXAMPLES
+.PP
+.nf
+zgctl list
+zgctl get 'EQ Band 1 Gain'
+zgctl set 'EQ Band 1 Gain' +6.0
+zgctl set 'EQ Band 2 Frequency' 1k
+zgctl set 'Limiter Capture Switch' on
+zgctl save
+.fi
+.SH NOTES
+Values read back are the last value the driver wrote, not a read from the
+device (the device exposes no usable per-parameter read).  Settings
+changed outside the driver are not reflected until written again.
+.SH SEE ALSO
+.BR amixer (1),
+.BR alsamixer (1)

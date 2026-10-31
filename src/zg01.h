@@ -25,6 +25,72 @@
 #define ZG01_EP_OUT          0x01
 #define ZG01_EP_IN           0x81
 
+/*
+ * Mixer parameters travel on interface 4 as 512-byte bulk frames
+ * (host -> EP 0x03, device -> EP 0x83), not on EP0.  Each 4-byte unit of
+ * a frame is a USB-MIDI event packet whose first byte is a code index
+ * number, so the payload is a Yamaha system exclusive message
+ * (F0 43 10 3E 14 ... F7) and its data bytes are limited to 7 bits.
+ * See docs/MIC_CONTROL_PROTOCOL.md for the frame layout and the
+ * base-128 value encoding implemented in zg01_codec.h.
+ */
+#define ZG01_PARAM_IFACE     4
+#define ZG01_PARAM_EP_OUT    0x03
+#define ZG01_PARAM_EP_IN     0x83
+#define ZG01_PARAM_FRAME     512
+#define ZG01_PARAM_TIMEOUT   1000  /* ms */
+
+/*
+ * Parameters are addressed, not numbered: a parameter is one byte in a
+ * page, its address is page * 256 + offset, and the two bytes the write
+ * frame carries (the old "flag" and "id") are that address split into
+ * two base-128 digits, because a system exclusive data byte holds 7 bits.
+ * docs/DEVICE_PARAMETER_MAP.md has the whole map and the evidence, and
+ * tools/vendor/extract-device-map.py regenerates it.
+ */
+#define ZG01_PARAM_PAGES       2       /* pages the driver addresses */
+#define ZG01_PARAM_PAGE_SIZE   0x100   /* offsets per page */
+#define ZG01_ADDR(page, offset) ((u16)((page) * ZG01_PARAM_PAGE_SIZE + (offset)))
+
+/* Page 0: the microphone chain and the rest of the DSP. */
+#define ZG01_PARAM_P48V_ENABLE        ZG01_ADDR(0, 0x00)
+#define ZG01_PARAM_MUTE_ENABLE        ZG01_ADDR(0, 0x01)
+#define ZG01_PARAM_GATE_ENABLE        ZG01_ADDR(0, 0x02)
+#define ZG01_PARAM_GATE_VALUE         ZG01_ADDR(0, 0x03)
+#define ZG01_PARAM_GATE_THRESHOLD     ZG01_ADDR(0, 0x04)
+#define ZG01_PARAM_GATE_RANGE         ZG01_ADDR(0, 0x05)
+#define ZG01_PARAM_GATE_ATTACK        ZG01_ADDR(0, 0x06)
+#define ZG01_PARAM_GATE_HOLD          ZG01_ADDR(0, 0x07)
+#define ZG01_PARAM_GATE_DECAY         ZG01_ADDR(0, 0x08)
+#define ZG01_PARAM_COMP_ENABLE        ZG01_ADDR(0, 0x09)
+#define ZG01_PARAM_COMP_VALUE         ZG01_ADDR(0, 0x0a)
+#define ZG01_PARAM_COMP_THRESHOLD     ZG01_ADDR(0, 0x0b)
+#define ZG01_PARAM_COMP_RATIO         ZG01_ADDR(0, 0x0c)
+#define ZG01_PARAM_COMP_ATTACK        ZG01_ADDR(0, 0x0d)
+#define ZG01_PARAM_COMP_RELEASE       ZG01_ADDR(0, 0x0e)
+#define ZG01_PARAM_COMP_KNEE          ZG01_ADDR(0, 0x0f)
+#define ZG01_PARAM_COMP_OUTGAIN       ZG01_ADDR(0, 0x10)
+#define ZG01_PARAM_EQ_ENABLE          ZG01_ADDR(0, 0x11)
+#define ZG01_PARAM_LIMITER_ENABLE     ZG01_ADDR(0, 0x21)
+#define ZG01_PARAM_LIMITER_VALUE      ZG01_ADDR(0, 0x22)
+#define ZG01_PARAM_LIMITER_THRESHOLD  ZG01_ADDR(0, 0x23)
+#define ZG01_PARAM_LIMITER_ATTACK     ZG01_ADDR(0, 0x24)
+#define ZG01_PARAM_LIMITER_RELEASE    ZG01_ADDR(0, 0x25)
+#define ZG01_PARAM_LIMITER_KNEE       ZG01_ADDR(0, 0x26)
+#define ZG01_PARAM_LIMITER_OUTGAIN    ZG01_ADDR(0, 0x27)
+
+/* Page 1: the four-band EQ (the one the application's EQ page drives). */
+#define ZG01_PARAM_LOW_SHAPE          ZG01_ADDR(1, 0x24)
+#define ZG01_PARAM_HIGH_SHAPE         ZG01_ADDR(1, 0x27)
+#define ZG01_PARAM_EQ_GAIN(n)         ZG01_ADDR(1, 0x28 + (n))
+#define ZG01_PARAM_EQ_FREQ(n)         ZG01_ADDR(1, 0x2c + (n))
+#define ZG01_PARAM_EQ_Q(n)            ZG01_ADDR(1, 0x30 + (n))
+
+/* Cache of the raw device values, keyed by address: page 0 offset 0x24
+ * and page 1 offset 0x24 are different parameters (LIMITER attack and EQ
+ * low shape), so an id-only cache would serve the wrong value. */
+#define ZG01_PARAM_CACHE  ZG01_PARAM_PAGES * ZG01_PARAM_PAGE_SIZE
+
 #define ISO_PKTS_OUT         32      /* 32 microframes = 4ms per URB */
 #define ISO_PKT_SIZE_OUT     280     /* up to seven 40-byte frames */
 #define ISO_PKTS_IN          32
@@ -213,6 +279,26 @@ struct zg01_dev {
 
     bool device_initialized;                  /* vendor handshake + rate */
 
+    /*
+     * Interface 4 parameter transport.  param_mutex serializes the
+     * bulk request/response so a control put cannot interleave with a
+     * concurrent get or with another control's transfer.  The cached
+     * mic values back the kcontrol getters when the device is idle.
+     */
+    struct mutex param_mutex;
+    u32 param_cache[ZG01_PARAM_PAGES][ZG01_PARAM_PAGE_SIZE];
+
+    /*
+     * Interfaces this anchor claimed in addition to interface 1.  They
+     * are released when probe unwinds or the anchor disconnects, so a
+     * failed probe does not leave interface 3/4 bound to a dead card.
+     * param_available is false when interface 4 belongs to another
+     * driver: the mixer controls are then not created, because their
+     * callbacks would submit bulk traffic to that driver's endpoints.
+     */
+    u32 claimed_mask;
+    bool param_available;
+
     atomic_t disconnecting;                   /* URB resubmission off */
     atomic_t disconnected;                    /* teardown-once latch */
 
@@ -238,6 +324,11 @@ void zg01_chain_quiesce_fn(struct work_struct *work);
 
 /* zg01_control.c */
 int zg01_init_control(struct zg01_dev *dev);
+int zg01_create_controls(struct zg01_dev *dev);
+int zg01_param_write(struct zg01_dev *dev, u16 addr, u32 value);
+int zg01_param_read(struct zg01_dev *dev, u16 addr, u32 *value);
+int zg01_param_save(struct zg01_dev *dev);
+int zg01_param_reset(struct zg01_dev *dev);
 
 /* zg01_usb_discovery.c (best-effort, debug only) */
 int zg01_discover_usb_config(struct zg01_dev *dev);

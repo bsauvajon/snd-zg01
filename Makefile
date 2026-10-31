@@ -17,8 +17,22 @@ LLVM = 1
 endif
 endif
 
+# $(CURDIR), not $(PWD): PWD is inherited from whoever runs make, so
+# `make -C <repo>` from another directory told kbuild to build the caller's
+# directory instead of this one and failed.
 all:
-	$(MAKE) -C $(KDIR) M=$(PWD) $(if $(LLVM),LLVM=$(LLVM)) modules
+	$(MAKE) -C $(KDIR) M=$(CURDIR) $(if $(LLVM),LLVM=$(LLVM)) modules
 
+# Userspace CLI.  Kept out of `all` because kbuild drives that target
+# for the module build; packaging calls `make tools` explicitly.
+tools:
+	$(MAKE) -C tools
+
+# The DKMS packages install the module sources, src/, dkms.conf and this
+# Makefile only, and dkms.conf runs `make clean` in that tree, so cleaning the
+# userspace CLI is only possible where tools/ is present.
 clean:
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
+	@if [ -d tools ]; then $(MAKE) -C tools clean; fi
+
+.PHONY: all tools clean

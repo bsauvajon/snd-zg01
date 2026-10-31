@@ -35,8 +35,31 @@ jobs:
           test -f snd-zg01.ko
           modinfo snd-zg01.ko | grep -E '^(name|license):'
 
-      - name: USBPcap normalizer tests
-        run: bash tests/test-capture-normalizer.sh
+      - name: Normalizer tests
+        run: |
+          bash tests/test-capture-normalizer.sh
+          bash tests/test-usbmon-normalizer.sh
+
+      - name: Parameter codec tests
+        run: bash tests/test-param-codec.sh
+
+      - name: zgctl unit classification tests
+        run: bash tests/test-zgctl-kinds.sh
+
+      - name: DKMS clean contract
+        run: bash tests/test-dkms-clean.sh
+
+      - name: Capture parsing tests
+        run: bash tests/test-param-frames.sh
+
+      - name: Device map tests
+        run: bash tests/test-device-map.sh
+
+      - name: Control address tests
+        run: bash tests/test-control-addresses.sh
+
+      - name: Build zgctl
+        run: make -C tools
 
   arch-packaging:
     name: Arch package contract
@@ -64,5 +87,6 @@ jobs:
           echo "Container kernel: $(uname -r), headers kernel: $KERNEL_VERSION"
           test -d "/usr/lib/modules/$KERNEL_VERSION/build"
           su build -c "cd '$GITHUB_WORKSPACE' && KERNEL_VERSION='$KERNEL_VERSION' bash tests/test-arch-packaging.sh"
+          su build -c "cd '$GITHUB_WORKSPACE' && bash tests/test-arch-zgctl-packaging.sh"
         env:
           HOME: /home/build
