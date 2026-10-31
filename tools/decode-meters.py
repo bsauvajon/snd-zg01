@@ -52,6 +52,16 @@ def extract_meter_frames(frames: list[Frame]) -> list[bytes]:
     return [f.data for f in frames if is_meter_frame(f)]
 
 
+def column_stats(frames: list[bytes]) -> list[tuple[int, int, int]]:
+    """Return (offset, min, max) for each byte offset whose value varies."""
+    stats = []
+    for offset in range(min((len(f) for f in frames), default=0)):
+        values = [f[offset] for f in frames]
+        if min(values) != max(values):
+            stats.append((offset, min(values), max(values)))
+    return stats
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -63,6 +73,10 @@ def main(argv: list[str]) -> int:
     decode_cmd = sub.add_parser(
         "decode", help="print one line per meter frame")
     decode_cmd.add_argument("file", help="normalized JSONL capture")
+
+    columns_cmd = sub.add_parser(
+        "columns", help="print 'offset min max' for each varying byte")
+    columns_cmd.add_argument("file", help="normalized JSONL capture")
 
     args = parser.parse_args(argv)
 
@@ -76,6 +90,11 @@ def main(argv: list[str]) -> int:
 
     if args.command == "frames":
         print(len(meter_frames))
+        return 0
+
+    if args.command == "columns":
+        for offset, low, high in column_stats(meter_frames):
+            print(offset, low, high)
         return 0
 
     decode_frame = globals().get("decode_frame")

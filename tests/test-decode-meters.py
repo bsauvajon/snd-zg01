@@ -87,8 +87,43 @@ def test_frames_cli_prints_meter_frame_count():
         os.unlink(path)
 
 
+def test_column_stats_reports_only_varying_offsets():
+    column_stats = decode_meters.column_stats
+    frames = [
+        bytes([0x04, 0x10, 0x20, 0x30]),
+        bytes([0x04, 0x11, 0x20, 0x35]),
+        bytes([0x04, 0x10, 0x20, 0x31]),
+    ]
+    assert column_stats(frames) == [(1, 0x10, 0x11), (3, 0x30, 0x35)]
+
+
+def test_columns_cli_prints_offset_min_max():
+    rows = [
+        {"endpoint": "0x83", "transfer": "bulk", "direction": "in",
+         "data": meter_frame(1), "time": 1.0},
+        {"endpoint": "0x83", "transfer": "bulk", "direction": "in",
+         "data": meter_frame(9), "time": 1.5},
+    ]
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as stream:
+        for row in rows:
+            stream.write(json.dumps(row) + "\n")
+        path = stream.name
+    try:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            status = decode_meters.main(["columns", path])
+        assert status == 0
+        assert out.getvalue().strip().splitlines() == [
+            "%d %d %d" % (offset, 1, 9) for offset in range(8, 192)
+        ]
+    finally:
+        os.unlink(path)
+
+
 if __name__ == "__main__":
     test_is_meter_frame()
     test_extract_keeps_only_valid_meter_frames()
     test_frames_cli_prints_meter_frame_count()
+    test_column_stats_reports_only_varying_offsets()
+    test_columns_cli_prints_offset_min_max()
     print("decode-meters contract passed")
