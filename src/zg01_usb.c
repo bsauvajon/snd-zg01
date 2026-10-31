@@ -84,6 +84,9 @@ static int zg01_probe(struct usb_interface *interface,
     dev->device_initialized = false;
     dev->last_open_jiffies = 0;
     dev->open_count = 0;
+    dev->meters.urb = NULL;
+    dev->meters.buf = NULL;
+    dev->meters.running = false;
 
     for (int i = 0; i < ZG01_N_STREAMS; i++) {
         struct zg01_stream *s = &dev->streams[i];
@@ -155,9 +158,16 @@ static int zg01_probe(struct usb_interface *interface,
         goto err_free_card;
     }
 
+    err = zg01_meters_start(dev);
+    if (err) {
+        dev_err(&interface->dev, "meter reader start failed: %d\n", err);
+        goto err_free_card;
+    }
+
     err = snd_card_register(card);
     if (err) {
         dev_err(&interface->dev, "card registration failed: %d\n", err);
+        zg01_meters_stop(dev);
         goto err_free_card;
     }
 
@@ -188,6 +198,8 @@ static void zg01_disconnect(struct usb_interface *interface)
     if (atomic_xchg(&dev->disconnected, 1))
         return;
     atomic_set(&dev->disconnecting, 1);
+
+    zg01_meters_stop(dev);
 
     /* Stop cancels quiesce work before draining the transports. */
     zg01_stop_all_chains(dev);
