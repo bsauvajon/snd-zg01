@@ -1,9 +1,8 @@
 # ZG01 meter frames (bulk IN 0x83)
 
-Status: **partial**. The frame framing, the header, the 14-bit field
-layout and the value quantisation are verified against the captures. The
-mapping from the 12 varying series to the six vendor meters, and the
-scale, are **not decoded**. `decode_frame` is not implemented yet.
+Status: **partial**. The framing, the header, the 14-bit field layout and
+the dB scale are measured. Three meters are decoded with stated
+confidence. Three are not decoded: `mic_in`, `mic_out` and `hdmi_in`.
 
 ## Transport
 
@@ -11,107 +10,156 @@ scale, are **not decoded**. `decode_frame` is not implemented yet.
 - Each frame is 192 bytes: 48 USB-MIDI event packets of 4 bytes.
 - Packet 0 byte is the USB-MIDI code index (CIN). Packets 0-46 use CIN
   `0x04` (SysEx start/continue, three data bytes); packet 47 uses CIN
-  `0x07` (SysEx end, three data bytes). Verified on all 1414 frames of
-  `00-mic-baseline` and `24-state-read`.
+  `0x07` (SysEx end, three data bytes). Verified on all frames of the
+  captures.
 - Stripping the CIN bytes gives a 144-byte SysEx message (the payload
-  below). All payload bytes except the `F0`/`F7` delimiters are 7-bit
-  (`< 0x80`).
-- Frames arrive at about 20 Hz (roughly every 50 ms).
+  below). Payload bytes are 7-bit (`< 0x80`) except the `F0`/`F7`
+  delimiters.
+- Frames arrive once the driver's `0x83` reader is running and the 1 Hz
+  `0x03` keepalive is sent (driver commits `93ae2cb` and `9f352fe`). The
+  sweep frames arrived at about 20 Hz (roughly every 50 ms).
 
-Raw frame offset `r` maps to payload index `p` as
-`p = 3*(r//4) + (r%4) - 1` for `r % 4 != 0`.
-Raw offset `r` maps back to payload index `p` as
-`r = 4*(p//3) + 1 + p%3`. The `columns` command reports raw offsets.
+Raw frame offset `r` maps to payload index `p` as `p = 3*(r//4) + (r%4) - 1`
+for `r % 4 != 0`. Payload index `p` maps to raw offset `r = 4*(p//3) + 1 + p%3`.
+The `columns` command reports raw offsets.
 
 ## Payload layout
 
 | Payload index | Content |
 |---|---|
-| 0-5 | `F0 43 10 3E 14 02`: SysEx start, Yamaha ID `43`, then the constant `10 3E 14 02` (meter message). |
-| 6 | `03`, constant in all 19,339 captured frames. |
-| 7-142 | 68 big-endian 14-bit fields, each as a 7-bit pair `hi lo` (`value = hi*128 + lo`). |
+| 0-5 | `F0 43 10 3E 14 02`: SysEx start, Yamaha ID `43`, then `10 3E 14 02` (meter message). |
+| 6 | `03`, constant over all captured frames. |
+| 7-142 | 68 big-endian 14-bit fields as 7-bit pairs `hi lo` (`code = hi*128 + lo`). |
 | 143 | `F7`: SysEx end. |
 
-Field `hi` is first. The carry shows this: `79 7e` followed by `7a 08` is
-a step of +10 (`0x3CFE` to `0x3D08`), which only works with `hi` first.
+`hi` is first. The carry shows this: `79 7e` followed by `7a 08` is a
+step of +10 (`0x3CFE` to `0x3D08`), which only works with `hi` first.
 
-Of the 68 pairs, 52 are constant in every captured frame (value `15114`,
-i.e. `76 0a`). The other 16 vary. They form 12 distinct series. Four of
-the 16 are near-copies of other pairs (see below).
+52 of the 68 fields are constant in every frame (code `15114`, i.e. `76 0a`).
+The other 16 vary.
 
-## Varying fields
+## Level scale (measured)
 
-Raw offsets are the `columns` offsets (index into the 192-byte frame).
-Values are the 14-bit integers observed over all 19,339 frames of the 16
-captures.
+Each meter level field is a dB value:
 
-| Payload pair | Raw offsets (hi, lo) | Observed value | `(value-4)/10` |
+```
+code = hi*128 + lo
+level_dB = (code - 16384) / 10        # 16384 = 0 dBFS, 10 codes per dB
+```
+
+- The codes are always `== 4 (mod 10)`. Since `16384 == 4 (mod 10)`, the
+  quantisation is exact at 1 dB, and the earlier `10*k + 4` observation
+  is this scale.
+- `code 15114` is -127 dB. Many captures sit at this floor.
+- `decode_frame` returns `level_dB + 127` as an integer, clamped to
+  `0..127` (0 = -127 dB, 127 = 0 dBFS). This is linear in dB, the device's
+  own unit, on a 0-127 range.
+
+The scale was measured with 1 kHz sines played straight into the card
+(`hw:zg01,1` Voice Out and `hw:zg01,0` Game Out) at −70 to −6 dBFS. See
+"Measurements" for the table.
+
+## Decoded meters
+
+| Key | Field (hi, lo raw offsets) | Series | Confidence |
 |---|---|---|---|
-| 7,8 | 10, 11 | 15584..16214 | 1558..1621 |
-| 9,10 | 13, 14 | 15594..16214 | 1559..1621 |
-| 11,12 | 15, 17 | 15114..16124 | 1511..1612 |
-| 13,14 | 18, 19 | 15114..16124 | 1511..1612 |
-| 111,112 | 149, 150 | 15114..16124 | 1511..1612 |
-| 113,114 | 151, 153 | 15114..16124 | 1511..1612 |
-| 115,116 | 154, 155 | 15114..16124 | 1511..1612 |
-| 117,118 | 157, 158 | 15114..16124 | 1511..1612 |
-| 119,120 | 159, 161 | 15464..15524 | 1546..1552 |
-| 121,122 | 162, 163 | 15474..15524 | 1547..1552 |
-| 123,124 | 165, 166 | 15474..15534 | 1547..1553 |
-| 125,126 | 167, 169 | 15474..15534 | 1547..1553 |
-| 135,136 | 181, 182 | 15464..16164 | 1546..1616 |
-| 137,138 | 183, 185 | 15464..16164 | 1546..1616 |
-| 139,140 | 186, 187 | 15474..16164 | 1547..1616 |
-| 141,142 | 189, 190 | 15474..16164 | 1547..1616 |
+| `pc_in` | (159, 161) | payload 119/121/123/125 | High |
+| `game_mix` | (181, 182) | payload 135/137/139/141 | Medium-low |
+| `stream_mix` | (10, 11) | payload 7/9 | Medium-low |
 
-Observations:
+Not decoded (omitted from `decode_frame`):
 
-- Every observed value satisfies `value % 10 == 4`
-  (130,768 of 130,768 field reads). The field is therefore `10*k + 4`,
-  and `k` is the quantity that varies. Whether `k` is linear, a dB value
-  or a curve is undetermined.
-- Pairs 111/113/115/117 are near-copies of 11/13 (98-100% of frames equal
-  per capture). Pairs 137/141 are similar to each other but not identical.
-  Pairs 119-125 span only 5-6 steps and look like a noise floor.
-- The 12 distinct series are the 16 pairs minus the copies (111, 113, 115,
-  117). Four pairs (119-125) stay within 5-6 steps, and the other eight
-  (7, 9, 11, 13, 135-141) swing across tens to hundreds of steps.
+- `mic_in`, `mic_out`: no series responded to a mic source. A 1 kHz tone
+  from the laptop speakers at −40, −20, −10 dBFS (run3) moved no meter,
+  and the `Voice In` capture showed no tone either. No series isolates
+  the mic path: the mic path would respond to acoustic input, and no
+  series did.
+- `hdmi_in`: no HDMI source was available.
 
-## Unresolved
+### Identity notes
 
-1. **Meter identity.** Which of the 12 series is `mic_in`, `mic_out`,
-   `pc_in`, `hdmi_in`, `game_mix`, `stream_mix`. The only correlation
-   available is qualitative: in `10-gate-on`, the GATE enable writes
-   (off at +4.6 s, on at +8.0 s, relative to the first `0x03` write) are
-   followed by step changes in pairs 9 and 13 at about +4.5 s and +8.9 s.
-   This is not conclusive and is a hypothesis, not a decode.
-2. **Scale.** The value-to-level relationship is unknown. It cannot be
-   measured from the existing captures, which contain no known signal.
-3. **Channel layout.** Whether the 12 series are stereo pairs (L/R),
-   peak/RMS pairs, or pre/post-fader pairs.
+- **`pc_in`**: responds exactly to Voice Out playback (0 dB) and not to Game
+  Out. This matches the GUI's VOICE strip (`Meter PC In`, Voice Out sink).
+- **`game_mix`**: responds to Game Out playback at −3 dB (−4 dB at the
+  top), and also to Voice Out at 0 dB. No series responds to Game Out
+  alone. The label is the best match for the GAME path's dominant meter.
+  The controller should confirm it against the ZG Controller's Game meter.
+- **`stream_mix`**: responds to both playback paths through a power sum,
+  and has a noise floor of about −70.5 dB (the group above has −89 dB).
+  That floor fits a stream mix that carries a noise term from the mic
+  path. The label is medium-low confidence.
+- **Series 11/13** (and copies 111/113/115/117): track 7/9 about 54 dB
+  lower, with a floor clamped at −127 dB. Their identity is not
+  established, so they are not decoded.
 
-No key is decoded. Leaving `mic_in` and the others out of `decode_frame`
-is the honest state until a known-signal capture exists.
+### Stream curve (measured)
 
-## Why no known-signal capture yet
+The stream meter is not linear in dB. Its response fits a power sum:
 
-A fresh usbmon capture (kept in `/tmp/opencode`, not committed) played a
-1 kHz sine at −60, −40, −20, −10 and −6 dBFS on
-`hw:zg01,0` (Game Out) and `hw:zg01,1` (Voice Out), 2 s per level. It
-captured 20,740 packets and **zero** `0x83` meter frames.
+```
+stream_dB ≈ 10*log10( 10^((V + G)/10) + 10^(N/10) )
+  V = input level (dBFS), G ≈ −40 dB (sends), N ≈ −70.5 dB (floor)
+```
 
-The running `snd-zg01` driver claims interface 4 but never submits IN
-URBs on `0x83`. The only reader, `zg01_param_read`, has no callers. The
-meter frames in the existing captures came from a host that did read
-`0x83` (the libvirt/Windows ZG Controller session). A userspace reader
-needs the interface claimed, which means unbinding `zg01_usb`, and that
-disturbs the card's ALSA devices.
+The fit is within 0.7 dB RMS over the voice and game steps. The device
+produces this curve, so the decoder returns the device value unchanged.
 
-Options for the next step:
+## Measurements
 
-1. The driver gains a `0x83` IN reader (the Task 3 meter path), and
-   known-signal captures are taken with it loaded.
-2. A brief, controlled unbind is accepted for a userspace-read capture.
+Voice Out playback, 1 kHz sine, nominal dBFS (run4 and run2). Values are
+the decoded level in dB (window: after the ~0.7 s onset).
+
+| Nominal | `pc_in` (119) | 135 group | 7 (`stream`) |
+|---|---|---|---|
+| −70 | −70.0 | −70.0 | −71.3 |
+| −60 | −60.0 | −60.0 | −71.5 |
+| −55 | −55.0 | −55.0 | −71.0 |
+| −50 | −50.0 | −50.0 | −70.3 |
+| −45 | −45.0 | −45.0 | −70.0 |
+| −40 | −40.0 | −40.0 | −68.9 |
+| −20 | −20.0 | −20.0 | −59.0 |
+| −10 | −10.0 | −10.0 | −50.9 |
+| −6 | −6.0 | −6.0 | −47.0 |
+
+Game Out playback, same tones:
+
+| Nominal | `pc_in` (119) | 135 group (`game_mix`) | 7 (`stream_mix`) |
+|---|---|---|---|
+| −70 | floor (−89) | floor (−89) | −70.3 |
+| −60 | floor (−89) | −63.0 | −70.1 |
+| −55 | floor | −58.0 | -70.8 |
+| −50 | floor | −53.0 | −71.2 |
+| −45 | floor | −48.0 | −70.2 |
+| −40 | floor | −43.0 | −69.0 |
+| −20 | floor | −23.0 | −58.6 |
+| −10 | floor | −14.0 | −50.0 |
+| −6 | floor | −10.0 | −46.0 |
+
+Silence: `pc_in` and the 135 group sit at −89 dB, and the stream at about −70 dB.
+
+### Anomalies and limits
+
+- **Voice −60 dBFS (run2)** read the −89 dB floor on `pc_in` and the 135
+  group for the full 2 s step. The same level in run4 read −60.0 exactly. The
+  cause is not established. Only run4 is used for the table.
+- **Game path threshold**: `game_mix` shows nothing at −70 dBFS and
+  tracks from −60 dBFS up.
+- **Game offset**: the game path reads 3 dB below nominal (4 dB at −10 and
+  −6). The device applies this path gain. The decoder does not correct it.
+- **Onset**: meters respond about 0.7 s after `aplay` starts. Measure from
+  the onset, not from the start of the step.
+- **Mic/HDMI**: not measured (see above).
+
+## Captures used
+
+- Existing captures (`captures/`, not committed): `00-mic-baseline`,
+  `10-gate-on`, `12-gate-high`, `20-mic-blocks`, `21-mic-values`,
+  `22-mic-eq-*`, `23-mic-*`, `24-state-read*`. They fix the layout, the
+  quantisation and the duplicate series. The earlier analysis
+  (interpreting them as unresolved) is superseded by the sweeps below.
+- Sweeps (not committed; kept in `/tmp/opencode`): `run2` (both playback
+  paths, −60 to −6 dBFS), `run4` (voice and game, −70 to −45 dBFS), `run3`
+  (laptop-speaker tone, mic test).
 
 ## Validation rules
 
@@ -122,6 +170,4 @@ A frame is a meter frame when all of these hold:
 - CIN bytes at 0,4,...,184 are `04`, and at 188 is `07`.
 - Byte 191 is `F7`.
 
-The `value % 10 == 4` quantisation held in every captured field. It is
-an observed invariant, not a rule to reject frames on until the scale is
-known.
+`decode_frame` raises `ValueError` for a frame that fails these rules.

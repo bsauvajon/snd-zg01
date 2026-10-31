@@ -3,9 +3,11 @@
 Real USB captures are **not** committed to this repository: they may contain
 private or licensed content, and they are large binary blobs.
 
-Any fixture used by the meter tests is a **sanitized synthetic frame** built
-in the test script itself, following the schema produced by
-`tools/normalize-usbmon.py`:
+`frames.jsonl` holds five **sanitized synthetic frames**. Each one is built
+from the measured layout in `docs/METER_PROTOCOL.md`: the three decoded level
+fields carry the measured codes, and every other field is the constant
+`15114`. They contain no capture data. The expected values live in
+`tests/test-decode-meters.py`. The schema follows `tools/normalize-usbmon.py`:
 
 ```json
 {"endpoint":"0x83","transfer":"bulk","direction":"in","data":"04f04310043e1402...","time":1.0}

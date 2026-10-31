@@ -52,6 +52,39 @@ def extract_meter_frames(frames: list[Frame]) -> list[bytes]:
     return [f.data for f in frames if is_meter_frame(f)]
 
 
+# Raw frame offsets (high byte, low byte) of each 14-bit level field.
+# Each field is value = hi * 128 + lo, and level dB = (value - 16384) / 10.
+PC_IN_FIELD = (159, 161)     # voice-out playback only, 0 dB
+GAME_MIX_FIELD = (181, 182)  # voice (0 dB) plus game (-3 dB)
+STREAM_MIX_FIELD = (10, 11)  # voice and game summed at -40 dB, with a -70 dB floor
+
+LEVEL_ZERO_CODE = 16384
+LEVEL_CODES_PER_DB = 10
+LEVEL_FLOOR_DB = -127
+
+
+def decode_level(data: bytes, field: tuple[int, int]) -> int:
+    """Return one meter as 0..127, linear in dB (0 = -127 dB, 127 = 0 dBFS)."""
+    hi, lo = field
+    code = data[hi] * 128 + data[lo]
+    db = (code - LEVEL_ZERO_CODE) // LEVEL_CODES_PER_DB
+    return max(0, min(127, db - LEVEL_FLOOR_DB))
+
+
+def decode_frame(data: bytes) -> dict[str, int]:
+    """Decode the meters this module can attribute; see docs/METER_PROTOCOL.md.
+
+    mic_in, mic_out and hdmi_in are not decoded (no signal reached them).
+    """
+    if len(data) != METER_LEN or not data.startswith(METER_HEADER):
+        raise ValueError("not a 192-byte meter frame")
+    return {
+        "pc_in": decode_level(data, PC_IN_FIELD),
+        "game_mix": decode_level(data, GAME_MIX_FIELD),
+        "stream_mix": decode_level(data, STREAM_MIX_FIELD),
+    }
+
+
 def column_stats(frames: list[bytes]) -> list[tuple[int, int, int]]:
     """Return (offset, min, max) for each byte offset whose value varies."""
     stats = []
@@ -96,12 +129,6 @@ def main(argv: list[str]) -> int:
         for offset, low, high in column_stats(meter_frames):
             print(offset, low, high)
         return 0
-
-    decode_frame = globals().get("decode_frame")
-    if decode_frame is None:
-        print("decode-meters: decode_frame is not implemented yet",
-              file=sys.stderr)
-        return 1
 
     for frame in meter_frames:
         print(decode_frame(frame))
