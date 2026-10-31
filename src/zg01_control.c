@@ -911,6 +911,13 @@ static const struct zg01_param_ctl zg01_param_ctls[] = {
       SNDRV_CTL_ELEM_TYPE_INTEGER, 50, 1600, CONV_Q, 42 },
 };
 
+/*
+ * The remaining writable parameters.  The table is generated from the
+ * control map so the 208 curated rows above stay byte-for-byte stable;
+ * read-only status parameters are deliberately not controls.
+ */
+#include "zg01_controls_generated.h"
+
 static const struct zg01_param_ctl *zg01_ctl_of(struct snd_kcontrol *kcontrol)
 {
     return (const struct zg01_param_ctl *)kcontrol->private_value;
@@ -1054,9 +1061,45 @@ static int zg01_reset_put(struct snd_kcontrol *kcontrol,
     return zg01_param_reset(dev);
 }
 
-int zg01_create_controls(struct zg01_dev *dev)
+static int zg01_add_param_control(struct zg01_dev *dev,
+                                  const struct zg01_param_ctl *c)
+{
+    struct snd_kcontrol_new tmpl = {
+        .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+        .name = c->name,
+        .info = zg01_ctl_info,
+        .get = zg01_ctl_get,
+        .put = zg01_ctl_put,
+        .private_value = (unsigned long)c,
+    };
+    struct snd_kcontrol *kctl;
+
+    *zg01_cache(dev, c->addr) = c->def;
+
+    kctl = snd_ctl_new1(&tmpl, dev);
+    if (!kctl)
+        return -ENOMEM;
+    return snd_ctl_add(dev->card, kctl);
+}
+
+static int zg01_add_param_controls(struct zg01_dev *dev,
+                                   const struct zg01_param_ctl *ctls,
+                                   unsigned int count)
 {
     unsigned int i;
+
+    for (i = 0; i < count; i++) {
+        int ret = zg01_add_param_control(dev, &ctls[i]);
+
+        if (ret)
+            return ret;
+    }
+    return 0;
+}
+
+int zg01_create_controls(struct zg01_dev *dev)
+{
+    int ret;
 
     if (!dev || !dev->card)
         return -ENODEV;
@@ -1075,29 +1118,17 @@ int zg01_create_controls(struct zg01_dev *dev)
     /* The highest address in the table, so a future block that reaches past
      * the cache is a build failure rather than an out-of-bounds write. */
     BUILD_BUG_ON(ZG01_PARAM_GAME_EQ_Q(9) >= ZG01_PARAM_CACHE);
+    /* The generated table reaches past the manual one; check its maximum too. */
+    BUILD_BUG_ON(ZG01_EXTRA_PARAM_MAX_ADDR >= ZG01_PARAM_CACHE);
 
-    for (i = 0; i < ARRAY_SIZE(zg01_param_ctls); i++) {
-        const struct zg01_param_ctl *c = &zg01_param_ctls[i];
-        struct snd_kcontrol_new tmpl = {
-            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-            .name = c->name,
-            .info = zg01_ctl_info,
-            .get = zg01_ctl_get,
-            .put = zg01_ctl_put,
-            .private_value = (unsigned long)c,
-        };
-        struct snd_kcontrol *kctl;
-        int ret;
-
-        *zg01_cache(dev, c->addr) = c->def;
-
-        kctl = snd_ctl_new1(&tmpl, dev);
-        if (!kctl)
-            return -ENOMEM;
-        ret = snd_ctl_add(dev->card, kctl);
-        if (ret)
-            return ret;
-    }
+    ret = zg01_add_param_controls(dev, zg01_param_ctls,
+                                  ARRAY_SIZE(zg01_param_ctls));
+    if (ret)
+        return ret;
+    ret = zg01_add_param_controls(dev, zg01_extra_param_ctls,
+                                  ARRAY_SIZE(zg01_extra_param_ctls));
+    if (ret)
+        return ret;
 
     {
         struct snd_kcontrol_new tmpl = {

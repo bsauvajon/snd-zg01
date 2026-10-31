@@ -8,10 +8,11 @@ deliberately left out.  The protocol facts are in
 `docs/VENDOR_PACKAGE.md`; this document is the implementation record for
 the two blocks, in the shape of `docs/MIC_CONTROL_PLAN.md`.
 
-Status: **169 controls implemented** - the whole microphone effect block
-(69) and the game effect block the vendor model describes (100) - as
-ALSA mixer controls on the card, reachable through `zgctl`.  What is not
-implemented is listed below, with the reason.
+Status: the whole microphone effect block (69) and the game effect block
+the vendor model describes (100) are implemented as ALSA mixer controls
+on the card, reachable through `zgctl`.  They are part of the full
+375-address surface: 367 writable controls and 8 read-only status
+exclusions (`docs/FEATURE_PARITY.md`).
 
 ## What the two blocks are
 
@@ -25,8 +26,8 @@ that come next:
 | MIC EFFECT: voice changer, sound effect, echo, reverb, tone control, transpose | 69 | 69 |
 | GAME EFFECT: EQ, de-esser, surround | 101 | 100 |
 
-The GAME EFFECT block's 101st parameter is `GameEffectName`, a preset
-label rather than a setting (see "Not implemented").
+The GAME EFFECT block's 101st parameter is `GameEffectName`, a name index
+exposed as `Game Effect Name Steps` (0..255) rather than a physical unit.
 
 The application's screens put these in two places: the **MIC FX** page
 (the voice changer, the voice reverb, the tone control, the sound effect
@@ -168,28 +169,32 @@ The contract test pins the derivation for the whole map (all 375
 addresses, 128 of them with `flag 0x01`), so the space stays visible and
 a regression cannot silently move a parameter.
 
-## Not implemented, and why
+## Device-step controls and read-only rows
 
-167 of the map's 375 parameters are still out of the driver's reach.
-The ones this change deliberately left behind, and why:
+The full map is exposed: "not implemented" is no longer a list of missing
+parameters.  Every address is either a writable control or one of the
+eight read-only status exclusions.  The rows that publish device steps
+instead of an established physical unit are:
 
-| Parameter | Count | Why not |
+| Parameter | Count | What is published |
 |---|---|---|
-| `gam_eq_t_hi/mh/ml/lo_*`, the four-band "Total" game EQ bands | 18 | the device registers them and the application's enum lists them (`PARAM_GAME_EQ_TOTAL_*`), but the vendor *descriptor table* has no row for them: no bounds, no default. The family's master switch `GameEqTotalOnf` *is* implemented - it is the switch the application's GAME EFFECT EQ page uses. Taking the M and S families' ranges for the bands would be a guess. |
-| `MicEqV2<n>Onf` and `MicEqV2 2/3Shape` | 6 | addressable, but the existing mic EQ controls already expose the four bands' gains, frequencies and Q plus the two shelf types the application drives; adding the per-band enables is a smaller change to that block. |
-| `game_fx_name`, `mic_eq_name`, `pre_vic_name`, `mon_eq_name` | 4 | preset labels rather than settings: they hold a name index, and the preset files (`*.zgpreset`) are not decoded (`docs/FEATURE_PARITY.md`). |
-| `pre_vic_on1`, `pre_vic_on2` | 2 | registered by the device, absent from the vendor model: no bounds and no meaning established. |
+| `gam_eq_t_hi/mh/ml/lo_*`, the four-band "Total" game EQ bands | 18 | raw 0..`ZG01_VALUE_MAX` steps: the vendor *descriptor table* has no row for them (no bounds, no default), so the control map deliberately does not guess the M/S ranges. The family's master switch `GameEqTotalOnf` is vendor-model. |
+| `MicEqV2<n>Onf` and `MicEqV2 2/3Shape` | 6 | vendor-model switches, 0..1 steps |
+| `game_fx_name`, `mic_eq_name`, `pre_vic_name`, `mon_eq_name` | 4 | vendor-model name indices, 0..255 steps |
+| `pre_vic_on1`, `pre_vic_on2` | 2 | vendor-model switches, 0..1 steps |
+| the remaining raw block rows (legacy mic EQ, legacy monitor EQ, and the HDMI/streaming gaps `hdmi_4k`, `strm_out_mute`, `strm_mode`) | 35 | 0..`ZG01_VALUE_MAX` steps, requiring `--allow-raw` on load. Together with the 18 Total game EQ rows above, the map has 53 raw rows. |
 
-and the blocks that are simply the next piece of work, untouched here:
+The monitor, binaural, streaming and mic-chain remainder blocks are also
+controls now, with vendor-model bounds where the correspondence is
+established and raw steps otherwise.  What remains is *units*, not
+surface: a capture of the application moving one value turns a device
+step or a grid index into a physical unit, and the conversion can then
+be added to `zg01_codec.h`.
 
-| Block | Count |
-|---|---|
-| binaural (3D chat space), page 0 0x74-0x9c | 41 |
-| monitor / headphone, page 0 0xe8-0xff | 24 |
-| monitor EQ v2, page 1 0x5c-0x6f | 20 |
-| monitor EQ low, HDMI, LED, dirty flags and the streaming output mixer, page 1 0x00-0x1b | 28 |
-| the mic chain's remainder: the legacy three-band EQ (14), the output level, the name slot and the three button function slots | 19 |
-| knobs, streaming links and the to-PC mutes, page 1 0x70-0x76 | 7 |
+The eight read-only status rows (`dirty_flag_mic`, `dirty_mic_fx`,
+`dirty_game_fx`, `dirty_monitor`, `dirty_streming`, `mic_level`,
+`mic_monitor_level_knob`, `mon_level`) are present in the userspace map
+but have no ALSA control.
 
 The M and S game EQ families *are* implemented even though no screen of
 the application drives them: the vendor model gives their bounds and

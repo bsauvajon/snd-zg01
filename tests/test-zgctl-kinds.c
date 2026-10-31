@@ -55,6 +55,90 @@ static void expect_format(enum kind k, long value, const char *want)
     }
 }
 
+/*
+ * The preset loader converts a device value to the control's user unit
+ * before it plans or writes anything; the same helper backs both paths.
+ */
+static void expect_preset_user(int conv, unsigned int value, long want)
+{
+    struct zg01_user_control ctl;
+    long got = -1;
+
+    memset(&ctl, 0, sizeof(ctl));
+    ctl.conv = conv;
+    if (preset_user_value(&ctl, value, &got) != 0 || got != want) {
+        printf("FAIL preset convert conv %d from %u -> %ld, want %ld\n", conv,
+               value, got, want);
+        failures++;
+    }
+}
+
+static void expect_preset_user_fails(int conv, unsigned int value)
+{
+    struct zg01_user_control ctl;
+    long got;
+
+    memset(&ctl, 0, sizeof(ctl));
+    ctl.conv = conv;
+    if (preset_user_value(&ctl, value, &got) == 0) {
+        printf("FAIL preset convert conv %d accepted %u -> %ld\n", conv,
+               value, got);
+        failures++;
+    }
+}
+
+static void expect_preset_status(enum preset_status want,
+                                 const struct zg01_user_control *ctl,
+                                 unsigned int value, int allow_raw)
+{
+    long user = (long)value;
+    enum preset_status got = preset_status_of(ctl, value, allow_raw, &user);
+
+    if (got != want) {
+        printf("FAIL preset status for %s value %u -> %d, want %d\n",
+               ctl ? ctl->name : "unknown", value, got, want);
+        failures++;
+    }
+}
+
+static void test_preset_plan(void)
+{
+    static const struct zg01_user_control gain = {
+        0x128, "EQ Band 1 Gain", -180, 180, CONV_GAIN, 180, 0,
+    };
+    static const struct zg01_user_control raw = {
+        0x0f0, "Monitor EQ Band 4 Switch Steps", 0, ZG01_VALUE_MAX,
+        CONV_ID, 0, ZG01_CTL_RAW,
+    };
+    static const struct zg01_user_control read_only = {
+        0x028, "Mic Level Status", 0, 127, CONV_ID, 103,
+        ZG01_CTL_READONLY,
+    };
+
+    /* device value to user unit, as used by dry-run and the write path */
+    expect_preset_user(CONV_ID, 150, 150);
+    expect_preset_user(CONV_GAIN, 0, -180);
+    expect_preset_user(CONV_GAIN, 180, 0);
+    expect_preset_user(CONV_GAIN, 360, 180);
+    expect_preset_user(CONV_FREQ, 1000, 1000);
+    expect_preset_user(CONV_Q, 0, 50);
+    expect_preset_user(CONV_Q, 12, 100);
+    expect_preset_user(CONV_Q, 60, 1599);
+    expect_preset_user_fails(CONV_Q, ZG01_Q_DEV_MAX + 1);
+
+    /* an address with no control, or a read-only row, is unsupported */
+    expect_preset_status(PRESET_UNSUPPORTED, NULL, 5, 0);
+    expect_preset_status(PRESET_UNSUPPORTED, &read_only, 5, 1);
+
+    /* no clamping: +22.0 dB is past the +18.0 dB control maximum */
+    expect_preset_status(PRESET_OUT_OF_RANGE, &gain, 400, 0);
+    expect_preset_status(PRESET_APPLY, &gain, 150, 0);
+
+    /* raw rows need the explicit opt-in */
+    expect_preset_status(PRESET_RAW, &raw, 1, 0);
+    expect_preset_status(PRESET_APPLY, &raw, 1, 1);
+}
+
 int main(void)
 {
     /* switches */
@@ -109,6 +193,18 @@ int main(void)
     expect_kind(KIND_Q, "Voice Tone High Q", SNDRV_CTL_ELEM_TYPE_INTEGER);
     expect_kind(KIND_Q, "Game EQ Band 1 Q", SNDRV_CTL_ELEM_TYPE_INTEGER);
 
+    /* the V2 monitor EQ takes its units from the generated control map */
+    expect_kind(KIND_GAIN, "Monitor EQ V2 Band 1 Gain", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_FREQ, "Monitor EQ V2 Band 1 Frequency", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_Q, "Monitor EQ V2 Band 1 Q", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Binaural Voice Position Steps", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    /* recovered from a _ForBackup mirror: still device steps, not raw */
+    expect_kind(KIND_INT, "Streaming Mic Level Steps", SNDRV_CTL_ELEM_TYPE_INTEGER);
+
+    /* the action controls are not in the map and keep the name fallback */
+    expect_kind(KIND_INT, "Save to ZG01", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Reset to ZG01", SNDRV_CTL_ELEM_TYPE_INTEGER);
+
     /* a raw step is taken and shown as a number, up to the top of its range */
     expect_parse(KIND_INT, "10", 10);
     expect_parse(KIND_INT, "180", 180);
@@ -125,6 +221,8 @@ int main(void)
     expect_parse(KIND_Q, "2.00", 200);
     expect_format(KIND_Q, 200, "2.00");
     expect_format(KIND_BOOL, 1, "on");
+
+    test_preset_plan();
 
     if (failures) {
         printf("%d classification failure(s)\n", failures);

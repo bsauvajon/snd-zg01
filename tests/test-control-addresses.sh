@@ -123,6 +123,31 @@ for name, body in ROW.findall(table):
                  'min': resolve(fields[0]), 'max': resolve(fields[1]),
                  'conv': conv, 'def': resolve(fields[3])})
 
+# -------------------------------------------------------- generated table
+with open(f'{root}/src/zg01_controls_generated.h') as handle:
+    generated_source = handle.read()
+gen_row = re.compile(
+    r'\{\s*"([^"]+)",\s*(\d+),\s*SNDRV_CTL_ELEM_TYPE_(\w+),\s*'
+    r'(-?\d+),\s*(-?\d+),\s*CONV_(\w+),\s*(-?\d+)\s*\},')
+generated_rows = [
+    {'name': name, 'addr': int(addr), 'type': kind,
+     'min': int(vmin), 'max': int(vmax), 'conv': conv, 'def': int(default)}
+    for name, addr, kind, vmin, vmax, conv, default
+    in gen_row.findall(generated_source)
+]
+assert len(generated_rows) == 159, (
+    f'generated table has {len(generated_rows)} rows, expected 159')
+assert len({row['addr'] for row in generated_rows}) == 159, (
+    'generated table has duplicate addresses')
+max_generated = max(row['addr'] for row in generated_rows)
+assert f'#define ZG01_EXTRA_PARAM_MAX_ADDR {max_generated}' in generated_source
+cache_size = defs['ZG01_PARAM_PAGES'] * defs['ZG01_PARAM_PAGE_SIZE']
+assert max_generated < cache_size, (
+    f'generated address 0x{max_generated:03x} is outside the '
+    f'{cache_size}-entry cache')
+assert '#include "zg01_controls_generated.h"' in source, \
+    'src/zg01_control.c does not include the generated table'
+
 # ------------------------------------------------------------------- map
 data = json.load(open(f'{root}/tools/vendor/device-map-zg01.json'))
 params = {}
@@ -402,6 +427,17 @@ for name, device in EXPECTED.items():
         f'{name} and {seen[row["addr"]]} share address 0x{row["addr"]:03x}: '
         f'they would share one cache slot')
     seen[row['addr']] = name
+
+# The generated table must not alias, or reuse a name from, the manual one:
+# two rows on one address would silently share a cache slot.
+for row in generated_rows:
+    assert row['name'] not in by_name, (
+        f'{row["name"]!r} is in both the manual and the generated table')
+    assert row['addr'] not in seen, (
+        f'{row["name"]} and {seen[row["addr"]]} share address '
+        f'0x{row["addr"]:03x}: they would share one cache slot')
+    seen[row['addr']] = row['name']
+assert len(seen) == 367, f'{len(seen)} writable controls, expected 367'
 
 # The two bytes the frame carries are the base-128 digits of the address
 # (docs/MIC_CONTROL_PROTOCOL.md): every address of the map must split into

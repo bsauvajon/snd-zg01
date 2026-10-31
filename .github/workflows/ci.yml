@@ -58,6 +58,21 @@ jobs:
       - name: Control address tests
         run: bash tests/test-control-addresses.sh
 
+      - name: Control map and parameter model tests
+        run: |
+          bash tests/test-control-map.sh
+          bash tests/test-generated-controls.sh
+          bash tests/test-parameter-model.sh
+
+      - name: Preset parser and CLI tests
+        run: |
+          bash tests/test-zgpreset.sh
+          bash tests/test-zgpreset-c.sh
+          bash tests/test-zgpreset-compare.sh
+          bash tests/test-zgctl-preset.sh
+          bash tests/test-zgctl-load-dry.sh
+          bash tests/test-preset-load.sh
+
       - name: Build zgctl
         run: make -C tools
 

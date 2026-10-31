@@ -8,6 +8,7 @@ bin=$(mktemp /tmp/snd-zg01-zgctl-kinds.XXXXXX)
 trap 'rm -f "$bin"' EXIT
 
 cc -std=c11 -Wall -Wextra -Werror -O2 \
-   -o "$bin" "$repo_root/tests/test-zgctl-kinds.c"
+   -o "$bin" "$repo_root/tests/test-zgctl-kinds.c" \
+   "$repo_root/tools/zgpreset.c"
 
 "$bin"

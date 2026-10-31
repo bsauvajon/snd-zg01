@@ -4,7 +4,9 @@ Every parameter the vendor application can drive, grouped by
 screen, extracted from the MemAPI library shipped in *TOOLS for
 ZG* (see `docs/VENDOR_PACKAGE.md` for the procedure and the
 caveats).  `_ForBackup` mirrors are omitted; they duplicate the
-same parameter for the persistence layer.
+same parameter for the persistence layer, except for `GameFxType` and
+`StreamingMicLevel`, whose only descriptor is a mirror (the committed
+model publishes those two under the base name).
 
 Total: **383** parameters (331 CamelCase, 52 legacy snake_case).
 

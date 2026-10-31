@@ -66,7 +66,11 @@ so `msiinfo export … File` is what maps `ZG_IconId.exe` to `Yamaha ZG
 Controller.exe`.
 
 The extractor reports 1102 parameters for the ZG01 and 538 for the ZG02
-(whose names are snake_case, e.g. `mic_eq_lo_g`).
+(whose names are snake_case, e.g. `mic_eq_lo_g`).  The committed mixer
+model `tools/vendor/parameter-model-zg01.json` keeps 320 rows: the 318
+base CamelCase rows plus `GameFxType` and `StreamingMicLevel`, whose only
+descriptor is a `_ForBackup` mirror and which are published under the base
+name.
 
 ## MIC parameters (ZG01)
 
