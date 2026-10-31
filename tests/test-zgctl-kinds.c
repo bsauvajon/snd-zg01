@@ -74,6 +74,27 @@ int main(void)
     expect_kind(KIND_Q, "EQ Band 1 Q", SNDRV_CTL_ELEM_TYPE_INTEGER);
     expect_kind(KIND_INT, "EQ Low Shape", SNDRV_CTL_ELEM_TYPE_INTEGER);
 
+    /* the effect chain's 0.1 dB controls */
+    expect_kind(KIND_GAIN, "Voice Harmony Out Level", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_GAIN, "Voice Tone High Gain", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_GAIN, "Game EQ M High Gain", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_GAIN, "Game EQ Band 1 Gain", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_GAIN, "Game EQ Band 10 Gain", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    /* but the de-esser and dynamics gains stay raw */
+    expect_kind(KIND_INT, "Game De-esser M Gain", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Game De-esser S Gain", SNDRV_CTL_ELEM_TYPE_INTEGER);
+
+    /* Hz for the mic EQ and the ten-band game EQ only */
+    expect_kind(KIND_FREQ, "Game EQ Band 1 Frequency", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_FREQ, "Game EQ Band 10 Frequency", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Game EQ M High Frequency", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Voice Tone High Frequency", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_INT, "Sound Effect Frequency", SNDRV_CTL_ELEM_TYPE_INTEGER);
+
+    /* bandwidths keep their 0.01 Q unit in the effect chain too */
+    expect_kind(KIND_Q, "Voice Tone High Q", SNDRV_CTL_ELEM_TYPE_INTEGER);
+    expect_kind(KIND_Q, "Game EQ Band 1 Q", SNDRV_CTL_ELEM_TYPE_INTEGER);
+
     /* a raw step is taken and shown as a number, up to the top of its range */
     expect_parse(KIND_INT, "10", 10);
     expect_parse(KIND_INT, "180", 180);
