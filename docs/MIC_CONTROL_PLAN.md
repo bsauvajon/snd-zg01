@@ -71,6 +71,8 @@ hardware yet (see "Driver controls" in `docs/MIC_CONTROL_PROTOCOL.md`).
 
 Out of scope for this plan:
 
+- MIC EFFECT and GAME EFFECT: they are implemented, but recorded in
+  `docs/EFFECTS_CONTROL_PLAN.md` rather than here.
 - Other ZG Controller screens (ZG SURROUND, FOCUS MODE/EQ, 3D CHAT
   SPACE, STREAMING OUTPUT MIXER, HEADPHONE, SETTINGS (HARDWARE)).
 - Firmware update traffic.

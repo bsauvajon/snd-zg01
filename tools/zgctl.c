@@ -102,22 +102,48 @@ static int starts_with(const char *s, const char *prefix)
     return !strncmp(s, prefix, strlen(prefix));
 }
 
+/*
+ * The effect chain adds 0.1 dB controls that do not start with "EQ Band":
+ * the voice output levels ("... Out Level"), the voice tone gains, the
+ * game EQ M/S gains and the ten-band game EQ gains.  The dynamics "Out
+ * Gain" and the de-esser gains are raw device steps, so they stay
+ * integers (docs/EFFECTS_CONTROL_PLAN.md).
+ */
+static int is_gain(const char *name)
+{
+    if (ends_with(name, "Out Level"))
+        return 1;
+    if (!ends_with(name, "Gain"))
+        return 0;
+    if (ends_with(name, "Out Gain"))
+        return 0;
+    if (starts_with(name, "Game De-esser"))
+        return 0;
+    return 1;
+}
+
+/*
+ * Only the microphone EQ and the ten-band game EQ carry Hz.  The tone
+ * control, sound effect, de-esser and game EQ M/S frequencies are
+ * indices on the vendor's 1/12-octave grid, so they must stay integers.
+ */
+static int is_frequency(const char *name)
+{
+    if (!ends_with(name, "Frequency"))
+        return 0;
+    return starts_with(name, "EQ Band ") ||
+           starts_with(name, "Game EQ Band ");
+}
+
 static enum kind kind_of(const struct snd_ctl_elem_info *info)
 {
     const char *name = (const char *)info->id.name;
 
     if (info->type == SNDRV_CTL_ELEM_TYPE_BOOLEAN)
         return KIND_BOOL;
-    /*
-     * Only the EQ band gains are 0.1 dB around 0 dB.  The dynamics out
-     * gains also end in "Gain" but are raw device steps with no
-     * established unit (docs/MIC_CONTROL_PROTOCOL.md), so they must stay
-     * integers: scaling them by ten both misreports and rejects valid
-     * values.
-     */
-    if (starts_with(name, "EQ Band") && ends_with(name, "Gain"))
+    if (is_gain(name))
         return KIND_GAIN;
-    if (ends_with(name, "Frequency"))
+    if (is_frequency(name))
         return KIND_FREQ;
     if (ends_with(name, "Q"))
         return KIND_Q;

@@ -15,8 +15,8 @@ blocks as the application screens:
 | Block | Parameters | Driver today |
 |---|---|---|
 | Mic: GATE, COMP, EQ, LIMITER, mute, P48V | 54 | 39 controls: P48V, mute, switches and levels, the GATE/COMP/LIMITER sub-parameters (threshold, range, times, knee, out gain), EQ switch, 2 shapes, 4 gains, 4 frequencies, 4 Q |
-| MIC EFFECT: voice changer, SE, echo, reverb, tone control, transpose | 69 | none |
-| GAME EFFECT: EQ, de-esser, surround | 101 | none |
+| MIC EFFECT: voice changer, SE, echo, reverb, tone control, transpose | 69 | 69 controls: the voice changer (transformer, harmony, pitch), the radio/tremolo voice effect, the voice reverb, the three-band tone control, the sound effect and the echo |
+| GAME EFFECT: EQ, de-esser, surround | 101 | 100 controls: the three effect slots and the game FX switch and type, the de-esser (two instances), the M and S four-band EQs, the ten-band game EQ behind its master switch |
 | Monitor / headphone: 4-band EQ, levels, select | 27 | none |
 | Binaural (3D chat space) | 41 | none |
 | Streaming output mixer: USB, HDMI, PC, per-input link/mute/FX/level | 22 | none |
@@ -57,27 +57,21 @@ implemented from the map plus the vendor model's range and default
 | Message classes | `F0 43 10` write, `F0 43 30` read/save/reset, `F0 43 20` state dump request, `F0 43 00` preset block, `F0 43 40` (unused by the driver) |
 | Units and bounds | the whole vendor model, ranges and defaults included |
 | Mic DSP addressing | 21 wire ids captured (GATE, COMP, EQ switch/shapes/bands, LIMITER) |
+| Address digits | derived for every address, not captured: `flag = address / 128` and `id = address % 128`, so page 0 offsets `0x80`-`0xff` travel as `flag 0x01` (`docs/EFFECTS_CONTROL_PLAN.md`) |
 | Cached reads | documented (the device answers reads with a status, not a value) |
 
 ## What is missing, and why
 
-1. **The wire id of the other ~360 parameters.**  It is *not* data: the
-   descriptor table of `MemAPI_ZG01.dll` holds the name, bounds, default
-   and a per-parameter key, but no id (checked: no descriptor slot equals
-   any captured id, the key is not a CRC of the name, the table is not
-   ordered by address, and each name has exactly one pointer in the whole
-   image).  The id is therefore computed by the library's code, which
-   means either of:
-   - **captures**: one deliberate action per screen, as
-     `docs/PROTOCOL_CAPTURE.md` describes - the method that already
-     produced the 21 mic ids.  Cost is linear in the number of controls;
-   - **disassembly**: `MemAPI_ZG01.dll` is small (261 functions by
-     `.pdata`, ~95 KB of `.text`), the message builders are identifiable
-     through the SysEx fragment table at `0x18002cf00`, and the parameter
-     command dispatcher is a jump table over `0x100..0x122`.  Recovering
-     the address computation there would yield every id at once, then a
-     few captures confirm the result.  This is the higher-leverage route
-     and it needs no hardware.
+1. **The addresses are no longer missing.**  An earlier revision of this
+   document listed the wire id of the other ~360 parameters as the first
+   gap; the device map closed it (`docs/DEVICE_PARAMETER_MAP.md`): the
+   library registers every parameter with its address, and the two digits
+   the frame carries are that address split into base-128
+   (`flag = address / 128`, `id = address % 128`).  What a capture still
+   buys is a **value** encoding - the physical unit behind a threshold or
+   a time step, which no table holds - and confirmation of the digits
+   that were never observed, the page 0 offsets at or above `0x80`
+   (`docs/EFFECTS_CONTROL_PLAN.md`).
 2. **The read path.**  Per-parameter reads return a status byte, so the
    device state must come from the `F0 43 20` state dump, which is not
    decoded.  Decoding it (still undecoded DSP coefficient blocks) is what
@@ -95,20 +89,23 @@ implemented from the map plus the vendor model's range and default
 
 ## Suggested order
 
-1. **Mic DSP completion** - the block's remaining ids (gate attack, hold,
-   decay, range, threshold; compressor ratio, knee, outgain, attack,
-   release, threshold; limiter equivalents) plus mute and P48V.  Same
-   frame, same space as the ids already known, so a small capture set or
-   the disassembly route closes it.
-2. **Streaming output mixer** (22 parameters, switches and levels) - the
-   block with the highest user value once the mic is done, and cheap:
-   mostly 0/1 and 0..100 values in one space.
-3. **Monitor / headphone EQ** - same shape as the MIC EQ (4 bands,
-   `MonitorEqV21..V24`) plus `MonitorHpVolume` / `MonitorSpVolume`.
+1. ~~Mic DSP completion~~, ~~MIC EFFECT~~ and ~~GAME EFFECT~~ - done.  The
+   mic block's sub-parameters, the microphone effect chain and the game
+   effect chain are implemented and covered by the contract test
+   (`docs/EFFECTS_CONTROL_PLAN.md`): 208 of the map's 375 parameters.
+2. **Monitor / headphone** (27 parameters) - the four-band
+   `MonitorEqV21..V24` on page 1 follows the MIC EQ pattern the driver
+   already uses, plus `MonitorHpVolume` / `MonitorSpVolume` /
+   `MonitorSelect` on the high half of page 0, whose address digit the
+   game effect chain settled.
+3. **Streaming output mixer** (22 parameters, switches and levels) -
+   mostly 0/1 and 0..100 values in one space, and the block a streaming
+   user reaches for first.
 4. **Meters and status** - needs the state dump or the meter frame
    decoding, and it is what makes a GUI or a mixer application possible.
-5. **GAME EFFECT** and **MIC EFFECT** - the largest blocks, with
-   preset-driven editing; do them once presets are decoded.
+5. **The rest of the mic chain** - the legacy three-band EQ, the button
+   function slots, and the per-band enables the ten-band game EQ and the
+   mic EQ are missing.
 6. **Binaural** - 41 parameters, least likely to be needed first.
 7. **Presets** - `*.zgpreset` decoding, then read/write through the
    `F0 43 00` block.

@@ -18,6 +18,16 @@ address, and `page 1` starts at `0x100` because a single 7-bit byte
 cannot hold it. That is the same constraint that makes *values* travel as
 three base-128 digits (`docs/MIC_CONTROL_PROTOCOL.md`).
 
+The same constraint decides the high half of page 0. The offsets run to
+`0xff`, so the addresses `0x80`-`0xff` need a high digit of `0x01` - a
+parameter at page 0 offset `0x80` is `flag 0x01, id 0x00`, not
+`flag 0x00, id 0x80`, because `0x80` is not a legal system exclusive data
+byte. That is where the game effect, binaural and monitor parameters
+live, and the application writes into it (its monitor page drives
+`mon_hp_vol` and `mon_sp_vol` from sliders). `docs/EFFECTS_CONTROL_PLAN.md`
+has the argument; `tests/test-control-addresses.sh` asserts the split for
+every address of this map.
+
 ## Evidence
 
 The map is not a guess: every address the vendor application was captured
