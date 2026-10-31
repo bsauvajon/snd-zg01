@@ -11,7 +11,8 @@ band values are decoded exactly; the read path is partially decoded. Every
 parameter's address is known from the vendor library rather than from a
 capture (`docs/DEVICE_PARAMETER_MAP.md`), so the sub-parameters that were
 never captured are labelled from the map; the `f0 43 00` preset block is
-still not mapped.
+still not mapped.  The `.zgpreset` file format that stores these settings is
+documented in `docs/PRESET_FORMAT.md`.
 
 ## Transport: USB-MIDI packets carrying Yamaha system exclusive
 
@@ -237,14 +238,18 @@ and an apply command `04 f0 43 30 | 04 3e 14 03 | 04 02 06 00 | 07 00 01 f7`.
 
 ## Driver controls
 
-The driver exposes **208 mixer controls**: the 39 of the microphone DSP
-block (P48V and mute, the GATE / COMP / LIMITER switches and levels, the
-dynamics sub-parameters and the four-band EQ), the 69 of the microphone
-effect chain and the 100 of the game effect chain.  Each row of the table
-in `src/zg01_control.c` names a device address from
-`docs/DEVICE_PARAMETER_MAP.md`, and
-`tests/test-control-addresses.sh` checks that every one of them resolves
-to the expected device parameter with the vendor model's bounds.
+The driver exposes **367 writable mixer controls** from the 375-address
+device map: the 208 manual controls (the 39 of the microphone DSP block -
+P48V and mute, the GATE / COMP / LIMITER switches and levels, the
+dynamics sub-parameters and the four-band EQ - the 69 of the microphone
+effect chain and the 100 of the game effect chain) plus 159 generated
+from `tools/vendor/control-map-zg01.json` (106 vendor-model rows and 53
+raw device-step rows).  The other eight addresses are read-only status
+rows and have no ALSA control.  Each manual row names a
+device address from `docs/DEVICE_PARAMETER_MAP.md`; the generated rows
+carry theirs directly.  `tests/test-control-addresses.sh` and
+`tests/test-control-map.sh` check the addresses, bounds and defaults
+against the device map and the vendor model.
 
 The two effect blocks have their own record:
 `docs/EFFECTS_CONTROL_PLAN.md` - the correspondence between the vendor

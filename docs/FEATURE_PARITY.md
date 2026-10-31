@@ -8,32 +8,44 @@ generated in `docs/PARAMETER_INVENTORY.md`; the protocol facts are in
 
 ## The surface
 
-The vendor library models **383 parameters** (331 CamelCase plus 52 legacy
-snake_case entries; `_ForBackup` mirrors excluded), grouped in the same
-blocks as the application screens:
+The vendor library models **383 names** (331 CamelCase plus 52 legacy
+snake_case entries; `_ForBackup` mirrors are excluded except for the two
+that are the only row for their parameter).  The device map has **375
+addressable parameters**.  The control map classifies every one:
+**367 writable ALSA controls** and **8 read-only status exclusions**.  Of
+the 367, 208 are the original manual controls and 159 are generated from
+the control map (106 vendor-model rows and 53 raw device-step rows).
 
-| Block | Parameters | Driver today |
+The blocks follow the application screens:
+
+| Block | Vendor names | Driver today |
 |---|---|---|
-| Mic: GATE, COMP, EQ, LIMITER, mute, P48V | 54 | 39 controls: P48V, mute, switches and levels, the GATE/COMP/LIMITER sub-parameters (threshold, range, times, knee, out gain), EQ switch, 2 shapes, 4 gains, 4 frequencies, 4 Q |
-| MIC EFFECT: voice changer, SE, echo, reverb, tone control, transpose | 69 | 69 controls: the voice changer (transformer, harmony, pitch), the radio/tremolo voice effect, the voice reverb, the three-band tone control, the sound effect and the echo |
-| GAME EFFECT: EQ, de-esser, surround | 101 | 100 controls: the three effect slots and the game FX switch and type, the de-esser (two instances), the M and S four-band EQs, the ten-band game EQ behind its master switch |
-| Monitor / headphone: 4-band EQ, levels, select | 27 | none |
-| Binaural (3D chat space) | 41 | none |
-| Streaming output mixer: USB, HDMI, PC, per-input link/mute/FX/level | 22 | none |
-| Presets and current selection | 6 | none |
-| Other controls | 11 | none |
-| Legacy snake_case names, several of them read-only status | 52 | none |
+| Mic: GATE, COMP, EQ, LIMITER, mute, P48V | 54 | exposed: the 39 original controls plus the remaining mic rows; `MicLevel` is read-only |
+| MIC EFFECT: voice changer, SE, echo, reverb, tone control, transpose | 69 | exposed: the original 69 controls |
+| GAME EFFECT: EQ, de-esser, surround | 101 | exposed: the original 100 controls plus `GameEffectName` |
+| Monitor / headphone: 4-band EQ, levels, select | 27 | exposed; `MonitorLevel` is read-only |
+| Binaural (3D chat space) | 41 | exposed |
+| Streaming output mixer: USB, HDMI, PC, per-input link/mute/FX/level | 22 | exposed; the dirty flags are read-only |
+| Presets and current selection | 6 | the addressable rows (`CurrentGameEffectButton`, `PresetVoiceName`, `PresetVoiceOnf1/2`) are controls; `L11`/`R10` are display strings, not parameters. Preset files load with `zgctl preset list/show/load` (`docs/PRESET_FORMAT.md`); the application's preset-selection traffic is still unmapped |
+| Other controls | 11 | exposed |
+| Legacy snake_case names, several of them read-only status | 52 | a second naming layer: the 43 addressable names are covered by their addresses above; the 9 status-only names have no address |
 
 Plus the device actions (already implemented): `Save to ZG01` and
 `Reset to ZG01`.
 
-Read-only status reported by the card, visible in the legacy names:
-`sys_samplingrate`, `inpt_is_anlg`, `outpt_is_anlg`, `sys_hs_loopback`,
-`sys_is_mtrx_crosstie`, `meter_mic_output`, `meter_pc_in`, plus the level
-parameters used as meters (`MicLevel`, `MicMonitorLevel`,
-`StreamingMicLevel`, ... 0..127 in the vendor model).  Only the physical
-level meters are streamed continuously (the ~50 ms 192-byte frames on EP
-`0x83`); nothing in the driver reads them.
+The eight read-only exclusions are `dirty_flag_mic`, `dirty_mic_fx`,
+`dirty_game_fx`, `dirty_monitor`, `dirty_streming`, `mic_level`,
+`mic_monitor_level_knob` and `mon_level`.  They are present in the
+userspace map but have no ALSA control, so `preset load` reports them as
+unsupported.  `StreamingMicLevel` is *not* one of them: it is a writable
+mixer level, now exposed through its `_ForBackup` model row as
+`Streaming Mic Level Steps` (0..127).
+
+Read-only status names carried by the card, with no address in the
+375-row map: `sys_samplingrate`, `inpt_is_anlg`, `outpt_is_anlg`,
+`sys_hs_loopback`, `sys_is_mtrx_crosstie`, `meter_mic_output`,
+`meter_pc_in`.  The level meters are streamed continuously (the ~50 ms
+192-byte frames on EP `0x83`); nothing in the driver reads them.
 
 ## What is already known
 
@@ -81,34 +93,43 @@ implemented from the map plus the vendor model's range and default
    meters but not decoded; the vendor model gives their scale (0..127) and
    names, so a capture with known signals should be enough to pin the
    layout.
-4. **Presets.**  Factory and user presets are `*.zgpreset` files in
-   Yamaha's MBDF container (chunked, bit-packed).  Not decoded; needed for
-   preset selection and for storing user presets, and it is also the
-   likely ground truth for the `F0 43 00` block the application sends
-   after each edit.
+4. **Preset export and selection.**  Factory and user presets are
+   `*.zgpreset` files in Yamaha's MBDF container.  The container,
+   components, schema records and value layout are decoded
+   (`docs/PRESET_FORMAT.md`), and `zgctl preset list/show/load` reads and
+   applies them.  Exporting a preset from Linux remains out of scope, and
+   the application's preset selection is not exposed; the `F0 43 00` block
+   it sends after each edit is still unmapped.  `.zg01` backups are
+   rejected with a clear error: their multi-group `F_CurrentScene` layout
+   is a follow-up, not a supported input.
 
 ## Suggested order
 
 1. ~~Mic DSP completion~~, ~~MIC EFFECT~~ and ~~GAME EFFECT~~ - done.  The
    mic block's sub-parameters, the microphone effect chain and the game
-   effect chain are implemented and covered by the contract test
-   (`docs/EFFECTS_CONTROL_PLAN.md`): 208 of the map's 375 parameters.
-2. **Monitor / headphone** (27 parameters) - the four-band
-   `MonitorEqV21..V24` on page 1 follows the MIC EQ pattern the driver
-   already uses, plus `MonitorHpVolume` / `MonitorSpVolume` /
-   `MonitorSelect` on the high half of page 0, whose address digit the
-   game effect chain settled.
-3. **Streaming output mixer** (22 parameters, switches and levels) -
-   mostly 0/1 and 0..100 values in one space, and the block a streaming
-   user reaches for first.
+   effect chain are implemented and covered by the contract tests
+   (`docs/EFFECTS_CONTROL_PLAN.md`).  Together with the generated rows
+   they give 367 of the map's 375 parameters; the other eight are the
+   read-only status exclusions.
+2. **Units for the remaining blocks** - monitor / headphone, streaming,
+   binaural, the legacy three-band EQ and the button/name slots are now
+   exposed as controls, but several publish device steps or grid indices
+   because their physical unit is not established.  A capture of the
+   application moving one value pins each unit
+   (`docs/EFFECTS_CONTROL_PLAN.md`).
+3. **Preset selection and the `F0 43 00` block** - the six preset
+   name/index controls are exposed; the application's preset-selection
+   traffic is still unmapped.
 4. **Meters and status** - needs the state dump or the meter frame
    decoding, and it is what makes a GUI or a mixer application possible.
-5. **The rest of the mic chain** - the legacy three-band EQ, the button
-   function slots, and the per-band enables the ten-band game EQ and the
-   mic EQ are missing.
-6. **Binaural** - 41 parameters, least likely to be needed first.
-7. **Presets** - `*.zgpreset` decoding, then read/write through the
-   `F0 43 00` block.
+5. ~~The rest of the mic chain~~ - the legacy three-band EQ, the button
+   function slots and the per-band enables are exposed as controls; their
+   units are part of item 2.
+6. ~~Binaural~~ - the 41 parameters are exposed; their units are part of
+   item 2.
+7. ~~Presets~~ - `*.zgpreset` decoding and loading are done
+   (`docs/PRESET_FORMAT.md`, `zgctl preset load`); exporting a preset and
+   the `.zg01` backup layout are follow-ups.
 
 ## Hardware and operational notes
 

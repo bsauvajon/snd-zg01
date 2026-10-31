@@ -120,16 +120,19 @@ the chain resubmits.
 
 ## Mixer controls
 
-The card exposes 208 mixer controls as ALSA controls.  The microphone DSP
-block came first: GATE, COMP and LIMITER switches and levels, the EQ
-switch, four EQ band gains, frequencies and Q, and the low/high shelf
-types.  The microphone effect chain (voice changer, radio/tremolo, voice
-reverb, tone control, sound effect, echo) and the game effect chain
-(three effect slots, the game FX switch and type, the de-esser, the M and
-S four-band EQs and the ten-band game EQ) follow it.  They are written to
-the device through the interface 4 bulk protocol
-(`docs/MIC_CONTROL_PROTOCOL.md`); the two effect blocks have their own
-record in `docs/EFFECTS_CONTROL_PLAN.md`.
+The card exposes 367 writable mixer controls: the 208 original controls
+plus 159 generated from the 375-address control map.  The eight read-only
+status addresses (`docs/FEATURE_PARITY.md`) have no ALSA control.  The
+microphone DSP block came first: GATE, COMP and LIMITER switches and
+levels, the EQ switch, four EQ band gains, frequencies and Q, and the
+low/high shelf types.  The microphone effect chain (voice changer,
+radio/tremolo, voice reverb, tone control, sound effect, echo) and the
+game effect chain (three effect slots, the game FX switch and type, the
+de-esser, the M and S four-band EQs and the ten-band game EQ) follow it,
+then the monitor/headphone, binaural, streaming, preset-name and remaining
+controls.  They are written to the device through the interface 4 bulk
+protocol (`docs/MIC_CONTROL_PROTOCOL.md`); the two effect blocks have
+their own record in `docs/EFFECTS_CONTROL_PLAN.md`.
 
 ```bash
 make -C tools
@@ -165,6 +168,43 @@ with the built-in defaults at load).  Settings changed outside the driver
 the control is written again from Linux.  This is the documented
 behaviour; see `docs/MIC_CONTROL_PROTOCOL.md`.
 
+## Presets
+
+`zgctl` reads Yamaha `.zgpreset` files and loads their mixer values through
+the same ALSA controls.  `preset list` and `preset show` only read the file;
+`preset load` writes the device.  `.zg01` backups are not parsed yet: every
+preset command rejects one with a clear "backup not supported" error.
+
+```bash
+./tools/zgctl preset list mic.zgpreset
+./tools/zgctl preset show mic.zgpreset
+./tools/zgctl preset load mic.zgpreset --dry-run
+./tools/zgctl preset load mic.zgpreset
+./tools/zgctl preset load mic.zgpreset --block 'MIC INPUT'
+./tools/zgctl preset load mic.zgpreset --allow-raw
+```
+
+`--dry-run` prints every parameter, the target control, the converted value
+and its status (`apply`, `raw, skipped`, `out_of_range, skipped`,
+`unsupported, skipped`) without touching the card.  `--block NAME` restricts
+the load to the file's block label (`MIC INPUT`, `MONITOR EQ`,
+`GAME EFFECT`, `MIC EFFECT`); matching is case-insensitive and
+whitespace-normalized.  Options may come before or after the file path.
+`--allow-raw` opts in to control-map rows whose provenance is `raw`; those
+are the only rows it changes.  Many `... Steps` controls are vendor-model
+rows (for example `Streaming Mic Level Steps`) and apply without the flag.
+
+Read-only status rows (`Mic Level Status`, `Monitor Level Status`,
+`Mic Monitor Level Knob Status` and the `Dirty ... Status` flags) are
+reported by `preset show` and always skipped by `preset load`.  Out-of-range
+values are reported and skipped too, never clamped.  Loading is best-effort
+and not transactional: a failed write leaves earlier writes in place, and
+the command prints `applied=N skipped=N failed=N` and exits `1` if anything
+was skipped or failed.
+
+`preset load` does not call `Save to ZG01`; run `zgctl save` to persist the
+settings.  The file format is documented in `docs/PRESET_FORMAT.md`.
+
 ## DKMS
 
 Both packages install the source to DKMS. DKMS rebuilds the module on kernel
@@ -198,20 +238,21 @@ install. If a pre-2026 package left broken DKMS state, remove
 - `docs/VENDOR_PACKAGE.md`: parameter model extracted from the Windows package
 - `docs/PARAMETER_INVENTORY.md`: every parameter the vendor application drives
 - `docs/DEVICE_PARAMETER_MAP.md`: the address of every parameter the device registers
+- `docs/PRESET_FORMAT.md`: the `.zgpreset` container, components and value layout
 - `docs/FEATURE_PARITY.md`: what is left to reach ZG Controller parity
 - `packaging/arch/README.md`: Arch packaging, verification, rollback
 
 ## Scope and status
 
 Working: Game Out + Voice Out simultaneous playback, Voice In capture,
-suspend/resume, replug, single module, single card, and live write of 208
-mixer controls (the mic DSP block, the microphone effect chain and the
-game effect chain) through ALSA and `zgctl`. Not implemented: MIDI, other
-sample rates, reading device state back.
+suspend/resume, replug, single module, single card, and live write of 367
+mixer controls, covering every one of the 375 device addresses except the
+eight read-only status rows, through ALSA and `zgctl`. Not implemented:
+MIDI, other sample rates, reading device state back.
 
-The vendor application drives 383 parameters across its seven screens;
-`docs/FEATURE_PARITY.md` maps what the driver covers today (208 of the
-map's 375 parameters) and what each remaining block needs.
+`docs/FEATURE_PARITY.md` maps the 375-address surface (367 writable
+controls, 8 read-only exclusions) to the vendor's seven screens and lists
+what each remaining unit or status decode needs.
 
 Experimental out-of-tree driver. Kernel updates can break the build; report
 issues with `dmesg` output.
