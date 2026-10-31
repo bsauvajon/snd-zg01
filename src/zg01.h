@@ -288,6 +288,17 @@ struct zg01_dev {
     struct mutex param_mutex;
     u32 param_cache[ZG01_PARAM_PAGES][ZG01_PARAM_PAGE_SIZE];
 
+    /*
+     * Interfaces this anchor claimed in addition to interface 1.  They
+     * are released when probe unwinds or the anchor disconnects, so a
+     * failed probe does not leave interface 3/4 bound to a dead card.
+     * param_available is false when interface 4 belongs to another
+     * driver: the mixer controls are then not created, because their
+     * callbacks would submit bulk traffic to that driver's endpoints.
+     */
+    u32 claimed_mask;
+    bool param_available;
+
     atomic_t disconnecting;                   /* URB resubmission off */
     atomic_t disconnected;                    /* teardown-once latch */
 

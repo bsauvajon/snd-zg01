@@ -98,7 +98,24 @@ def parse_usbmon_frame(frame, linktype):
     ) = struct.unpack_from("<QBBBBHccqiiII", frame, 0)
 
     setup = frame[40:48]
-    payload = frame[header_size:header_size + len_cap]
+
+    # In the mmapped layout, ndesc 16-byte isochronous descriptors sit
+    # between the 64-byte header and the transfer data.  Counting them as
+    # payload both corrupts the samples and truncates the end of the frame.
+    ndesc = 0
+    if linktype == DLT_USB_LINUX_MMAPPED:
+        (ndesc,) = struct.unpack_from("<I", frame, 56)
+        data_offset = header_size + ndesc * 16
+        if data_offset > len(frame):
+            raise ValueError("truncated isochronous descriptors")
+    else:
+        data_offset = header_size
+
+    payload = frame[data_offset:data_offset + len_cap]
+    if len(payload) < len_cap:
+        # Tolerate captures whose len_cap includes the descriptor array:
+        # after skipping it, the rest of the frame is the payload.
+        payload = frame[data_offset:]
 
     return {
         "urb_id": urb_id,
@@ -173,7 +190,7 @@ def normalize(path, device=None, include_iso=False):
         if rec["record_type"] == "S":
             pending[key] = (rec, time)
             order.append(key)
-        elif rec["record_type"] == "C":
+        elif rec["record_type"] in ("C", "E"):
             entry = pending.pop(key, None)
             if entry is None:
                 continue

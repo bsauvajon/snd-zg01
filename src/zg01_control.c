@@ -85,16 +85,16 @@ static void zg01_put_word(u8 *buf, unsigned int index, u8 a, u8 b, u8 c)
     w[3] = c;
 }
 
-static int zg01_bulk_out(struct zg01_dev *dev, const u8 *buf, unsigned int len)
+/* Called with param_mutex held. */
+static int zg01_bulk_out_locked(struct zg01_dev *dev, const u8 *buf,
+                                unsigned int len)
 {
     int actual = 0;
     int ret;
 
-    mutex_lock(&dev->param_mutex);
     ret = usb_bulk_msg(dev->udev,
                        usb_sndbulkpipe(dev->udev, ZG01_PARAM_EP_OUT),
                        (void *)buf, len, &actual, ZG01_PARAM_TIMEOUT);
-    mutex_unlock(&dev->param_mutex);
 
     if (ret)
         return ret;
@@ -103,8 +103,11 @@ static int zg01_bulk_out(struct zg01_dev *dev, const u8 *buf, unsigned int len)
     return 0;
 }
 
-/* The app polls the channel; a keepalive precedes each write. */
-static int zg01_param_keepalive(struct zg01_dev *dev)
+/*
+ * The app polls the channel; a keepalive precedes each write.  Called with
+ * param_mutex held.
+ */
+static int zg01_param_keepalive_locked(struct zg01_dev *dev)
 {
     unsigned char *buf;
     int ret;
@@ -120,7 +123,7 @@ static int zg01_param_keepalive(struct zg01_dev *dev)
     buf[10] = 0x00;
     buf[11] = 0xf7;
 
-    ret = zg01_bulk_out(dev, buf, ZG01_PARAM_FRAME);
+    ret = zg01_bulk_out_locked(dev, buf, ZG01_PARAM_FRAME);
     kfree(buf);
     return ret;
 }
@@ -145,7 +148,7 @@ static int zg01_param_keepalive(struct zg01_dev *dev)
  * terminator packet's CIN is 0x05 (the sys exclusive message ends with
  * one byte); a 0x04 there makes the firmware ignore the whole frame.
  */
-int zg01_param_write(struct zg01_dev *dev, u16 addr, u32 value)
+static int zg01_param_write_locked(struct zg01_dev *dev, u16 addr, u32 value)
 {
     unsigned char digits[ZG01_VALUE_DIGITS];
     unsigned char *buf;
@@ -157,7 +160,7 @@ int zg01_param_write(struct zg01_dev *dev, u16 addr, u32 value)
     if (value > ZG01_VALUE_MAX)
         return -ERANGE;
 
-    ret = zg01_param_keepalive(dev);
+    ret = zg01_param_keepalive_locked(dev);
     if (ret)
         return ret;
 
@@ -178,12 +181,25 @@ int zg01_param_write(struct zg01_dev *dev, u16 addr, u32 value)
     buf[26] = 0x00;
     buf[27] = 0x00;
 
-    ret = zg01_bulk_out(dev, buf, ZG01_PARAM_FRAME);
+    ret = zg01_bulk_out_locked(dev, buf, ZG01_PARAM_FRAME);
     kfree(buf);
 
     if (ret)
         dev_dbg(&dev->interface->dev, "param 0x%03x write failed: %d\n",
                 addr, ret);
+    return ret;
+}
+
+int zg01_param_write(struct zg01_dev *dev, u16 addr, u32 value)
+{
+    int ret;
+
+    if (!dev)
+        return -ENODEV;
+
+    mutex_lock(&dev->param_mutex);
+    ret = zg01_param_write_locked(dev, addr, value);
+    mutex_unlock(&dev->param_mutex);
     return ret;
 }
 
@@ -201,13 +217,17 @@ int zg01_param_save(struct zg01_dev *dev)
     if (!dev || !dev->udev)
         return -ENODEV;
 
-    ret = zg01_param_keepalive(dev);
+    mutex_lock(&dev->param_mutex);
+
+    ret = zg01_param_keepalive_locked(dev);
     if (ret)
-        return ret;
+        goto out_unlock;
 
     buf = kzalloc(ZG01_PARAM_FRAME, GFP_KERNEL);
-    if (!buf)
-        return -ENOMEM;
+    if (!buf) {
+        ret = -ENOMEM;
+        goto out_unlock;
+    }
 
     zg01_put_word(buf, 0, 0xf0, 0x43, 0x30);
     zg01_put_word(buf, 1, 0x3e, 0x14, 0x03);
@@ -217,11 +237,13 @@ int zg01_param_save(struct zg01_dev *dev)
     buf[14] = 0x01;
     buf[15] = 0xf7;
 
-    ret = zg01_bulk_out(dev, buf, ZG01_PARAM_FRAME);
+    ret = zg01_bulk_out_locked(dev, buf, ZG01_PARAM_FRAME);
     kfree(buf);
 
     if (ret)
         dev_dbg(&dev->interface->dev, "save failed: %d\n", ret);
+out_unlock:
+    mutex_unlock(&dev->param_mutex);
     return ret;
 }
 
@@ -240,13 +262,17 @@ int zg01_param_reset(struct zg01_dev *dev)
     if (!dev || !dev->udev)
         return -ENODEV;
 
-    ret = zg01_param_keepalive(dev);
+    mutex_lock(&dev->param_mutex);
+
+    ret = zg01_param_keepalive_locked(dev);
     if (ret)
-        return ret;
+        goto out_unlock;
 
     buf = kzalloc(ZG01_PARAM_FRAME, GFP_KERNEL);
-    if (!buf)
-        return -ENOMEM;
+    if (!buf) {
+        ret = -ENOMEM;
+        goto out_unlock;
+    }
 
     zg01_put_word(buf, 0, 0xf0, 0x43, 0x30);
     zg01_put_word(buf, 1, 0x3e, 0x14, 0x03);
@@ -256,11 +282,13 @@ int zg01_param_reset(struct zg01_dev *dev)
     buf[14] = 0x01;
     buf[15] = 0xf7;
 
-    ret = zg01_bulk_out(dev, buf, ZG01_PARAM_FRAME);
+    ret = zg01_bulk_out_locked(dev, buf, ZG01_PARAM_FRAME);
     kfree(buf);
 
     if (ret)
         dev_dbg(&dev->interface->dev, "reset failed: %d\n", ret);
+out_unlock:
+    mutex_unlock(&dev->param_mutex);
     return ret;
 }
 
@@ -555,9 +583,13 @@ static int zg01_ctl_get(struct snd_kcontrol *kcontrol,
 {
     struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
     const struct zg01_param_ctl *c = zg01_ctl_of(kcontrol);
+    u32 raw;
 
-    ucontrol->value.integer.value[0] =
-        zg01_dev_to_user(c->conv, *zg01_cache(dev, c->addr));
+    mutex_lock(&dev->param_mutex);
+    raw = *zg01_cache(dev, c->addr);
+    mutex_unlock(&dev->param_mutex);
+
+    ucontrol->value.integer.value[0] = zg01_dev_to_user(c->conv, raw);
     return 0;
 }
 
@@ -585,12 +617,19 @@ static int zg01_ctl_put(struct snd_kcontrol *kcontrol,
      * writes - asking for P48V off while the cache said off did nothing
      * even though phantom power was on.
      */
-    ret = zg01_param_write(dev, c->addr, raw);
-    if (ret)
-        return ret;
+    /*
+     * Serialize the write and its cache update as one transaction.  Two
+     * concurrent puts must not interleave their USB frames and cache
+     * stores, or the older write can overwrite the newer cached value.
+     * The getters take the same mutex.
+     */
+    mutex_lock(&dev->param_mutex);
+    ret = zg01_param_write_locked(dev, c->addr, raw);
+    if (!ret)
+        *zg01_cache(dev, c->addr) = raw;
+    mutex_unlock(&dev->param_mutex);
 
-    *zg01_cache(dev, c->addr) = raw;
-    return 1;
+    return ret ? ret : 1;
 }
 
 /* Write-only action control: writing 1 persists the current settings. */
@@ -657,6 +696,15 @@ int zg01_create_controls(struct zg01_dev *dev)
 
     if (!dev || !dev->card)
         return -ENODEV;
+
+    /*
+     * Without interface 4 the mixer transport would submit bulk traffic
+     * to endpoints owned by another driver.  The card still provides PCM;
+     * only the parameter controls (and their Save/Reset actions) are
+     * omitted.
+     */
+    if (!dev->param_available)
+        return 0;
 
     /* The cache is indexed by address: every address must fit a page. */
     BUILD_BUG_ON(ZG01_PARAM_EQ_Q(3) >= ZG01_PARAM_CACHE);

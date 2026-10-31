@@ -212,7 +212,7 @@ for name, row in by_name.items():
 
 # the frame builders must derive the two digits from the address: a
 # hardcoded page byte is how page 0 parameters used to be unreadable
-for func in ('zg01_param_write', 'zg01_param_read', 'zg01_param_parse'):
+for func in ('zg01_param_write_locked', 'zg01_param_read', 'zg01_param_parse'):
     segment = source.split(f'{func}(', 1)[1].split('\n}\n', 1)[0]
     for macro in ('ZG01_ADDR_FLAG', 'ZG01_ADDR_ID'):
         assert macro in segment, f'{func} does not derive the digits ({macro})'
@@ -222,8 +222,10 @@ for func in ('zg01_param_write', 'zg01_param_read', 'zg01_param_parse'):
 # reads with a status, and a reset does not touch it), so deduplicating a
 # write against it swallowed real settings changes.
 put = source.split('zg01_ctl_put(', 1)[1].split('\n}\n', 1)[0]
-assert 'zg01_param_write(dev, c->addr, raw)' in put, \
-    'zg01_ctl_put must write the parameter'
+assert 'zg01_param_write_locked(dev, c->addr, raw)' in put, \
+    'zg01_ctl_put must write the parameter under param_mutex'
+assert 'mutex_lock(&dev->param_mutex)' in put, \
+    'zg01_ctl_put must serialize the write and its cache update'
 assert '*zg01_cache(dev, c->addr) == raw' not in put, \
     'zg01_ctl_put must not skip a write because of the cached value'
 
