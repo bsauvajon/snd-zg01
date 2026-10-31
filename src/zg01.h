@@ -211,6 +211,8 @@ struct zg01_meter_state {
     struct urb *urb;
     unsigned char *buf;
     bool running;
+    struct delayed_work keepalive_work;      /* 0x03 doorbell, once a second */
+    bool keepalive_running;                  /* param_mutex */
     unsigned int errors;                     /* consecutive failed completions */
     unsigned long long frames;               /* 192-byte completions */
     unsigned long long other;                /* other successful completions */
@@ -301,10 +303,12 @@ int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value);
 int zg01_param_read(struct zg01_dev *dev, u8 id, u32 *value);
 int zg01_param_save(struct zg01_dev *dev);
 int zg01_param_reset(struct zg01_dev *dev);
+int zg01_param_keepalive(struct zg01_dev *dev);
 
 /* zg01_meters.c */
 int zg01_meters_start(struct zg01_dev *dev);
 void zg01_meters_stop(struct zg01_dev *dev);
+void zg01_meters_keepalive_fn(struct work_struct *work);
 
 /* zg01_usb_discovery.c (best-effort, debug only) */
 int zg01_discover_usb_config(struct zg01_dev *dev);

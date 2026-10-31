@@ -4,6 +4,8 @@
  * The device sends 192-byte meter frames on EP 0x83 (interface 4) only
  * while the host keeps IN URBs queued there.  This file owns that
  * endpoint with a single URB that is resubmitted from its completion.
+ * The device sends meter frames only while the host keeps the 0x03
+ * keepalive coming, so a delayed work sends one every second.
  *
  * Capture-only: frames are counted and logged, not decoded yet.
  */
@@ -72,6 +74,27 @@ static void zg01_meters_complete(struct urb *urb)
     }
 }
 
+void zg01_meters_keepalive_fn(struct work_struct *work)
+{
+    struct zg01_dev *dev = container_of(work, struct zg01_dev,
+                                        meters.keepalive_work.work);
+    struct zg01_meter_state *m = &dev->meters;
+    int ret;
+
+    if (!m->keepalive_running || atomic_read(&dev->disconnecting))
+        return;
+
+    ret = zg01_param_keepalive(dev);
+    if (ret)
+        dev_warn_ratelimited(&dev->interface->dev,
+                             "meter keepalive failed: %d\n", ret);
+
+    mutex_lock(&dev->param_mutex);
+    if (m->keepalive_running && !atomic_read(&dev->disconnecting))
+        schedule_delayed_work(&m->keepalive_work, HZ);
+    mutex_unlock(&dev->param_mutex);
+}
+
 int zg01_meters_start(struct zg01_dev *dev)
 {
     struct zg01_meter_state *m = &dev->meters;
@@ -112,12 +135,22 @@ int zg01_meters_start(struct zg01_dev *dev)
         return err;
     }
 
+    mutex_lock(&dev->param_mutex);
+    m->keepalive_running = true;
+    schedule_delayed_work(&m->keepalive_work, HZ);
+    mutex_unlock(&dev->param_mutex);
+
     return 0;
 }
 
 void zg01_meters_stop(struct zg01_dev *dev)
 {
     struct zg01_meter_state *m = &dev->meters;
+
+    mutex_lock(&dev->param_mutex);
+    m->keepalive_running = false;
+    mutex_unlock(&dev->param_mutex);
+    cancel_delayed_work_sync(&m->keepalive_work);
 
     m->running = false;
     if (m->urb) {

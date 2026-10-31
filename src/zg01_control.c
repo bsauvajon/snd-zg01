@@ -96,8 +96,11 @@ static int zg01_bulk_out(struct zg01_dev *dev, const u8 *buf, unsigned int len)
     return 0;
 }
 
-/* The app polls the channel; a keepalive precedes each write. */
-static int zg01_param_keepalive(struct zg01_dev *dev)
+/*
+ * The app polls the channel; a keepalive precedes each write, and the
+ * meter reader sends one every second (zg01_meters.c).
+ */
+int zg01_param_keepalive(struct zg01_dev *dev)
 {
     unsigned char *buf;
     int ret;
