@@ -215,6 +215,40 @@ fn set_and_wait_is_not_overwritten_by_a_pending_value() {
     assert_eq!(backend.writes(), vec![("Gate".into(), 2)]);
 }
 
+/// `flush_and_wait` is a global barrier: every pending control is written
+/// before it returns, without waiting for the coalescing deadline.
+#[test]
+fn flush_and_wait_writes_every_pending_control() {
+    let backend = Arc::new(RecordingBackend::default());
+    let (writer, _rx) = ControlWriter::spawn(backend.clone());
+    writer.set("Gate", 11);
+    writer.set("Gain", 22);
+
+    writer.flush_and_wait().expect("the flush succeeds");
+
+    let mut writes = backend.writes();
+    writes.sort();
+    assert_eq!(
+        writes,
+        vec![("Gain".to_string(), 22), ("Gate".to_string(), 11)]
+    );
+}
+
+/// The barrier reports the failing writes, so a caller that needs the
+/// device state to be committed knows it is not.
+#[test]
+fn flush_and_wait_reports_a_failed_write() {
+    let (writer, _rx) = ControlWriter::spawn(Arc::new(FailingBackend));
+    writer.set("Gate", 7);
+
+    let error = writer.flush_and_wait().expect_err("the write fails");
+
+    assert!(
+        error.contains("Gate"),
+        "the error names the control: {error}"
+    );
+}
+
 #[test]
 fn the_meter_controls_are_the_four_decoded_ones() {
     assert_eq!(

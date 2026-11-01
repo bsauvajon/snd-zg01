@@ -64,6 +64,12 @@ enum Command {
         /// Where the outcome is sent back.
         reply: Sender<Result<(), String>>,
     },
+    /// Write every pending value now and confirm it.
+    Flush {
+        /// Where the result is sent back once the pending values are on
+        /// the device.
+        reply: Sender<Result<(), String>>,
+    },
 }
 
 /// Writes the controls of the device from a worker thread.
@@ -107,7 +113,8 @@ impl ControlWriter {
     /// The write skips the coalescing: it is sent to the device right
     /// away, and a value queued for the same control before it is
     /// dropped, so the value asked for is the one the device holds when
-    /// the call returns.
+    /// the call returns. Values queued for **other** controls are not
+    /// touched; use [`ControlWriter::flush_and_wait`] for a global barrier.
     ///
     /// The outcome is returned to the caller **and** reported on the
     /// channel of [`ControlWriter::spawn`]: the thread sends one
@@ -127,6 +134,28 @@ impl ControlWriter {
             .recv_timeout(ANSWER_TIMEOUT)
             .map_err(|err| format!("the writer thread did not answer: {err}"))?
     }
+
+    /// Writes every pending coalesced value and waits for them.
+    ///
+    /// This is a global barrier: when it returns, every value that was
+    /// pending when the command reached the writer thread has been written,
+    /// and their outcomes have been sent on the channel. It does not
+    /// reorder the pending values among themselves (the writer never
+    /// promised an order across controls); what matters is that none of
+    /// them is left behind.
+    ///
+    /// Used before an action that must take effect after the edits queued
+    /// before it: a Reset reloads the persisted settings, so a fader write
+    /// flushed after the reset would silently undo it.
+    pub fn flush_and_wait(&self) -> Result<(), String> {
+        let (reply, answer) = mpsc::channel();
+        self.commands
+            .send(Command::Flush { reply })
+            .map_err(|_| "the writer thread is gone".to_string())?;
+        answer
+            .recv_timeout(ANSWER_TIMEOUT)
+            .map_err(|err| format!("the writer thread did not answer: {err}"))?
+    }
 }
 
 /// The body of the writer thread.
@@ -140,7 +169,7 @@ fn run(backend: Arc<dyn AlsaBackend>, inbox: Receiver<Command>, outcomes: Sender
         let now = Instant::now();
         if let Some(at) = deadline {
             if now >= at {
-                flush(&*backend, &mut pending, &outcomes);
+                let _ = flush(&*backend, &mut pending, &outcomes);
                 deadline = None;
                 continue;
             }
@@ -173,13 +202,18 @@ fn run(backend: Arc<dyn AlsaBackend>, inbox: Receiver<Command>, outcomes: Sender
                 });
                 let _ = reply.send(result.map_err(|err| err.to_string()));
             }
+            Ok(Command::Flush { reply }) => {
+                let result = flush(&*backend, &mut pending, &outcomes);
+                deadline = None;
+                let _ = reply.send(result);
+            }
             Err(RecvTimeoutError::Timeout) => {
-                flush(&*backend, &mut pending, &outcomes);
+                let _ = flush(&*backend, &mut pending, &outcomes);
                 deadline = None;
             }
             Err(RecvTimeoutError::Disconnected) => {
                 // Nobody talks to the writer any more: write what is left.
-                flush(&*backend, &mut pending, &outcomes);
+                let _ = flush(&*backend, &mut pending, &outcomes);
                 break;
             }
         }
@@ -187,22 +221,34 @@ fn run(backend: Arc<dyn AlsaBackend>, inbox: Receiver<Command>, outcomes: Sender
 }
 
 /// Writes the last value of every pending control.
+///
+/// Returns the first failure, joined with the others so a caller that
+/// waited for the flush knows which controls did not land. The caller may
+/// ignore it: a normal flush reports every failure on the outcome channel
+/// anyway.
 fn flush(
     backend: &dyn AlsaBackend,
     pending: &mut HashMap<String, i64>,
     outcomes: &Sender<WriteOutcome>,
-) {
+) -> Result<(), String> {
     if pending.is_empty() {
-        return;
+        return Ok(());
     }
     let batch: Vec<(String, i64)> = pending.drain().collect();
+    let mut failures = Vec::new();
     for (name, value) in batch {
         let _ = outcomes.send(match backend.write(&name, value) {
             Ok(()) => WriteOutcome::Ok { name, value },
-            Err(err) => WriteOutcome::Err {
-                name,
-                error: err.to_string(),
-            },
+            Err(err) => {
+                let error = err.to_string();
+                failures.push(error.clone());
+                WriteOutcome::Err { name, error }
+            }
         });
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
     }
 }

@@ -493,22 +493,31 @@ impl App {
 
     /// Writes the Reset action and forgets every displayed value.
     ///
-    /// The action goes through the coalescing writer like a control write;
-    /// `apply_reset` then marks every writable value unknown, because the
-    /// driver reloads its persisted settings without refreshing the cache.
-    /// The write outcome reports a failed action; the values stay unknown
-    /// in that case rather than guessing that the reset did not happen.
+    /// `apply_reset` flushes the coalesced writes, writes and awaits the
+    /// action, then marks every writable value unknown: the driver reloads
+    /// its persisted settings without refreshing the cache. A failed
+    /// action is reported and the values stay unknown rather than guessing
+    /// that the reset did not happen.
     fn reset(&mut self) {
-        let Some(writer) = &self.writer else {
+        let Some(writer) = self.writer.clone() else {
             self.shell.toast("Aucun ZG01 connecté");
             return;
         };
-        writer.set(RESET_ACTION, 1);
+        // Every write issued before the reset is superseded by it; its
+        // outcome must not mark a value known afterwards.
         self.writes.reset();
-        apply_reset(&mut self.state);
+        match apply_reset(&mut self.state, &writer) {
+            Ok(()) => self
+                .shell
+                .toast("ZG01 réinitialisé — les valeurs affichées sont inconnues"),
+            Err(err) => {
+                tracing::warn!("the reset action failed: {err}");
+                self.shell
+                    .toast(&format!("Réinitialisation impossible : {err}"));
+            }
+        }
         self.refresh_controls();
         self.sync_shell_state();
-        tracing::info!("reset requested; every writable value is now unknown");
     }
 
     /// Builds the Mixage screen from the current controls and installs it.
@@ -667,14 +676,13 @@ impl App {
     /// Handles the outcome of a control write.
     fn write_outcome(&mut self, outcome: WriteOutcome) {
         match outcome {
+            // `apply_reset` handles the action outcome: success and failure
+            // were already reported, and the action is not a value.
             WriteOutcome::Ok { name, .. } if name == RESET_ACTION => {
-                self.shell
-                    .toast("ZG01 réinitialisé — les valeurs affichées sont inconnues");
+                tracing::debug!("the reset action is on the device");
             }
             WriteOutcome::Err { name, error } if name == RESET_ACTION => {
-                tracing::warn!("the reset action failed: {error}");
-                self.shell
-                    .toast(&format!("Réinitialisation impossible : {error}"));
+                tracing::debug!("the reset action failed: {error}");
             }
             WriteOutcome::Ok { name, value } => {
                 if !self.writes.accepts(&name) {

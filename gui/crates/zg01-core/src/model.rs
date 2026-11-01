@@ -22,6 +22,7 @@ use serde::Deserialize;
 
 use crate::alsa::{CardInfo, ControlInfo};
 use crate::layout::Layout;
+use crate::writer::ControlWriter;
 
 /// The action control that persists the current settings on the device.
 pub const SAVE_ACTION: &str = "Save to ZG01";
@@ -260,19 +261,27 @@ impl AppState {
     }
 }
 
-/// Applies the state half of a `Reset to ZG01` action.
+/// Applies a `Reset to ZG01` action and forgets every displayed value.
 ///
-/// The caller queues [`RESET_ACTION`] `= 1` through the control writer
-/// first; the driver then reloads its persisted settings without refreshing
-/// the parameter cache. Every value the GUI holds is stale, so they are
-/// marked unknown and Save stays disabled until a preset load or a control
-/// write makes them known again.
+/// The action is written through `writer`: the pending coalesced values
+/// are flushed first, then [`RESET_ACTION`] `= 1` is written and awaited.
+/// The order matters — the driver reloads its persisted settings on Reset,
+/// so a fader write flushed afterwards would silently undo the reset, and
+/// a post-reset fader flushed before it would be overwritten.
 ///
-/// The transition does not depend on the write succeeding: the caller
-/// reports the write error, and the GUI still does not claim to know what
-/// the device holds.
-pub fn apply_reset(state: &mut AppState) {
+/// Whatever the outcome, every writable value is then marked unknown: the
+/// driver cache no longer describes the device, and a failed action must
+/// not leave the GUI claiming to know what the device holds. The error is
+/// returned for the caller to report.
+pub fn apply_reset(state: &mut AppState, writer: &ControlWriter) -> Result<(), String> {
+    let flushed = writer.flush_and_wait();
+    let reset = writer.set_and_wait(RESET_ACTION, 1);
     state.mark_all_unknown();
+    match (flushed, reset) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(err), _) => Err(format!("could not flush the pending writes: {err}")),
+        (Ok(()), Err(err)) => Err(err),
+    }
 }
 
 /// Whether a control holds a value the GUI must know to save.
