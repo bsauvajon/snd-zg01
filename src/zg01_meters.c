@@ -118,6 +118,9 @@ int zg01_meters_start(struct zg01_dev *dev)
     if (m->running)
         return 0;
 
+    /* Release a URB left by an error stop before allocating another. */
+    zg01_meters_stop(dev);
+
     m->urb = usb_alloc_urb(0, GFP_KERNEL);
     if (!m->urb)
         return -ENOMEM;

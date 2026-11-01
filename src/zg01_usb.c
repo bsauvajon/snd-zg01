@@ -256,17 +256,24 @@ static int zg01_suspend(struct usb_interface *intf, pm_message_t message)
     zg01_suspend_pcm(dev);
     zg01_stop_all_chains(dev);
     zg01_drain_all_chains(dev);
+    zg01_meters_stop(dev);
     return 0;
 }
 
 static int zg01_resume(struct usb_interface *intf)
 {
     /* reset_resume handles the real reinit; plain resume is a no-op
-     * beyond the stream-state reset. */
+     * beyond the stream-state reset and the meter reader restart. */
     struct zg01_dev *dev = usb_get_intfdata(intf);
+    int err;
 
-    if (dev)
-        zg01_pm_reset_streams(dev);
+    if (!dev)
+        return 0;
+
+    zg01_pm_reset_streams(dev);
+    err = zg01_meters_start(dev);
+    if (err)
+        dev_err(&intf->dev, "meter reader restart failed: %d\n", err);
     return 0;
 }
 
@@ -278,6 +285,7 @@ static int zg01_resume(struct usb_interface *intf)
 static int zg01_reset_resume(struct usb_interface *intf)
 {
     struct zg01_dev *dev = usb_get_intfdata(intf);
+    int err;
 
     if (!dev)
         return 0;
@@ -288,6 +296,10 @@ static int zg01_reset_resume(struct usb_interface *intf)
     zg01_init_control(dev);
     usb_set_interface(dev->udev, 1, 0);
     usb_set_interface(dev->udev, 2, 0);
+
+    err = zg01_meters_start(dev);
+    if (err)
+        dev_err(&intf->dev, "meter reader restart failed: %d\n", err);
     return 0;
 }
 
