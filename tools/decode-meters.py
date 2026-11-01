@@ -52,11 +52,13 @@ def extract_meter_frames(frames: list[Frame]) -> list[bytes]:
     return [f.data for f in frames if is_meter_frame(f)]
 
 
-# Raw frame offsets (high byte, low byte) of each 14-bit level field.
+# Raw frame offsets (high byte, low byte) of the current field of each meter.
 # Each field is value = hi * 128 + lo, and level dB = (value - 16384) / 10.
+# Every current field has a peak-hold partner (see docs/METER_PROTOCOL.md).
+MIC_IN_FIELD = (10, 11)      # pre-gate mic
+MIC_OUT_FIELD = (15, 17)     # post-gate mic, follows the gate
 PC_IN_FIELD = (159, 161)     # voice-out playback only, 0 dB
-GAME_MIX_FIELD = (181, 182)  # voice (0 dB) plus game (-3 dB)
-STREAM_MIX_FIELD = (10, 11)  # voice and game summed at -40 dB, with a -70 dB floor
+STREAM_MIX_FIELD = (181, 182)  # post-gate mic, voice and game
 
 LEVEL_ZERO_CODE = 16384
 LEVEL_CODES_PER_DB = 10
@@ -74,13 +76,14 @@ def decode_level(data: bytes, field: tuple[int, int]) -> int:
 def decode_frame(data: bytes) -> dict[str, int]:
     """Decode the meters this module can attribute; see docs/METER_PROTOCOL.md.
 
-    mic_in, mic_out and hdmi_in are not decoded (no signal reached them).
+    game_mix (no game-only pair) and hdmi_in (no source) are not decoded.
     """
     if len(data) != METER_LEN or not data.startswith(METER_HEADER):
         raise ValueError("not a 192-byte meter frame")
     return {
+        "mic_in": decode_level(data, MIC_IN_FIELD),
+        "mic_out": decode_level(data, MIC_OUT_FIELD),
         "pc_in": decode_level(data, PC_IN_FIELD),
-        "game_mix": decode_level(data, GAME_MIX_FIELD),
         "stream_mix": decode_level(data, STREAM_MIX_FIELD),
     }
 

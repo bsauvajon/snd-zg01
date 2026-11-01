@@ -122,14 +122,16 @@ def test_columns_cli_prints_offset_min_max():
 
 FIXTURE = ROOT / "tests/fixtures/meters/frames.jsonl"
 
-# Values are level + 127 (0 = -127 dB floor, 127 = 0 dBFS); dB values come
-# from the device's 14-bit codes, 16384 + 10 * dB.
+# Values are level + 127 (0 = -127 dB floor, 127 = 0 dBFS). The fixture frames
+# are synthetic and carry the current field of each meter (see
+# docs/METER_PROTOCOL.md); the levels come from the measured captures.
 FIXTURE_EXPECTED = [
-    {"pc_in": 38, "game_mix": 38, "stream_mix": 56},    # silence
-    {"pc_in": 87, "game_mix": 87, "stream_mix": 58},    # voice -40 dBFS
-    {"pc_in": 107, "game_mix": 107, "stream_mix": 68},  # voice -20 dBFS
-    {"pc_in": 121, "game_mix": 121, "stream_mix": 80},  # voice -6 dBFS
-    {"pc_in": 38, "game_mix": 117, "stream_mix": 81},   # game -6 dBFS
+    {"mic_in": 52, "mic_out": 0, "pc_in": 38, "stream_mix": 38},     # gate closed, quiet
+    {"mic_in": 49, "mic_out": 51, "pc_in": 39, "stream_mix": 55},    # gate bypassed, quiet
+    {"mic_in": 118, "mic_out": 121, "pc_in": 38, "stream_mix": 126}, # mic tap
+    {"mic_in": 119, "mic_out": 122, "pc_in": 37, "stream_mix": 126}, # mic speech
+    {"mic_in": 68, "mic_out": 13, "pc_in": 107, "stream_mix": 107},  # voice -20 dBFS
+    {"mic_in": 81, "mic_out": 26, "pc_in": 37, "stream_mix": 117},   # game -6 dBFS
 ]
 
 
@@ -143,7 +145,7 @@ def test_decode_fixture_frames():
 
 def test_decode_omits_undecoded_meters():
     values = decode_meters.decode_frame(extract_meter_frames(read_frames(str(FIXTURE)))[0])
-    assert not {"mic_in", "mic_out", "hdmi_in"} & set(values)
+    assert not {"game_mix", "hdmi_in"} & set(values)
 
 
 def test_decode_rejects_non_meter_frames():
@@ -161,7 +163,7 @@ def test_decode_clamps_below_floor():
     decode_frame = decode_meters.decode_frame
     frame = bytearray(extract_meter_frames(read_frames(str(FIXTURE)))[0])
     frame[10], frame[11] = 0x00, 0x00
-    assert decode_frame(bytes(frame))["stream_mix"] == 0
+    assert decode_frame(bytes(frame))["mic_in"] == 0
 
 
 if __name__ == "__main__":

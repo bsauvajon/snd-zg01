@@ -3,11 +3,11 @@
 Real USB captures are **not** committed to this repository: they may contain
 private or licensed content, and they are large binary blobs.
 
-`frames.jsonl` holds five **sanitized synthetic frames**. Each one is built
-from the measured layout in `docs/METER_PROTOCOL.md`: the three decoded level
-fields carry the measured codes, and every other field is the constant
-`15114`. They contain no capture data. The expected values live in
-`tests/test-decode-meters.py`. The schema follows `tools/normalize-usbmon.py`:
+`frames.jsonl` holds six **sanitized synthetic frames**. Each one is built
+from the measured layout in `docs/METER_PROTOCOL.md`: the eight current/peak
+pairs carry dB levels read from the captures, and every other field is the
+constant `15114`. The frames contain only those numbers, no capture data. The
+expected values live in `tests/test-decode-meters.py`. The schema follows `tools/normalize-usbmon.py`:
 
 ```json
 {"endpoint":"0x83","transfer":"bulk","direction":"in","data":"04f04310043e1402...","time":1.0}
