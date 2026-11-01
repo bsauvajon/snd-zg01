@@ -148,6 +148,31 @@ with the built-in defaults at load).  Settings changed outside the driver
 the control is written again from Linux.  This is the documented
 behaviour; see `docs/MIC_CONTROL_PROTOCOL.md`.
 
+### Meters
+
+The card reports four live levels as read-only ALSA integer controls:
+
+- `Meter Mic In`: the mic before the gate.
+- `Meter Mic Out`: the mic after the gate.
+- `Meter PC In`: the Voice Out playback path.
+- `Meter Stream Mix`: the stream mix (mic after the gate, Voice Out and Game Out).
+
+Each value is 0–127 and linear in dB: 0 is −127 dB and 127 is 0 dBFS.
+The device sends a frame about every 50 ms (20 Hz); a read returns the
+latest valid frame. The controls are read-only and volatile, so
+`amixer` shows `r--v` and refuses writes. Until a valid frame arrives,
+or after the reader stops, a read returns an error rather than zero.
+
+```bash
+amixer -c zg01 cget 'name=Meter Stream Mix'
+```
+
+The GUI polls these four controls at 20 Hz on a worker thread and draws
+them beside the PipeWire levels, so the card and Linux levels stay
+distinct. GAME has no card meter in v1: its strip uses PipeWire `Game
+Out` in v1.1. HDMI is not registered until its field is decoded. See
+`docs/METER_PROTOCOL.md` and the acceptance record in `docs/METER_TEST.md`.
+
 ## DKMS
 
 Both packages install the source to DKMS. DKMS rebuilds the module on kernel

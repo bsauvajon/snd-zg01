@@ -20,6 +20,12 @@ deferred to v1.1 (see "Scope and reserved names").
 - Frames arrive once the driver's `0x83` meter reader is running and its
   1 Hz `0x03` keepalive is sent. The captures arrived at about 20 Hz
   (roughly every 50 ms).
+- Start-up, measured on a cold device (`docs/METER_TEST.md`): the first
+  `0x83` IN URB may complete at once with one 192-byte frame. Then the
+  device returns zero-length packets about every 100 ms until the first
+  keepalive. The first 192-byte frame after that keepalive arrived 49 ms
+  later, and the zero-length packets stopped. Resume after a system
+  suspend showed the same sequence.
 
 Raw frame offset `r` maps to payload index `p` as `p = 3*(r//4) + (r%4) - 1`
 for `r % 4 != 0`. Payload index `p` maps to raw offset `r = 4*(p//3) + 1 + p%3`.
