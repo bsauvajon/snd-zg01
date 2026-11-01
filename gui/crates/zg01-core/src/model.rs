@@ -20,7 +20,8 @@
 
 use serde::Deserialize;
 
-use crate::alsa::ControlInfo;
+use crate::alsa::{CardInfo, ControlInfo};
+use crate::layout::Layout;
 
 /// The unit a control value is expressed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
@@ -113,6 +114,102 @@ impl Control {
     /// The value as it is shown to the user.
     pub fn display(&self) -> Option<String> {
         self.value().map(|value| format_value(self.unit, value))
+    }
+}
+
+/// The device the application is talking to.
+///
+/// The shell shows the connection view when the device is
+/// [`DeviceState::Disconnected`]; every other screen assumes the controls
+/// of a connected card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceState {
+    /// The card was found and its controls were read.
+    Connected(CardInfo),
+    /// No card of the ZG01 driver exists.
+    Disconnected,
+}
+
+impl DeviceState {
+    /// Whether the device is there.
+    pub fn is_connected(&self) -> bool {
+        matches!(self, DeviceState::Connected(_))
+    }
+
+    /// The card, when the device is connected.
+    pub fn card(&self) -> Option<&CardInfo> {
+        match self {
+            DeviceState::Connected(card) => Some(card),
+            DeviceState::Disconnected => None,
+        }
+    }
+}
+
+/// What the shell knows at one moment.
+///
+/// The state is pure data: it holds the connection state, the controls the
+/// GUI read from the driver cache and the curated layout table. It has no
+/// GTK dependency, so it can be built and tested without a display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppState {
+    /// Whether the card is connected.
+    pub device: DeviceState,
+    /// Every control of the card, in the order the driver publishes them.
+    pub controls: Vec<Control>,
+    /// The curated layout table.
+    pub layout: Layout,
+}
+
+impl AppState {
+    /// A state that holds `controls` of a connected card.
+    pub fn new(device: DeviceState, controls: Vec<Control>, layout: Layout) -> Self {
+        AppState {
+            device,
+            controls,
+            layout,
+        }
+    }
+
+    /// The control named `name`.
+    pub fn control(&self, name: &str) -> Option<&Control> {
+        self.controls.iter().find(|control| control.name() == name)
+    }
+
+    /// The control named `name`, mutably.
+    pub fn control_mut(&mut self, name: &str) -> Option<&mut Control> {
+        self.controls
+            .iter_mut()
+            .find(|control| control.name() == name)
+    }
+
+    /// Whether the values can be saved to the device.
+    ///
+    /// Saving is blocked while the device is disconnected, and while a
+    /// writable control has no known value: a reset invalidates the
+    /// driver cache without telling the GUI what the device now holds.
+    /// Read-only controls (the meters) never block a save.
+    pub fn can_save(&self) -> bool {
+        self.device.is_connected()
+            && self
+                .controls
+                .iter()
+                .filter(|control| control.is_writable())
+                .all(|control| control.value != ControlValue::Unknown)
+    }
+
+    /// Forgets the value of every writable control.
+    ///
+    /// This is what a reset does: `zg01_param_reset()` reloads the device
+    /// without updating the driver cache, so the values the GUI shows no
+    /// longer describe the device. Read-only controls are left alone.
+    pub fn mark_all_unknown(&mut self) {
+        for control in self
+            .controls
+            .iter_mut()
+            .filter(|control| control.is_writable())
+        {
+            control.value = ControlValue::Unknown;
+        }
     }
 }
 

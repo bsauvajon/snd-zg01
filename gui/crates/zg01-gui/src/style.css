@@ -1,0 +1,170 @@
+/* ZG01 Control — dark theme C.
+ *
+ * The palette is dark-only for v1. The colours are the design tokens of
+ * the specification; the light theme is a follow-up that will reuse them.
+ */
+
+@define-color zg_bg #14161b;
+@define-color zg_panel #1b1e26;
+@define-color zg_border #272b35;
+@define-color zg_text #eef1f6;
+@define-color zg_accent #c9b8ff;
+@define-color zg_accent_strong #8b6ff0;
+@define-color zg_success #34c759;
+@define-color zg_warning #f0b429;
+@define-color zg_error #f0523b;
+
+window,
+.background {
+  background-color: @zg_bg;
+  color: @zg_text;
+}
+
+/* Header ------------------------------------------------------------------ */
+
+headerbar {
+  background-color: @zg_panel;
+  border-bottom: 1px solid @zg_border;
+  box-shadow: none;
+}
+
+button.suggested-action {
+  background-color: @zg_accent_strong;
+  border-color: @zg_accent_strong;
+  color: @zg_text;
+}
+
+button.suggested-action:hover {
+  background-color: @zg_accent;
+  border-color: @zg_accent;
+  color: @zg_bg;
+}
+
+button.suggested-action:disabled {
+  background-color: alpha(@zg_text, 0.10);
+  border-color: alpha(@zg_text, 0.10);
+  color: alpha(@zg_text, 0.45);
+}
+
+.device-name {
+  font-weight: 600;
+  color: @zg_text;
+}
+
+.status-dot {
+  color: @zg_success;
+  font-size: 11px;
+}
+
+.status-dot.offline {
+  color: @zg_error;
+}
+
+/* Sidebar ----------------------------------------------------------------- */
+
+.sidebar {
+  background-color: @zg_bg;
+  border-right: 1px solid @zg_border;
+}
+
+.sidebar-brand {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: @zg_accent;
+  text-transform: uppercase;
+}
+
+.sidebar-list {
+  background-color: transparent;
+}
+
+.sidebar-list row {
+  border-radius: 8px;
+  margin: 2px 8px;
+  color: alpha(@zg_text, 0.78);
+}
+
+.sidebar-list row:hover {
+  background-color: alpha(@zg_text, 0.06);
+}
+
+.sidebar-list row:selected {
+  background-color: alpha(@zg_accent_strong, 0.22);
+  color: @zg_accent;
+}
+
+.sidebar-list row:selected label {
+  font-weight: 600;
+}
+
+/* Pages ------------------------------------------------------------------- */
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: @zg_text;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.panel {
+  background-color: @zg_panel;
+  border: 1px solid @zg_border;
+  border-radius: 10px;
+}
+
+/* Connection view --------------------------------------------------------- */
+
+.connection-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: @zg_text;
+}
+
+.connection-hint {
+  font-size: 13px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.hint-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: alpha(@zg_text, 0.78);
+}
+
+.command {
+  font-family: monospace;
+  font-size: 12px;
+  color: @zg_accent;
+  background-color: @zg_bg;
+  border: 1px solid @zg_border;
+  border-radius: 6px;
+  padding: 5px 9px;
+}
+
+/* Footer ------------------------------------------------------------------ */
+
+.footer {
+  background-color: @zg_panel;
+  border-top: 1px solid @zg_border;
+  padding: 6px 12px;
+}
+
+.cache-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: @zg_accent;
+  background-color: alpha(@zg_accent, 0.12);
+  border: 1px solid alpha(@zg_accent, 0.30);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.footer-version {
+  font-size: 11px;
+  color: alpha(@zg_text, 0.52);
+}

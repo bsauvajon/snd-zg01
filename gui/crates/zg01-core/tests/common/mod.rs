@@ -6,8 +6,9 @@
 // reason to fail the build.
 #![allow(dead_code)]
 
-use zg01_core::alsa::{ControlInfo, ControlKind};
-use zg01_core::model::{Control, ControlValue, Unit};
+use zg01_core::alsa::{CardInfo, ControlInfo, ControlKind};
+use zg01_core::layout::Layout;
+use zg01_core::model::{AppState, Control, ControlValue, DeviceState, Unit};
 
 /// A writable integer control with the given name and range.
 pub fn control(name: &str, min: i64, max: i64) -> Control {
@@ -28,4 +29,24 @@ pub fn control(name: &str, min: i64, max: i64) -> Control {
 /// One control per name, with a `0..100` range.
 pub fn controls(names: &[&str]) -> Vec<Control> {
     names.iter().map(|name| control(name, 0, 100)).collect()
+}
+
+/// The card the tests pretend to be talking to.
+pub fn card() -> CardInfo {
+    CardInfo {
+        index: 2,
+        id: "zg01".to_string(),
+        driver: "zg01_usb".to_string(),
+    }
+}
+
+/// A connected state that holds one known control per name.
+pub fn state_with(names: &[&str]) -> AppState {
+    AppState {
+        device: DeviceState::Connected(card()),
+        controls: controls(names),
+        layout: Layout {
+            screens: Vec::new(),
+        },
+    }
 }
