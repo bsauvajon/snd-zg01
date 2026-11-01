@@ -47,12 +47,14 @@ fn formats_units_like_zgctl() {
 
 #[test]
 fn matches_driver_conversions() {
-    assert_eq!(raw_to_user(Conv::Gain, 308), 0);
-    assert_eq!(user_to_raw(Conv::Gain, 0), 308);
-    assert_eq!(raw_to_user(Conv::Freq, 1896), 1000);
-    assert_eq!(raw_to_user(Conv::Freq, 72736), 20000);
+    assert_eq!(raw_to_user(Conv::Gain, 180), 0);
+    assert_eq!(user_to_raw(Conv::Gain, 0), 180);
+    assert_eq!(raw_to_user(Conv::Gain, 240), 60);
+    assert_eq!(raw_to_user(Conv::Freq, 1000), 1000);
+    assert_eq!(raw_to_user(Conv::Freq, 20000), 20000);
     assert_eq!(raw_to_user(Conv::Q, 12), 100);
     assert_eq!(user_to_raw(Conv::Q, 100), 12);
+    assert_eq!(user_to_raw(Conv::Q, 1600), 60);
     assert_eq!(raw_to_user(Conv::Id, 42), 42);
 }
 
