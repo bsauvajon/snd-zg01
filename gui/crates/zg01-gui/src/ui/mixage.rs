@@ -10,7 +10,9 @@
 //! The send levels are 0–127 device steps with no established dB mapping,
 //! so they are shown as steps, never as decibels. The meters are card
 //! meters: a meter whose control cannot be read stays dashed, it never
-//! shows a fake zero.
+//! shows a fake zero. A writable value that is unknown — after a reset —
+//! is drawn dashed as well, but the control stays usable: setting it
+//! makes that one value known again.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -52,27 +54,45 @@ struct Toggle {
     name: String,
     switch: gtk::Switch,
     guard: Rc<Cell<bool>>,
+    /// Whether the driver accepts writes; a read-only toggle stays
+    /// disabled, an unknown writable one stays usable.
+    writable: bool,
 }
 
 impl Toggle {
-    /// Shows `value`; an unknown value leaves the switch disabled.
+    /// Shows `value`.
+    ///
+    /// An unknown value is shown greyed with the last position; a writable
+    /// toggle stays sensitive so the user can set it after a reset.
     fn set(&self, value: ControlValue) {
         match value {
             ControlValue::Known(value) => {
-                self.switch.set_sensitive(true);
                 self.guard.set(true);
                 self.switch.set_active(value != 0);
                 self.guard.set(false);
+                self.switch.remove_css_class("unknown-value");
             }
-            ControlValue::Unknown => self.switch.set_sensitive(false),
+            ControlValue::Unknown => self.switch.add_css_class("unknown-value"),
         }
+        self.switch.set_sensitive(self.writable);
     }
+}
+
+/// One stream send fader and the control it writes.
+struct Level {
+    /// The ALSA name of the fader.
+    name: String,
+    /// The fader itself.
+    fader: Fader,
+    /// Whether the driver accepts writes; an unknown writable fader stays
+    /// usable so a reset can be recovered by writing a value.
+    writable: bool,
 }
 
 /// One stream send strip.
 struct StripWidgets {
     /// The ALSA name of the fader and the fader itself.
-    level: Option<(String, Fader)>,
+    level: Option<Level>,
     /// The card meter of the strip, when it has one.
     meter: Option<Metered>,
     /// The mute switch.
@@ -177,10 +197,10 @@ impl MixageScreen {
     /// Installs a value the device reported, or its failure.
     pub(crate) fn set_control(&self, name: &str, value: ControlValue) {
         for strip in &self.strips {
-            if let Some((level_name, fader)) = &strip.level {
-                if level_name == name {
-                    fader.set_value(value);
-                    fader.set_sensitive(value.known().is_some());
+            if let Some(level) = &strip.level {
+                if level.name == name {
+                    level.fader.set_value(value);
+                    level.fader.set_sensitive(level.writable);
                 }
             }
             for toggle in strip.mute.iter().chain(strip.fx.iter()) {
@@ -239,14 +259,19 @@ fn build_strip(
                 });
             }
         });
-        // An unknown value is not a position: the fader is shown dashed
-        // and refuses a write until the device is read again.
-        let known = state
+        // An unknown value is drawn dashed, but a writable fader stays
+        // usable: after a reset the user sets it again, which makes that
+        // one value known.
+        let writable = state
             .control(name)
-            .is_some_and(|control| control.is_writable() && control.value.known().is_some());
-        fader.set_sensitive(known);
+            .is_some_and(|control| control.is_writable());
+        fader.set_sensitive(writable);
         body.append(fader.widget());
-        (name.clone(), fader)
+        Level {
+            name: name.clone(),
+            fader,
+            writable,
+        }
     });
 
     if meter.is_none() && level.is_none() {
@@ -390,11 +415,9 @@ fn build_toggle(
     switch.set_valign(gtk::Align::Center);
     match value {
         ControlValue::Known(on) => switch.set_active(on != 0),
-        ControlValue::Unknown => switch.set_sensitive(false),
+        ControlValue::Unknown => switch.add_css_class("unknown-value"),
     }
-    if !writable {
-        switch.set_sensitive(false);
-    }
+    switch.set_sensitive(writable);
 
     let guard = Rc::new(Cell::new(false));
     let handler_guard = guard.clone();
@@ -422,6 +445,7 @@ fn build_toggle(
             name: name.to_string(),
             switch,
             guard,
+            writable,
         },
         row,
     )

@@ -12,7 +12,9 @@
 //! EQ has four bands; the shelf shapes are the existing `EQ Low Shape` and
 //! `EQ High Shape`. A control the driver does not publish is hidden. The
 //! MIC IN and MIC OUT meters flank the chain: a meter that cannot be read
-//! stays dashed, it never shows a fake zero.
+//! stays dashed, it never shows a fake zero. A writable value that is
+//! unknown — after a reset — is dashed too but stays usable, so the user
+//! can set it again.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -56,20 +58,27 @@ struct Toggle {
     name: String,
     switch: gtk::Switch,
     guard: Rc<Cell<bool>>,
+    /// Whether the driver accepts writes; an unknown writable switch stays
+    /// usable so a reset can be recovered by writing a value.
+    writable: bool,
 }
 
 impl Toggle {
-    /// Shows `value`; an unknown value leaves the switch disabled.
+    /// Shows `value`.
+    ///
+    /// An unknown value is shown greyed with the last position; a writable
+    /// toggle stays sensitive.
     fn set(&self, value: ControlValue) {
         match value {
             ControlValue::Known(value) => {
-                self.switch.set_sensitive(true);
                 self.guard.set(true);
                 self.switch.set_active(value != 0);
                 self.guard.set(false);
+                self.switch.remove_css_class("unknown-value");
             }
-            ControlValue::Unknown => self.switch.set_sensitive(false),
+            ControlValue::Unknown => self.switch.add_css_class("unknown-value"),
         }
+        self.switch.set_sensitive(self.writable);
     }
 }
 
@@ -77,6 +86,9 @@ impl Toggle {
 struct FaderSlot {
     name: String,
     fader: Fader,
+    /// Whether the driver accepts writes; an unknown writable fader stays
+    /// usable.
+    writable: bool,
 }
 
 /// A compact horizontal editor for a numbered control.
@@ -87,6 +99,8 @@ struct Editor {
     value_label: gtk::Label,
     guard: Rc<Cell<bool>>,
     root: gtk::Box,
+    /// Whether the driver accepts writes.
+    writable: bool,
 }
 
 impl Editor {
@@ -103,6 +117,7 @@ impl Editor {
             ),
             None => (0, 100, 1, Unit::Steps, ControlValue::Unknown),
         };
+        let writable = control.is_some_and(|control| control.is_writable());
 
         let root = gtk::Box::new(Orientation::Vertical, 2);
         root.add_css_class("mic-editor");
@@ -157,6 +172,7 @@ impl Editor {
             value_label,
             guard,
             root,
+            writable,
         };
         editor.set(value);
         editor
@@ -168,16 +184,15 @@ impl Editor {
         match value {
             ControlValue::Known(value) => {
                 self.scale.set_value(value as f64);
-                self.scale.set_sensitive(true);
                 self.value_label.set_text(&format_value(self.unit, value));
                 self.value_label.remove_css_class("unknown");
             }
             ControlValue::Unknown => {
-                self.scale.set_sensitive(false);
                 self.value_label.set_text(UNKNOWN_TEXT);
                 self.value_label.add_css_class("unknown");
             }
         }
+        self.scale.set_sensitive(self.writable);
         self.guard.set(false);
     }
 }
@@ -297,7 +312,7 @@ impl MicScreen {
         for slot in &self.faders {
             if slot.name == name && slot.fader.value() != value {
                 slot.fader.set_value(value);
-                slot.fader.set_sensitive(value.known().is_some());
+                slot.fader.set_sensitive(slot.writable);
             }
         }
         for toggle in &self.toggles {
@@ -368,6 +383,7 @@ fn build_block(
         card.append(fader.widget());
         faders.push(FaderSlot {
             name: control.clone(),
+            writable: is_writable(state, control),
             fader,
         });
     }
@@ -435,6 +451,7 @@ fn build_eq(
         column.append(fader.widget());
         faders.push(FaderSlot {
             name: band.gain.clone(),
+            writable: is_writable(state, &band.gain),
             fader,
         });
 
@@ -480,11 +497,9 @@ fn build_toggle(
     switch.set_valign(gtk::Align::Center);
     match value {
         ControlValue::Known(on) => switch.set_active(on != 0),
-        ControlValue::Unknown => switch.set_sensitive(false),
+        ControlValue::Unknown => switch.add_css_class("unknown-value"),
     }
-    if !writable {
-        switch.set_sensitive(false);
-    }
+    switch.set_sensitive(writable);
 
     let guard = Rc::new(Cell::new(false));
     let handler_guard = guard.clone();
@@ -512,6 +527,7 @@ fn build_toggle(
             name: name.to_string(),
             switch,
             guard,
+            writable,
         },
         row,
     )
@@ -531,11 +547,17 @@ fn build_fader(
             value: output.value,
         });
     });
-    let known = state
-        .control(name)
-        .is_some_and(|control| control.is_writable() && control.value.known().is_some());
-    fader.set_sensitive(known);
+    // An unknown value is drawn dashed by the fader itself; a writable
+    // fader stays usable so the user can recover from a reset by writing.
+    fader.set_sensitive(is_writable(state, name));
     fader
+}
+
+/// Whether the driver accepts writes for `name`.
+fn is_writable(state: &AppState, name: &str) -> bool {
+    state
+        .control(name)
+        .is_some_and(|control| control.is_writable())
 }
 
 /// Builds one meter, with the dashed unknown state when it cannot be read.

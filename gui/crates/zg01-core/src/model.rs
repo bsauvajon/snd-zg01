@@ -23,6 +23,19 @@ use serde::Deserialize;
 use crate::alsa::{CardInfo, ControlInfo};
 use crate::layout::Layout;
 
+/// The action control that persists the current settings on the device.
+pub const SAVE_ACTION: &str = "Save to ZG01";
+
+/// The action control that reloads the persisted settings from the device.
+pub const RESET_ACTION: &str = "Reset to ZG01";
+
+/// The write-only action controls.
+///
+/// An action asks the device to do something; it holds no setting the GUI
+/// displays. A reset therefore does not invalidate it, and it never keeps
+/// Save disabled.
+const ACTION_CONTROLS: [&str; 2] = [SAVE_ACTION, RESET_ACTION];
+
 /// The unit a control value is expressed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -111,6 +124,14 @@ impl Control {
         self.info.writable
     }
 
+    /// Whether this control is a write-only device action.
+    ///
+    /// [`SAVE_ACTION`] and [`RESET_ACTION`] are actions, not settings: they
+    /// are writable but have no value the GUI can rely on.
+    pub fn is_action(&self) -> bool {
+        ACTION_CONTROLS.contains(&self.name())
+    }
+
     /// The value as it is shown to the user.
     pub fn display(&self) -> Option<String> {
         self.value().map(|value| format_value(self.unit, value))
@@ -185,32 +206,78 @@ impl AppState {
     /// Whether the values can be saved to the device.
     ///
     /// Saving is blocked while the device is disconnected, and while a
-    /// writable control has no known value: a reset invalidates the
-    /// driver cache without telling the GUI what the device now holds.
-    /// Read-only controls (the meters) never block a save.
+    /// writable value has no known value: a reset invalidates the driver
+    /// cache without telling the GUI what the device now holds. Read-only
+    /// controls (the meters) and write-only actions (`Save to ZG01`,
+    /// `Reset to ZG01`) never block a save.
     pub fn can_save(&self) -> bool {
         self.device.is_connected()
             && self
                 .controls
                 .iter()
-                .filter(|control| control.is_writable())
+                .filter(|control| is_writable_value(control))
                 .all(|control| control.value != ControlValue::Unknown)
     }
 
-    /// Forgets the value of every writable control.
+    /// Marks the device as gone without forgetting the values it last held.
+    ///
+    /// The shell keeps showing the last known values, disabled, until the
+    /// card comes back and its controls are read again.
+    pub fn disconnect(&mut self) {
+        self.device = DeviceState::Disconnected;
+    }
+
+    /// Records that the device now holds `value` for the control `name`.
+    ///
+    /// This is what a successful write means: the driver cache and the
+    /// device agree on that one value again. The other values keep their
+    /// state, so Save stays blocked until every writable value is known.
+    /// Returns `false` when the device publishes no such control.
+    pub fn mark_known(&mut self, name: &str, value: i64) -> bool {
+        match self.control_mut(name) {
+            Some(control) => {
+                control.value = ControlValue::Known(value);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Forgets the value of every writable value.
     ///
     /// This is what a reset does: `zg01_param_reset()` reloads the device
     /// without updating the driver cache, so the values the GUI shows no
-    /// longer describe the device. Read-only controls are left alone.
+    /// longer describe the device. Read-only controls and write-only
+    /// actions are left alone.
     pub fn mark_all_unknown(&mut self) {
         for control in self
             .controls
             .iter_mut()
-            .filter(|control| control.is_writable())
+            .filter(|control| is_writable_value(control))
         {
             control.value = ControlValue::Unknown;
         }
     }
+}
+
+/// Applies the state half of a `Reset to ZG01` action.
+///
+/// The caller queues [`RESET_ACTION`] `= 1` through the control writer
+/// first; the driver then reloads its persisted settings without refreshing
+/// the parameter cache. Every value the GUI holds is stale, so they are
+/// marked unknown and Save stays disabled until a preset load or a control
+/// write makes them known again.
+///
+/// The transition does not depend on the write succeeding: the caller
+/// reports the write error, and the GUI still does not claim to know what
+/// the device holds.
+pub fn apply_reset(state: &mut AppState) {
+    state.mark_all_unknown();
+}
+
+/// Whether a control holds a value the GUI must know to save.
+fn is_writable_value(control: &Control) -> bool {
+    control.is_writable() && !control.is_action()
 }
 
 /// Formats a value the way `zgctl` prints it.

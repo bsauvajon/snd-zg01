@@ -28,6 +28,13 @@ pub(crate) struct Shell {
     status_name: gtk::Label,
     /// The Save action.
     save_button: gtk::Button,
+    /// The Reset action.
+    reset_button: gtk::Button,
+    /// The banner shown while the driver cache no longer describes the
+    /// device, i.e. after a Reset.
+    unknown_banner: adw::Banner,
+    /// The banner shown when the card disappears while the app runs.
+    device_banner: adw::Banner,
     /// The navigation list.
     sidebar: gtk::ListBox,
     /// The content stack: one page per screen, plus the connection view.
@@ -37,9 +44,12 @@ pub(crate) struct Shell {
 impl Shell {
     /// Builds the shell and installs it on `window`.
     pub fn build(window: &adw::ApplicationWindow, sender: ComponentSender<App>) -> Self {
-        let (header, window_title, status_dot, status_name, save_button) = build_header(&sender);
+        let (header, window_title, status_dot, status_name, save_button, reset_button) =
+            build_header(&sender);
         let (sidebar_box, sidebar) = build_sidebar(&sender);
         let stack = build_stack();
+        let unknown_banner = build_unknown_banner();
+        let device_banner = build_device_banner();
 
         let main = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         main.set_vexpand(true);
@@ -50,6 +60,8 @@ impl Shell {
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
+        toolbar.add_top_bar(&unknown_banner);
+        toolbar.add_top_bar(&device_banner);
         toolbar.set_content(Some(&main));
         toolbar.add_bottom_bar(&footer);
 
@@ -64,6 +76,9 @@ impl Shell {
             status_dot,
             status_name,
             save_button,
+            reset_button,
+            unknown_banner,
+            device_banner,
             sidebar,
             stack,
         }
@@ -77,6 +92,9 @@ impl Shell {
             "Yamaha ZG01 · carte {} · {}",
             card.index, card.driver
         ));
+        self.reset_button.set_sensitive(true);
+        self.unknown_banner.set_revealed(false);
+        self.device_banner.set_revealed(false);
     }
 
     /// Shows the connection view and the disconnected header.
@@ -84,7 +102,42 @@ impl Shell {
         self.status_dot.add_css_class("offline");
         self.status_name.set_text("Déconnecté");
         self.window_title.set_subtitle("Aucune carte ZG01 détectée");
+        self.reset_button.set_sensitive(false);
+        self.unknown_banner.set_revealed(false);
+        self.device_banner.set_revealed(false);
         self.stack.set_visible_child_name("connection");
+    }
+
+    /// Shows the card lost while the app is running.
+    ///
+    /// Unlike [`Shell::show_disconnected`], the current page and the last
+    /// values stay visible; a banner explains that the card is gone.
+    pub fn show_device_lost(&self) {
+        self.status_dot.add_css_class("offline");
+        self.status_name.set_text("Déconnecté");
+        self.window_title
+            .set_subtitle("ZG01 déconnecté — rebranchez la carte");
+        self.reset_button.set_sensitive(false);
+    }
+
+    /// Shows or hides the unknown-state banner.
+    ///
+    /// The banner appears after a Reset: the driver cache no longer
+    /// describes the device until a preset is loaded or a control is
+    /// written again.
+    pub fn set_unknown(&self, unknown: bool) {
+        self.unknown_banner.set_revealed(unknown);
+        if unknown {
+            self.device_banner.set_revealed(false);
+        }
+    }
+
+    /// Shows or hides the reconnect banner.
+    pub fn set_device_lost(&self, lost: bool) {
+        self.device_banner.set_revealed(lost);
+        if lost {
+            self.unknown_banner.set_revealed(false);
+        }
     }
 
     /// Shows `page` in the content area.
@@ -179,6 +232,7 @@ fn build_header(
     gtk::Label,
     gtk::Label,
     gtk::Button,
+    gtk::Button,
 ) {
     let header = adw::HeaderBar::new();
 
@@ -195,6 +249,16 @@ fn build_header(
     let window_title = adw::WindowTitle::new("ZG01 Control", "Déconnecté");
     header.set_title_widget(Some(&window_title));
 
+    let reset_button = gtk::Button::with_label("Réinitialiser");
+    reset_button.add_css_class("flat");
+    reset_button.set_sensitive(false);
+    reset_button.set_tooltip_text(Some(
+        "Recharge les réglages persistés du ZG01 ; les valeurs affichées deviennent inconnues",
+    ));
+    let reset_sender = sender.clone();
+    reset_button.connect_clicked(move |_| reset_sender.input(Msg::Reset));
+    header.pack_end(&reset_button);
+
     let save_button = gtk::Button::with_label("Sauvegarder");
     save_button.add_css_class("suggested-action");
     save_button.set_sensitive(false);
@@ -209,7 +273,35 @@ fn build_header(
     about_button.connect_clicked(move |_| about_sender.input(Msg::About));
     header.pack_end(&about_button);
 
-    (header, window_title, status_dot, status_name, save_button)
+    (
+        header,
+        window_title,
+        status_dot,
+        status_name,
+        save_button,
+        reset_button,
+    )
+}
+
+/// The banner shown when the displayed values no longer describe the
+/// device.
+fn build_unknown_banner() -> adw::Banner {
+    let banner = adw::Banner::new("État inconnu — chargez un preset");
+    banner.set_revealed(false);
+    banner.set_tooltip_text(Some(
+        "Le ZG01 a rechargé ses réglages persistés : les valeurs affichées ne le décrivent plus.",
+    ));
+    banner
+}
+
+/// The banner shown when the card disappears while the app is running.
+fn build_device_banner() -> adw::Banner {
+    let banner = adw::Banner::new("ZG01 déconnecté — rebranchez la carte");
+    banner.set_revealed(false);
+    banner.set_tooltip_text(Some(
+        "Les dernières valeurs restent affichées ; la reconnexion est automatique.",
+    ));
+    banner
 }
 
 /// Builds the sidebar and returns its container and list.
@@ -254,6 +346,7 @@ fn build_sidebar(sender: &ComponentSender<App>) -> (gtk::Box, gtk::ListBox) {
     let sender = sender.clone();
     list.connect_row_selected(move |_, row| {
         if let Some(page) = row.and_then(|row| Page::from_index(row.index())) {
+            tracing::debug!("sidebar row selected: {page:?}");
             sender.input(Msg::ShowPage(page));
         }
     });

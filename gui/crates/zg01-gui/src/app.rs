@@ -7,6 +7,7 @@
 //! controls whenever they are read; the Avancé body is a placeholder until
 //! its own task replaces it.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
@@ -22,7 +23,9 @@ use zg01_core::layout::{load_layout_str, Layout, LAYOUT_TOML};
 use zg01_core::meters::{spawn_poller, MeterSnapshot, METER_INTERVAL};
 use zg01_core::mic::MicModel;
 use zg01_core::mixage::{MeterId, MixageModel};
-use zg01_core::model::{AppState, Control, ControlValue, DeviceState, Unit};
+use zg01_core::model::{
+    apply_reset, AppState, Control, ControlValue, DeviceState, Unit, RESET_ACTION, SAVE_ACTION,
+};
 use zg01_core::writer::{ControlWriter, WriteOutcome};
 
 use crate::ui::{MicEvent, MicScreen, MixageEvent, MixageScreen};
@@ -135,6 +138,9 @@ pub(crate) struct App {
     writer_stop: Option<Arc<AtomicBool>>,
     /// The stop flag of the meter pump, when it runs.
     meters_stop: Option<Arc<AtomicBool>>,
+    /// The epoch of the control writes, used to ignore outcomes that
+    /// predate a reset.
+    writes: WriteEpoch,
     /// The window, used as the parent of the About dialog.
     root: adw::ApplicationWindow,
     /// Serialises the asynchronous reloads with the presence events.
@@ -150,6 +156,8 @@ pub(crate) enum Msg {
     About,
     /// The Save action was clicked.
     Save,
+    /// The Reset action was clicked.
+    Reset,
     /// A save finished.
     SaveFinished(Result<(), String>),
     /// The device watcher saw a transition.
@@ -299,6 +307,36 @@ fn retry_delay(failures: u32) -> Duration {
     }
 }
 
+/// Tracks which write outcomes still describe the device.
+///
+/// A reset invalidates every write queued before it: the driver reloads
+/// its persisted settings, so the value of a write that was in flight when
+/// Reset was pressed no longer describes the device. Every write is
+/// stamped with the current epoch, and an outcome is only trusted when its
+/// control was written in the current epoch.
+#[derive(Debug, Default)]
+struct WriteEpoch {
+    epoch: u64,
+    issued: HashMap<String, u64>,
+}
+
+impl WriteEpoch {
+    /// Stamps a write to `name` with the current epoch.
+    fn issue(&mut self, name: &str) {
+        self.issued.insert(name.to_string(), self.epoch);
+    }
+
+    /// Invalidates every write issued so far.
+    fn reset(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+    }
+
+    /// Whether an outcome for `name` still describes the device.
+    fn accepts(&self, name: &str) -> bool {
+        self.issued.get(name) == Some(&self.epoch)
+    }
+}
+
 #[relm4::component(pub(crate))]
 impl SimpleComponent for App {
     type Init = ();
@@ -356,6 +394,7 @@ impl SimpleComponent for App {
             shell.show_disconnected();
         }
         shell.set_save_enabled(state.can_save());
+        shell.set_unknown(state.device.is_connected() && !state.can_save());
 
         spawn_device_watcher(sender.clone());
 
@@ -368,6 +407,7 @@ impl SimpleComponent for App {
             writer: None,
             writer_stop: None,
             meters_stop: None,
+            writes: WriteEpoch::default(),
             shell,
             root: root.clone(),
             reloads: ReloadTracker::default(),
@@ -389,8 +429,9 @@ impl SimpleComponent for App {
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
         match msg {
             Msg::ShowPage(page) => {
+                tracing::debug!("page selected: {page:?}");
                 self.page = page;
-                if self.state.device.is_connected() {
+                if self.state.device.is_connected() || !self.state.controls.is_empty() {
                     self.shell.set_page(page);
                 }
             }
@@ -399,6 +440,7 @@ impl SimpleComponent for App {
                     .present_about(&self.root, self.state.device.card().map(|card| card.index));
             }
             Msg::Save => self.save(sender),
+            Msg::Reset => self.reset(),
             Msg::SaveFinished(Ok(())) => {
                 self.shell.toast("Réglages sauvegardés sur le ZG01");
             }
@@ -440,15 +482,33 @@ impl App {
         let spawned = std::thread::Builder::new()
             .name("zg01-save".to_string())
             .spawn(move || {
-                let result = backend
-                    .write("Save to ZG01", 1)
-                    .map_err(|err| err.to_string());
+                let result = backend.write(SAVE_ACTION, 1).map_err(|err| err.to_string());
                 sender.input(Msg::SaveFinished(result));
             });
         if let Err(err) = spawned {
             tracing::warn!("could not start the save thread: {err}");
             self.shell.toast("Impossible de lancer la sauvegarde");
         }
+    }
+
+    /// Writes the Reset action and forgets every displayed value.
+    ///
+    /// The action goes through the coalescing writer like a control write;
+    /// `apply_reset` then marks every writable value unknown, because the
+    /// driver reloads its persisted settings without refreshing the cache.
+    /// The write outcome reports a failed action; the values stay unknown
+    /// in that case rather than guessing that the reset did not happen.
+    fn reset(&mut self) {
+        let Some(writer) = &self.writer else {
+            self.shell.toast("Aucun ZG01 connecté");
+            return;
+        };
+        writer.set(RESET_ACTION, 1);
+        self.writes.reset();
+        apply_reset(&mut self.state);
+        self.refresh_controls();
+        self.sync_shell_state();
+        tracing::info!("reset requested; every writable value is now unknown");
     }
 
     /// Builds the Mixage screen from the current controls and installs it.
@@ -546,6 +606,7 @@ impl App {
 
     /// Shows the Micro screen, from a click on the MIC strip.
     fn open_mic(&mut self) {
+        tracing::debug!("MIC strip clicked");
         if !self.state.device.is_connected() {
             return;
         }
@@ -555,13 +616,13 @@ impl App {
 
     /// Queues one control write on the coalescing writer.
     fn write_control(&mut self, name: &str, value: i64) {
-        match &self.writer {
-            Some(writer) => writer.set(name, value),
-            None => {
-                self.shell.toast("Aucun ZG01 connecté");
-                self.revert_control(name);
-            }
-        }
+        let Some(writer) = self.writer.clone() else {
+            self.shell.toast("Aucun ZG01 connecté");
+            self.revert_control(name);
+            return;
+        };
+        self.writes.issue(name);
+        writer.set(name, value);
     }
 
     /// Puts a widget back to the value the model still holds.
@@ -579,19 +640,57 @@ impl App {
         }
     }
 
+    /// Pushes every known or unknown value to the screens.
+    fn refresh_controls(&self) {
+        for control in &self.state.controls {
+            let name = control.name();
+            let value = control.value;
+            if let Some(screen) = &self.mixage {
+                screen.set_control(name, value);
+            }
+            if let Some(screen) = &self.mic {
+                screen.set_control(name, value);
+            }
+        }
+    }
+
+    /// Matches the header to the state: Save, the unknown-state banner and
+    /// the reconnect banner.
+    fn sync_shell_state(&self) {
+        let connected = self.state.device.is_connected();
+        self.shell.set_save_enabled(self.state.can_save());
+        self.shell.set_unknown(connected && !self.state.can_save());
+        self.shell
+            .set_device_lost(!connected && !self.state.controls.is_empty());
+    }
+
     /// Handles the outcome of a control write.
     fn write_outcome(&mut self, outcome: WriteOutcome) {
         match outcome {
+            WriteOutcome::Ok { name, .. } if name == RESET_ACTION => {
+                self.shell
+                    .toast("ZG01 réinitialisé — les valeurs affichées sont inconnues");
+            }
+            WriteOutcome::Err { name, error } if name == RESET_ACTION => {
+                tracing::warn!("the reset action failed: {error}");
+                self.shell
+                    .toast(&format!("Réinitialisation impossible : {error}"));
+            }
             WriteOutcome::Ok { name, value } => {
-                if let Some(control) = self.state.control_mut(&name) {
-                    control.value = ControlValue::Known(value);
+                if !self.writes.accepts(&name) {
+                    tracing::debug!(
+                        "ignoring the outcome of {name:?}: it was written before the reset"
+                    );
+                    return;
                 }
+                self.state.mark_known(&name, value);
                 if let Some(screen) = &self.mixage {
                     screen.set_control(&name, ControlValue::Known(value));
                 }
                 if let Some(screen) = &self.mic {
                     screen.set_control(&name, ControlValue::Known(value));
                 }
+                self.sync_shell_state();
             }
             WriteOutcome::Err { name, error } => {
                 tracing::warn!("could not write the control {name:?}: {error}");
@@ -619,31 +718,36 @@ impl App {
         }
     }
 
-    /// Shows the connection view when the card goes away.
+    /// Keeps the last values, disables the inputs and shows the reconnect
+    /// banner when the card goes away.
     ///
     /// Always invalidates the reload tracker, even when the state is
     /// already disconnected: a read started before this event must not
     /// install the card afterwards.
     fn disconnect(&mut self) {
         self.reloads.invalidate();
-        self.show_disconnected(true);
-    }
+        if !self.state.device.is_connected() {
+            return;
+        }
 
-    /// Drops the controls and shows the connection view.
-    fn show_disconnected(&mut self, notify: bool) {
-        let was_connected = self.state.device.is_connected();
-        let layout = self.state.layout.clone();
-        self.state = AppState::new(DeviceState::Disconnected, Vec::new(), layout);
+        self.state.disconnect();
         self.backend = None;
+        // Writes queued on the card that went away must not be trusted if
+        // their outcome arrives after the next card is read.
+        self.writes.reset();
         self.stop_writer();
         self.stop_meters();
-        self.mixage = None;
-        self.mic = None;
-        self.shell.show_disconnected();
-        self.shell.set_save_enabled(false);
-        if notify && was_connected {
-            self.shell.toast("ZG01 déconnecté");
+        // The values stay visible, but nothing can be changed until the
+        // card is back and its controls have been read again.
+        if let Some(screen) = &self.mixage {
+            screen.widget().set_sensitive(false);
         }
+        if let Some(screen) = &self.mic {
+            screen.widget().set_sensitive(false);
+        }
+        self.shell.show_device_lost();
+        self.sync_shell_state();
+        self.shell.toast("ZG01 déconnecté");
     }
 
     /// Reads a card that just appeared, off the GTK thread.
@@ -751,11 +855,14 @@ impl App {
         let layout = self.state.layout.clone();
         self.state = AppState::new(DeviceState::Connected(loaded.card), loaded.controls, layout);
         self.backend = Some(loaded.backend);
+        // The values were just read; an outcome from before the reload
+        // must not overwrite one of them.
+        self.writes.reset();
 
         if let Some(card) = self.state.device.card() {
             self.shell.show_connected(card);
         }
-        self.shell.set_save_enabled(self.state.can_save());
+        self.sync_shell_state();
         self.install_mixage(sender.clone());
         self.install_micro(sender.clone());
         self.start_writer(&sender);
@@ -845,8 +952,8 @@ fn unit_for(layout: &Layout, name: &str, kind: ControlKind) -> Unit {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_controls, retry_delay, unit_for, Page, ReloadCompletion, ReloadTracker, RETRY_FIRST,
-        RETRY_MAX,
+        read_controls, retry_delay, unit_for, Page, ReloadCompletion, ReloadTracker, WriteEpoch,
+        RETRY_FIRST, RETRY_MAX,
     };
     use std::time::Duration;
     use zg01_core::alsa::{ControlInfo, ControlKind, FakeAlsa};
@@ -984,6 +1091,31 @@ mod tests {
         assert!(
             !reloads.retry_due(retry_generation),
             "a retry scheduled before the disconnect must not run"
+        );
+    }
+
+    #[test]
+    fn a_write_issued_before_a_reset_no_longer_describes_the_device() {
+        let mut writes = WriteEpoch::default();
+        writes.issue("Gate");
+        assert!(writes.accepts("Gate"));
+
+        writes.reset();
+
+        assert!(
+            !writes.accepts("Gate"),
+            "the driver reloaded its persisted settings; that write is stale"
+        );
+        assert!(!writes.accepts("Gate Threshold"));
+
+        writes.issue("Gate");
+        assert!(
+            writes.accepts("Gate"),
+            "a write issued after the reset describes the device again"
+        );
+        assert!(
+            !writes.accepts("Gate Threshold"),
+            "writing one control after the reset says nothing about the others"
         );
     }
 }

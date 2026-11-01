@@ -166,6 +166,12 @@ button.suggested-action:disabled {
   color: alpha(@zg_muted, 0.72);
 }
 
+/* A value the GUI no longer knows (after a Reset) stays writable: the
+ * control is dimmed, not disabled, so the user can set it again. */
+switch.unknown-value {
+  opacity: 0.55;
+}
+
 .fader-label,
 .meter-label {
   font-size: 11px;
