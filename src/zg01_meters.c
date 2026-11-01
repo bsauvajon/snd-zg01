@@ -155,6 +155,11 @@ int zg01_meters_start(struct zg01_dev *dev)
         return err;
     }
 
+    err = zg01_param_meter_init(dev);
+    if (err)
+        dev_warn_ratelimited(&dev->interface->dev,
+                             "meter session init failed: %d\n", err);
+
     mutex_lock(&dev->param_mutex);
     m->keepalive_running = true;
     schedule_delayed_work(&m->keepalive_work, HZ);

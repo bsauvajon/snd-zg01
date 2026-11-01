@@ -122,6 +122,31 @@ int zg01_param_keepalive(struct zg01_dev *dev)
 }
 
 /*
+ * One-shot state read that starts the meter session.  The app sends it
+ * before the first keepalive (Windows capture 00-mic-baseline, -1.1 s).
+ */
+int zg01_param_meter_init(struct zg01_dev *dev)
+{
+    unsigned char *buf;
+    int ret;
+
+    buf = kzalloc(ZG01_PARAM_FRAME, GFP_KERNEL);
+    if (!buf)
+        return -ENOMEM;
+
+    zg01_put_word(buf, 0, 0xf0, 0x43, 0x20);
+    zg01_put_word(buf, 1, 0x3e, 0x14, 0x01);
+    zg01_put_word(buf, 2, 0x01, 0x00, 0x00);
+    zg01_put_word(buf, 3, 0x00, 0x00, 0x03);
+    buf[16] = 0x05;
+    buf[17] = 0xf7;
+
+    ret = zg01_bulk_out(dev, buf, ZG01_PARAM_FRAME);
+    kfree(buf);
+    return ret;
+}
+
+/*
  * Write one parameter.  Layout (docs/MIC_CONTROL_PROTOCOL.md):
  *
  *   04 f0 43 10 | 04 3e 14 01 | 04 01 00 <flag> | 04 <id> 00 00

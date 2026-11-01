@@ -318,6 +318,7 @@ int zg01_param_read(struct zg01_dev *dev, u8 id, u32 *value);
 int zg01_param_save(struct zg01_dev *dev);
 int zg01_param_reset(struct zg01_dev *dev);
 int zg01_param_keepalive(struct zg01_dev *dev);
+int zg01_param_meter_init(struct zg01_dev *dev);
 
 /* zg01_meters.c */
 int zg01_meters_start(struct zg01_dev *dev);
