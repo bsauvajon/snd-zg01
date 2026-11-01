@@ -470,9 +470,10 @@ The driver gains a background reader on bulk IN `0x83`:
   are ignored for now.
 - Update an array of atomic meter values. The frame rate is the device's
   ~20 Hz; no interpolation in the driver.
-- Register read-only, volatile integer kcontrols:
-  `Meter Mic In`, `Meter Mic Out`, `Meter PC In`, `Meter HDMI In`,
-  `Meter Game Mix`, `Meter Stream Mix`.
+- Register read-only, volatile integer kcontrols for the decoded meters:
+  `Meter Mic In`, `Meter Mic Out`, `Meter PC In`, `Meter Stream Mix`.
+  `Meter Game Mix` and `Meter HDMI In` are reserved names, registered
+  only when their fields are decoded; the GUI hides them until then.
 - The exact range/unit is fixed by the decode phase. The control names
   are stable even if the unit changes.
 - The reader is started at probe and cancelled at disconnect. It must not
@@ -491,17 +492,19 @@ during decoding is corrected in the layout table rather than hidden:
 |---|---|---|
 | MIC | `Meter Mic In` | `Voice In` source |
 | VOICE | `Meter PC In` | `Voice Out` sink |
-| GAME | `Meter Game Mix` | `Game Out` sink |
+| GAME | — (deferred; `Meter Game Mix` not separable) | `Game Out` sink (v1.1) |
 | STREAM OUT | `Meter Stream Mix` | none |
 | Micro detail | `Meter Mic In`, `Meter Mic Out` | `Voice In` |
 
-`Meter HDMI In` is exposed to the Avancé table and a future meter detail,
-not to the landing screen. There is no monitor meter, which is another
-reason the monitor path is not a landing strip.
+`Meter HDMI In` is reserved and not registered in v1. `Meter Game Mix`
+has no separable game-only tap in the decoded frame: the stream mix
+covers both game and voice, so the GAME card meter is deferred to v1.1
+(PipeWire `Game Out`) or a later frame decode. The GUI shows the GAME
+strip without a card meter until then.
 
-Userspace polls the six controls at 20 Hz in a worker thread. This is
-~120 ioctls/s, negligible. The UI receives snapshots and redraws. Peak
-hold and clip are computed in the GUI, not the driver.
+Userspace polls the registered meter controls (four in v1) at 20 Hz in a
+worker thread. This is negligible. The UI receives snapshots and redraws.
+Peak hold and clip are computed in the GUI, not the driver.
 
 ### PipeWire levels (optional feature)
 
@@ -566,8 +569,9 @@ engineering, not UI work.
    C parser.
 
 **Done when**: the decoder prints values that track the hardware meters
-within a stated tolerance for at least MIC IN, OUT, GAME and STREAM, and
-the mapping is documented and covered by a fixture.
+within a stated tolerance for at least MIC IN, OUT, PC IN and STREAM, and
+the mapping is documented and covered by a fixture. GAME and HDMI are
+documented as undecoded, not fabricated.
 
 If the decode stalls (for example, the frames turn out to be obfuscated
 or to require a handshake), the GUI still ships with the settings half;
@@ -580,11 +584,13 @@ That is a product decision, not a silent fallback.
 
 - **Three send strips** (MIC, VOICE, GAME). Each strip contains:
   - channel name and source subtitle (`MIC`, `VOICE · USB`, `GAME · HDMI/USB`);
-  - card meter and optional Linux meter;
+  - card meter where decoded (MIC, VOICE) and optional Linux meter;
   - vertical fader over the 0–127 step range, with the step value;
   - channel state tags (`ON`, `MUTE`, `FX`);
   - for MIC, a chain badge `GATE › COMP › EQ › LIMIT`; clicking the
     strip opens Micro.
+  GAME has no card meter in v1; its Linux `Game Out` meter arrives in
+  v1.1.
 - **Stream output block** (STREAM OUT): `Streaming USB Out`,
   `Streaming HDMI Out` and `Streaming Monitor Steps` as toggles, plus
   the `Meter Stream Mix` meter. No fader. `Streaming Out Mute Steps` is
@@ -647,8 +653,8 @@ That is a product decision, not a silent fallback.
 
 - Capture matrix and decoder.
 - `docs/METER_PROTOCOL.md`, fixtures, tests.
-- **Done when**: MIC IN, OUT, GAME and STREAM decode and track the
-  hardware within tolerance; the mapping is documented.
+- **Done when**: MIC IN, OUT, PC IN and STREAM decode and track the
+  hardware within tolerance; GAME and HDMI are documented as undecoded.
 
 ### Phase 1 — driver meter controls
 
@@ -811,8 +817,9 @@ own package and has its own release train:
 ## Acceptance criteria
 
 1. With a ZG01 connected, `zg01-control` opens on **Mixage**, shows live
-   card meters for at least MIC IN, OUT, GAME and STREAM, and the faders
-   change the stream mix audibly and through `amixer`/`zgctl`.
+   card meters for MIC IN, OUT, PC IN and STREAM, and the faders change
+   the stream mix audibly and through `amixer`/`zgctl`. GAME has no card
+   meter in v1; its strip uses PipeWire `Game Out` in v1.1.
 2. Clicking the MIC strip opens **Micro**; GATE, COMP, LIMITER and the
    four EQ bands write through and read back the same values as `zgctl`.
 3. Loading a real `.zgpreset` previews the mapping, applies supported
@@ -894,3 +901,6 @@ The human partner confirmed these after the builder check:
 5. **Repository model B.** The GUI source stays in the `snd-zg01`
    monorepo under `gui/`, ships as a separate `snd-zg01-gui` package,
    and releases on its own `gui-vX.Y.Z` tags with path-filtered CI.
+6. **Meter scope v1.** Register MIC IN, MIC OUT, PC IN and STREAM. GAME
+   has no separable card tap; it uses PipeWire `Game Out` in v1.1. HDMI
+   is deferred until a source is available.
