@@ -94,6 +94,28 @@ pub fn controls_with_mic() -> Vec<Control> {
     ])
 }
 
+/// Every control of the generated map, one per name, in map order.
+///
+/// The range and the writability come from the map, so the Avancé tests
+/// see the same surface the application reads from the driver.
+pub fn all_controls() -> Vec<Control> {
+    zg01_core::preset::control_map()
+        .iter()
+        .map(|entry| Control {
+            info: ControlInfo {
+                name: entry.control_name.clone(),
+                kind: ControlKind::Integer,
+                min: entry.min,
+                max: entry.max,
+                step: 0,
+                writable: entry.writable,
+            },
+            value: ControlValue::Known(0),
+            unit: Unit::Steps,
+        })
+        .collect()
+}
+
 /// The card the tests pretend to be talking to.
 pub fn card() -> CardInfo {
     CardInfo {

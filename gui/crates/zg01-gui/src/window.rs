@@ -2,9 +2,10 @@
 //!
 //! The shell is the part of the GUI that does not depend on the device:
 //! it is built once, and the application component tells it what to show
-//! when the card appears or disappears. The Avancé body is a placeholder
-//! until its own task replaces it; the Mixage and Micro bodies are
-//! installed by [`Shell::install_mixage`] and [`Shell::install_micro`].
+//! when the card appears or disappears. The Mixage, Micro and Avancé bodies
+//! are installed by [`Shell::install_mixage`], [`Shell::install_micro`] and
+//! [`Shell::install_advanced`]; the placeholder is only what the shell shows
+//! before the card is read.
 
 use gtk4::prelude::*;
 use libadwaita::prelude::*;
@@ -160,6 +161,11 @@ impl Shell {
     /// Installs the real Micro body in place of its placeholder.
     pub fn install_micro(&self, root: &impl IsA<gtk::Widget>) {
         self.install_page(Page::Micro, root);
+    }
+
+    /// Installs the real Avancé body in place of its placeholder.
+    pub fn install_advanced(&self, root: &impl IsA<gtk::Widget>) {
+        self.install_page(Page::Advanced, root);
     }
 
     /// Replaces one page of the content stack, keeping the visible page.

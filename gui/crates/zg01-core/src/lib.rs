@@ -7,6 +7,9 @@
 /// The ALSA control surface: card discovery and the control backend.
 pub mod alsa;
 
+/// The Avancé screen model: every control the curated screens leave over.
+pub mod advanced;
+
 /// The device watcher: the connection transitions of the ZG01.
 pub mod device;
 

@@ -3,9 +3,8 @@
 //! Startup discovers the ZG01 card, reads every control into the model and
 //! shows the shell. A watcher reports the connection transitions, so
 //! unplugging the card shows the connection view and plugging it back in
-//! reloads the controls. The Mixage and Micro screens are rebuilt from the
-//! controls whenever they are read; the Avancé body is a placeholder until
-//! its own task replaces it.
+//! reloads the controls. The Mixage, Micro and Avancé screens are rebuilt
+//! from the controls whenever they are read.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +14,7 @@ use std::time::Duration;
 
 use gtk4::prelude::*;
 use relm4::prelude::*;
+use zg01_core::advanced::AdvancedModel;
 use zg01_core::alsa::{
     find_card, AlsaBackend, AlsaError, CardInfo, ControlInfo, ControlKind, RealAlsa,
 };
@@ -27,11 +27,12 @@ use zg01_core::model::{
     apply_reset, AppState, Control, ControlValue, DeviceState, Unit, RESET_ACTION, SAVE_ACTION,
 };
 use zg01_core::preset::{apply_plan, ApplyReport};
+use zg01_core::units::Conv;
 use zg01_core::writer::{ControlWriter, WriteOutcome};
 
 use crate::ui::{
-    present_preset_dialog, present_preset_report, MicEvent, MicScreen, MixageEvent, MixageScreen,
-    PresetChoice,
+    present_preset_dialog, present_preset_report, AdvancedEvent, AdvancedScreen, MicEvent,
+    MicScreen, MixageEvent, MixageScreen, PresetChoice,
 };
 use crate::window::Shell;
 
@@ -136,6 +137,8 @@ pub(crate) struct App {
     mixage: Option<MixageScreen>,
     /// The Micro screen, rebuilt whenever the controls are read.
     mic: Option<MicScreen>,
+    /// The Avancé screen, rebuilt whenever the controls are read.
+    advanced: Option<AdvancedScreen>,
     /// The coalescing writer of the connected card.
     writer: Option<ControlWriter>,
     /// The stop flag of the write-outcome pump, when it runs.
@@ -182,6 +185,8 @@ pub(crate) enum Msg {
     Mixage(MixageEvent),
     /// The Micro screen reported a user action.
     Mic(MicEvent),
+    /// The Avancé screen reported a user action.
+    Advanced(AdvancedEvent),
     /// The control writer finished a write.
     WriteOutcome(WriteOutcome),
     /// The meter pump read the four meters.
@@ -417,6 +422,7 @@ impl SimpleComponent for App {
             page: Page::Mixage,
             mixage: None,
             mic: None,
+            advanced: None,
             writer: None,
             writer_stop: None,
             meters_stop: None,
@@ -429,6 +435,7 @@ impl SimpleComponent for App {
         if model.state.device.is_connected() {
             model.install_mixage(sender.clone());
             model.install_micro(sender.clone());
+            model.install_advanced(sender.clone());
             model.start_writer(&sender);
             model.start_meters(&sender);
             model.shell.set_page(Page::Mixage);
@@ -473,6 +480,7 @@ impl SimpleComponent for App {
                 MixageEvent::LoadPreset => self.open_preset(sender),
             },
             Msg::Mic(MicEvent::Write { name, value }) => self.write_control(&name, value),
+            Msg::Advanced(AdvancedEvent::Write { name, value }) => self.write_control(&name, value),
             Msg::WriteOutcome(outcome) => self.write_outcome(outcome),
             Msg::Meters(snapshot) => self.update_meters(snapshot),
             Msg::PresetChosen(choice) => self.apply_preset(choice, sender),
@@ -556,6 +564,20 @@ impl App {
         });
         self.shell.install_micro(screen.widget());
         self.mic = Some(screen);
+    }
+
+    /// Builds the Avancé screen from the current controls and installs it.
+    fn install_advanced(&mut self, sender: ComponentSender<Self>) {
+        let mixage = MixageModel::from_controls(&self.state.controls);
+        let mic = MicModel::from_controls(&self.state.controls);
+        let model =
+            AdvancedModel::from_controls(&self.state.controls, &self.state.layout, &mixage, &mic);
+        let screen_sender = sender.clone();
+        let screen = AdvancedScreen::new(model, &self.state, move |event| {
+            screen_sender.input(Msg::Advanced(event));
+        });
+        self.shell.install_advanced(screen.widget());
+        self.advanced = Some(screen);
     }
 
     /// Starts the coalescing writer and the pump that forwards its
@@ -721,6 +743,9 @@ impl App {
         if let Some(screen) = &self.mic {
             screen.set_control(name, value);
         }
+        if let Some(screen) = &self.advanced {
+            screen.set_control(name, value);
+        }
     }
 
     /// Pushes every known or unknown value to the screens.
@@ -732,6 +757,9 @@ impl App {
                 screen.set_control(name, value);
             }
             if let Some(screen) = &self.mic {
+                screen.set_control(name, value);
+            }
+            if let Some(screen) = &self.advanced {
                 screen.set_control(name, value);
             }
         }
@@ -770,6 +798,9 @@ impl App {
                     screen.set_control(&name, ControlValue::Known(value));
                 }
                 if let Some(screen) = &self.mic {
+                    screen.set_control(&name, ControlValue::Known(value));
+                }
+                if let Some(screen) = &self.advanced {
                     screen.set_control(&name, ControlValue::Known(value));
                 }
                 self.sync_shell_state();
@@ -825,6 +856,9 @@ impl App {
             screen.widget().set_sensitive(false);
         }
         if let Some(screen) = &self.mic {
+            screen.widget().set_sensitive(false);
+        }
+        if let Some(screen) = &self.advanced {
             screen.widget().set_sensitive(false);
         }
         self.shell.show_device_lost();
@@ -947,6 +981,7 @@ impl App {
         self.sync_shell_state();
         self.install_mixage(sender.clone());
         self.install_micro(sender.clone());
+        self.install_advanced(sender.clone());
         self.start_writer(&sender);
         self.start_meters(&sender);
         self.shell.set_page(self.page);
@@ -1022,8 +1057,8 @@ fn read_controls(
         .collect()
 }
 
-/// The unit of a control: the layout table when it claims it, a sensible
-/// default otherwise.
+/// The unit of a control: the layout table when it claims it, the control
+/// map's conversion otherwise, a sensible default last.
 fn unit_for(layout: &Layout, name: &str, kind: ControlKind) -> Unit {
     if let Some(unit) = layout
         .screens
@@ -1034,6 +1069,17 @@ fn unit_for(layout: &Layout, name: &str, kind: ControlKind) -> Unit {
         .and_then(|widget| widget.unit)
     {
         return unit;
+    }
+    if let Some(entry) = zg01_core::preset::control_map()
+        .iter()
+        .find(|entry| entry.control_name == name)
+    {
+        match entry.conv {
+            Conv::Gain => return Unit::Db,
+            Conv::Freq => return Unit::Hz,
+            Conv::Q => return Unit::Q,
+            Conv::Id => {}
+        }
     }
     match kind {
         ControlKind::Boolean => Unit::Bool,
@@ -1101,7 +1147,25 @@ mod tests {
         assert_eq!(
             unit_for(&layout(), "Streaming Mic Level Steps", ControlKind::Integer),
             Unit::Steps,
-            "a control the table does not claim falls back to its kind"
+            "a Steps control with an id conversion stays in steps"
+        );
+        assert_eq!(
+            unit_for(&layout(), "Game EQ Band 1 Gain", ControlKind::Integer),
+            Unit::Db,
+            "a control the layout does not claim takes the map's conversion"
+        );
+        assert_eq!(
+            unit_for(&layout(), "Game EQ Band 1 Frequency", ControlKind::Integer),
+            Unit::Hz
+        );
+        assert_eq!(
+            unit_for(&layout(), "Game EQ Band 1 Q", ControlKind::Integer),
+            Unit::Q
+        );
+        assert_eq!(
+            unit_for(&layout(), "Not In The Map", ControlKind::Boolean),
+            Unit::Bool,
+            "an unknown control falls back to its ALSA kind"
         );
     }
 
