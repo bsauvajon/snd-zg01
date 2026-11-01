@@ -22,6 +22,9 @@ pub mod meters;
 /// The Mixage screen model: the three stream sends and the stream output.
 pub mod mixage;
 
+/// The Micro screen model: the dynamics chain and the four-band EQ.
+pub mod mic;
+
 /// The control model: what a control is and how its value reads.
 pub mod model;
 

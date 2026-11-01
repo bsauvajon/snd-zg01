@@ -1,9 +1,9 @@
 //! GTK4/libadwaita control GUI for the Yamaha ZG01.
 //!
-//! This is the shell and the Mixage screen: card discovery, the state
-//! model, the header, the sidebar, the footer, the connection view and the
-//! mixer. The Micro and Avancé bodies, the remaining widgets and the
-//! `.zgpreset` handling are added by later tasks.
+//! This is the shell, the Mixage screen and the Micro screen: card
+//! discovery, the state model, the header, the sidebar, the footer, the
+//! connection view and the mixer. The Avancé body, the remaining widgets
+//! and the `.zgpreset` handling are added by later tasks.
 
 mod app;
 mod ui;

@@ -3,9 +3,9 @@
 //! Startup discovers the ZG01 card, reads every control into the model and
 //! shows the shell. A watcher reports the connection transitions, so
 //! unplugging the card shows the connection view and plugging it back in
-//! reloads the controls. The Mixage screen is rebuilt from the controls
-//! whenever they are read; the Micro and Avancé bodies are placeholders
-//! until their own tasks replace them.
+//! reloads the controls. The Mixage and Micro screens are rebuilt from the
+//! controls whenever they are read; the Avancé body is a placeholder until
+//! its own task replaces it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
@@ -20,11 +20,12 @@ use zg01_core::alsa::{
 use zg01_core::device::{spawn_watcher, DeviceEvent};
 use zg01_core::layout::{load_layout_str, Layout, LAYOUT_TOML};
 use zg01_core::meters::{spawn_poller, MeterSnapshot, METER_INTERVAL};
+use zg01_core::mic::MicModel;
 use zg01_core::mixage::{MeterId, MixageModel};
 use zg01_core::model::{AppState, Control, ControlValue, DeviceState, Unit};
 use zg01_core::writer::{ControlWriter, WriteOutcome};
 
-use crate::ui::{MixageEvent, MixageScreen};
+use crate::ui::{MicEvent, MicScreen, MixageEvent, MixageScreen};
 use crate::window::Shell;
 
 /// Title of the main window.
@@ -126,6 +127,8 @@ pub(crate) struct App {
     shell: Shell,
     /// The Mixage screen, rebuilt whenever the controls are read.
     mixage: Option<MixageScreen>,
+    /// The Micro screen, rebuilt whenever the controls are read.
+    mic: Option<MicScreen>,
     /// The coalescing writer of the connected card.
     writer: Option<ControlWriter>,
     /// The stop flag of the write-outcome pump, when it runs.
@@ -165,6 +168,8 @@ pub(crate) enum Msg {
     },
     /// The Mixage screen reported a user action.
     Mixage(MixageEvent),
+    /// The Micro screen reported a user action.
+    Mic(MicEvent),
     /// The control writer finished a write.
     WriteOutcome(WriteOutcome),
     /// The meter pump read the four meters.
@@ -359,6 +364,7 @@ impl SimpleComponent for App {
             backend,
             page: Page::Mixage,
             mixage: None,
+            mic: None,
             writer: None,
             writer_stop: None,
             meters_stop: None,
@@ -369,6 +375,7 @@ impl SimpleComponent for App {
 
         if model.state.device.is_connected() {
             model.install_mixage(sender.clone());
+            model.install_micro(sender.clone());
             model.start_writer(&sender);
             model.start_meters(&sender);
             model.shell.set_page(Page::Mixage);
@@ -409,6 +416,7 @@ impl SimpleComponent for App {
                 MixageEvent::OpenMic => self.open_mic(),
                 MixageEvent::Write { name, value } => self.write_control(&name, value),
             },
+            Msg::Mic(MicEvent::Write { name, value }) => self.write_control(&name, value),
             Msg::WriteOutcome(outcome) => self.write_outcome(outcome),
             Msg::Meters(snapshot) => self.update_meters(snapshot),
         }
@@ -452,6 +460,17 @@ impl App {
         });
         self.shell.install_mixage(screen.widget());
         self.mixage = Some(screen);
+    }
+
+    /// Builds the Micro screen from the current controls and installs it.
+    fn install_micro(&mut self, sender: ComponentSender<Self>) {
+        let model = MicModel::from_controls(&self.state.controls);
+        let screen_sender = sender.clone();
+        let screen = MicScreen::new(&model, &self.state, move |event| {
+            screen_sender.input(Msg::Mic(event));
+        });
+        self.shell.install_micro(screen.widget());
+        self.mic = Some(screen);
     }
 
     /// Starts the coalescing writer and the pump that forwards its
@@ -547,12 +566,15 @@ impl App {
 
     /// Puts a widget back to the value the model still holds.
     fn revert_control(&self, name: &str) {
+        let value = self
+            .state
+            .control(name)
+            .map(|control| control.value)
+            .unwrap_or(ControlValue::Unknown);
         if let Some(screen) = &self.mixage {
-            let value = self
-                .state
-                .control(name)
-                .map(|control| control.value)
-                .unwrap_or(ControlValue::Unknown);
+            screen.set_control(name, value);
+        }
+        if let Some(screen) = &self.mic {
             screen.set_control(name, value);
         }
     }
@@ -567,6 +589,9 @@ impl App {
                 if let Some(screen) = &self.mixage {
                     screen.set_control(&name, ControlValue::Known(value));
                 }
+                if let Some(screen) = &self.mic {
+                    screen.set_control(&name, ControlValue::Known(value));
+                }
             }
             WriteOutcome::Err { name, error } => {
                 tracing::warn!("could not write the control {name:?}: {error}");
@@ -577,18 +602,20 @@ impl App {
         }
     }
 
-    /// Installs the meter readings on the Mixage screen.
+    /// Installs the meter readings on the screens.
     fn update_meters(&self, snapshot: MeterSnapshot) {
-        let Some(screen) = &self.mixage else {
-            return;
-        };
         for id in [
             MeterId::MicIn,
             MeterId::MicOut,
             MeterId::PcIn,
             MeterId::StreamMix,
         ] {
-            screen.set_meter(id, snapshot.value(id.index()));
+            if let Some(screen) = &self.mixage {
+                screen.set_meter(id, snapshot.value(id.index()));
+            }
+            if let Some(screen) = &self.mic {
+                screen.set_meter(id, snapshot.value(id.index()));
+            }
         }
     }
 
@@ -611,6 +638,7 @@ impl App {
         self.stop_writer();
         self.stop_meters();
         self.mixage = None;
+        self.mic = None;
         self.shell.show_disconnected();
         self.shell.set_save_enabled(false);
         if notify && was_connected {
@@ -729,6 +757,7 @@ impl App {
         }
         self.shell.set_save_enabled(self.state.can_save());
         self.install_mixage(sender.clone());
+        self.install_micro(sender.clone());
         self.start_writer(&sender);
         self.start_meters(&sender);
         self.shell.set_page(self.page);

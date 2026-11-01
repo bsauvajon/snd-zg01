@@ -49,6 +49,51 @@ pub fn controls_with_mixage() -> Vec<Control> {
     ])
 }
 
+/// The controls the Micro screen claims: the three block switches and
+/// values, the EQ switch and shapes, the four gain/frequency/Q triples and
+/// every dynamics sub-parameter.
+pub fn controls_with_mic() -> Vec<Control> {
+    controls(&[
+        "Gate Capture Switch",
+        "Gate",
+        "Gate Threshold",
+        "Gate Range",
+        "Gate Attack",
+        "Gate Hold",
+        "Gate Decay",
+        "Compressor Capture Switch",
+        "Compressor",
+        "Compressor Threshold",
+        "Compressor Ratio",
+        "Compressor Attack",
+        "Compressor Release",
+        "Compressor Knee",
+        "Compressor Out Gain",
+        "Limiter Capture Switch",
+        "Limiter",
+        "Limiter Threshold",
+        "Limiter Attack",
+        "Limiter Release",
+        "Limiter Knee",
+        "Limiter Out Gain",
+        "EQ Capture Switch",
+        "EQ Low Shape",
+        "EQ High Shape",
+        "EQ Band 1 Gain",
+        "EQ Band 1 Frequency",
+        "EQ Band 1 Q",
+        "EQ Band 2 Gain",
+        "EQ Band 2 Frequency",
+        "EQ Band 2 Q",
+        "EQ Band 3 Gain",
+        "EQ Band 3 Frequency",
+        "EQ Band 3 Q",
+        "EQ Band 4 Gain",
+        "EQ Band 4 Frequency",
+        "EQ Band 4 Q",
+    ])
+}
+
 /// The card the tests pretend to be talking to.
 pub fn card() -> CardInfo {
     CardInfo {

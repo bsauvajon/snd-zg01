@@ -2,9 +2,9 @@
 //!
 //! The shell is the part of the GUI that does not depend on the device:
 //! it is built once, and the application component tells it what to show
-//! when the card appears or disappears. The Micro and Avancé bodies are
-//! placeholders until their own tasks replace them; the Mixage body is
-//! installed by [`Shell::install_mixage`].
+//! when the card appears or disappears. The Avancé body is a placeholder
+//! until its own task replaces it; the Mixage and Micro bodies are
+//! installed by [`Shell::install_mixage`] and [`Shell::install_micro`].
 
 use gtk4::prelude::*;
 use libadwaita::prelude::*;
@@ -101,14 +101,24 @@ impl Shell {
     /// page is removed before the new one is added. The visible page is
     /// kept: a rebuild must not switch the user to another screen.
     pub fn install_mixage(&self, root: &impl IsA<gtk::Widget>) {
-        let was_visible =
-            self.stack.visible_child_name().as_deref() == Some(Page::Mixage.stack_name());
-        if let Some(previous) = self.stack.child_by_name(Page::Mixage.stack_name()) {
+        self.install_page(Page::Mixage, root);
+    }
+
+    /// Installs the real Micro body in place of its placeholder.
+    pub fn install_micro(&self, root: &impl IsA<gtk::Widget>) {
+        self.install_page(Page::Micro, root);
+    }
+
+    /// Replaces one page of the content stack, keeping the visible page.
+    fn install_page(&self, page: Page, root: &impl IsA<gtk::Widget>) {
+        let name = page.stack_name();
+        let was_visible = self.stack.visible_child_name().as_deref() == Some(name);
+        if let Some(previous) = self.stack.child_by_name(name) {
             self.stack.remove(&previous);
         }
-        self.stack.add_named(root, Some(Page::Mixage.stack_name()));
+        self.stack.add_named(root, Some(name));
         if was_visible {
-            self.stack.set_visible_child_name(Page::Mixage.stack_name());
+            self.stack.set_visible_child_name(name);
         }
     }
 

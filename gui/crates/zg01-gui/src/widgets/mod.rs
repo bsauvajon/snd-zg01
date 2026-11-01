@@ -8,8 +8,8 @@
 //!
 //! The widgets are pure presentation: they hold the value the parent gives
 //! them, never read the device, and report a user change through the
-//! callback the parent passes to [`Fader::new`]. The Mixage screen builds
-//! them; the Micro screen (Task 7) consumes the rest.
+//! callback the parent passes to [`Fader::new`]. The Mixage and Micro
+//! screens build them.
 
 mod fader;
 mod meter;

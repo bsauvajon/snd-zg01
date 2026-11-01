@@ -177,6 +177,46 @@ button.suggested-action:disabled {
   letter-spacing: 0.5px;
 }
 
+/* Micro ------------------------------------------------------------------- */
+
+.mic-panel {
+  padding: 18px;
+}
+
+.mic-block {
+  background-color: alpha(@zg_text, 0.03);
+  border: 1px solid @zg_border;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.mic-advanced {
+  margin-top: 4px;
+}
+
+.mic-eq {
+  border-top: 1px solid @zg_border;
+  padding-top: 12px;
+}
+
+.eq-band {
+  background-color: alpha(@zg_text, 0.02);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.mic-editor {
+  margin-top: 2px;
+}
+
+.mic-editor-scale trough {
+  min-height: 4px;
+}
+
+.mic-editor-scale highlight {
+  background-color: @zg_accent_strong;
+}
+
 /* Footer ------------------------------------------------------------------ */
 .footer {
   background-color: @zg_panel;

@@ -200,12 +200,6 @@ impl Meter {
             schedule_peak_clear(&self.inner, &self.area);
         }
     }
-
-    /// Enables or dims the meter.
-    #[allow(dead_code)] // TODO(task-7): the Micro screen dims its meters.
-    pub(crate) fn set_sensitive(&self, sensitive: bool) {
-        self.root.set_sensitive(sensitive);
-    }
 }
 
 /// The peak a fresh meter shows: the spec peak, or the current level.
