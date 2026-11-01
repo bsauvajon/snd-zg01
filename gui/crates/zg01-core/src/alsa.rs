@@ -12,7 +12,7 @@
 //! calls the `alsa-sys` bindings the `alsa` crate itself is built on and
 //! keeps the crate's error type for the failures.
 
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_long;
 use std::ptr;
@@ -170,6 +170,13 @@ fn parse_card_line(line: &str) -> Option<CardInfo> {
 pub struct RealAlsa {
     index: u32,
     ctl: Mutex<RawCtl>,
+    /// The elements the backend already looked up.
+    ///
+    /// Finding an element means listing every element of the card and
+    /// reading the metadata of each one. The meter poller reads four
+    /// controls twenty times a second, so the lookup is done once and
+    /// kept here.
+    cache: Mutex<ElemCache>,
 }
 
 impl RealAlsa {
@@ -179,6 +186,7 @@ impl RealAlsa {
         Ok(RealAlsa {
             index,
             ctl: Mutex::new(ctl),
+            cache: Mutex::new(ElemCache::default()),
         })
     }
 
@@ -191,6 +199,7 @@ impl RealAlsa {
 impl AlsaBackend for RealAlsa {
     fn list_controls(&self) -> Result<Vec<ControlInfo>, AlsaError> {
         let ctl = self.lock();
+        let mut cache = self.lock_cache();
         let mut controls = Vec::new();
         for id in ctl.elements()? {
             let Some(name) = element_name(&id) else {
@@ -208,30 +217,33 @@ impl AlsaBackend for RealAlsa {
                 continue;
             };
             controls.push(ControlInfo {
-                name,
+                name: name.clone(),
                 kind,
                 min: meta.min,
                 max: meta.max,
                 step: meta.step,
                 writable: meta.writable,
             });
+            cache.insert(name, id, meta);
         }
         Ok(controls)
     }
 
     fn read(&self, name: &str) -> Result<i64, AlsaError> {
         let ctl = self.lock();
-        let (id, meta) = ctl.find(name)?;
-        ctl.read(&id, &meta)
+        let mut cache = self.lock_cache();
+        let (id, meta) = find_cached(&mut cache, name, || ctl.find(name))?;
+        ctl.read(id, meta)
     }
 
     fn write(&self, name: &str, value: i64) -> Result<(), AlsaError> {
         let ctl = self.lock();
-        let (id, meta) = ctl.find(name)?;
+        let mut cache = self.lock_cache();
+        let (id, meta) = find_cached(&mut cache, name, || ctl.find(name))?;
         if !meta.writable {
             return Err(AlsaError::ReadOnly(name.to_string()));
         }
-        ctl.write(&id, &meta, value)
+        ctl.write(id, meta, value)
     }
 }
 
@@ -241,9 +253,59 @@ impl RealAlsa {
     fn lock(&self) -> std::sync::MutexGuard<'_, RawCtl> {
         self.ctl.lock().unwrap_or_else(|err| err.into_inner())
     }
+
+    /// Locks the element cache, ignoring a poisoned lock.
+    fn lock_cache(&self) -> std::sync::MutexGuard<'_, ElemCache> {
+        self.cache.lock().unwrap_or_else(|err| err.into_inner())
+    }
+}
+
+/// The elements the backend already looked up.
+#[derive(Default)]
+struct ElemCache {
+    entries: HashMap<String, CachedElem>,
+}
+
+impl ElemCache {
+    /// Keeps the element and its metadata.
+    fn insert(&mut self, name: String, id: RawElemId, meta: ElemMeta) {
+        self.entries.insert(name, CachedElem { id, meta });
+    }
+}
+
+/// An element and the metadata the driver publishes for it.
+struct CachedElem {
+    /// The identifier of the element.
+    id: RawElemId,
+    /// What the driver publishes about it.
+    meta: ElemMeta,
+}
+
+/// Finds the element named `name`, looking it up once.
+///
+/// The first call scans the elements of the card with `scan` and keeps
+/// what it finds; the next calls are answered from the cache. A name the
+/// scan does not know is not cached: the control may appear later.
+fn find_cached<'a>(
+    cache: &'a mut ElemCache,
+    name: &str,
+    scan: impl FnOnce() -> Result<(RawElemId, ElemMeta), AlsaError>,
+) -> Result<(&'a RawElemId, &'a ElemMeta), AlsaError> {
+    match cache.entries.entry(name.to_string()) {
+        Entry::Occupied(entry) => {
+            let entry = entry.into_mut();
+            Ok((&entry.id, &entry.meta))
+        }
+        Entry::Vacant(entry) => {
+            let (id, meta) = scan()?;
+            let entry = entry.insert(CachedElem { id, meta });
+            Ok((&entry.id, &entry.meta))
+        }
+    }
 }
 
 /// What ALSA publishes about one element.
+#[derive(Clone)]
 struct ElemMeta {
     /// `None` when the element type has no GUI equivalent.
     kind: Option<ControlKind>,
@@ -462,6 +524,10 @@ unsafe impl Send for RawCtl {}
 
 /// An element identifier owned by the caller.
 struct RawElemId(*mut alsa_sys::snd_ctl_elem_id_t);
+
+// SAFETY: the identifier is a plain descriptor allocated by ALSA, and it
+// only travels between threads inside the mutex of `RealAlsa`.
+unsafe impl Send for RawElemId {}
 
 impl Drop for RawElemId {
     fn drop(&mut self) {
@@ -685,5 +751,82 @@ fn fake_error(error: &FakeError, name: &str) -> AlsaError {
         FakeError::Unknown => AlsaError::Unknown(name.to_string()),
         FakeError::ReadOnly => AlsaError::ReadOnly(name.to_string()),
         FakeError::Unsupported => AlsaError::Unsupported(name.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::CString;
+
+    use super::{
+        element_name, find_cached, AlsaError, ControlKind, ElemCache, ElemMeta, RawElemId,
+    };
+
+    /// An element identifier that names `name`, without a card.
+    fn element(name: &str) -> RawElemId {
+        let mut id = std::ptr::null_mut();
+        // SAFETY: the identifier is freshly allocated and freed on drop.
+        unsafe {
+            assert_eq!(alsa_sys::snd_ctl_elem_id_malloc(&mut id), 0);
+        }
+        let id = RawElemId(id);
+        let name = CString::new(name).unwrap();
+        // SAFETY: the identifier is alive and the name is NUL-terminated.
+        unsafe {
+            alsa_sys::snd_ctl_elem_id_set_name(id.0, name.as_ptr());
+        }
+        id
+    }
+
+    /// The metadata of a writable element.
+    fn meta(writable: bool) -> ElemMeta {
+        ElemMeta {
+            kind: Some(ControlKind::Integer),
+            min: 0,
+            max: 100,
+            step: 1,
+            writable,
+        }
+    }
+
+    #[test]
+    fn an_element_is_looked_up_once() {
+        let mut cache = ElemCache::default();
+        let mut scans = 0;
+        for _ in 0..3 {
+            let (id, meta) = find_cached(&mut cache, "Gate", || {
+                scans += 1;
+                Ok((element("Gate"), meta(true)))
+            })
+            .unwrap();
+            assert_eq!(element_name(id).as_deref(), Some("Gate"));
+            assert!(meta.writable);
+        }
+        assert_eq!(scans, 1, "the element is only looked up once");
+    }
+
+    #[test]
+    fn a_missing_element_is_not_cached() {
+        let mut cache = ElemCache::default();
+        let mut scans = 0;
+        for _ in 0..2 {
+            let result = find_cached(&mut cache, "Nope", || {
+                scans += 1;
+                Err(AlsaError::Unknown("Nope".to_string()))
+            });
+            assert!(matches!(result, Err(AlsaError::Unknown(_))));
+        }
+        assert_eq!(scans, 2, "a control that does not exist is looked up again");
+    }
+
+    #[test]
+    fn the_cached_metadata_is_the_one_of_the_element() {
+        let mut cache = ElemCache::default();
+        let (_, found) =
+            find_cached(&mut cache, "Gate", || Ok((element("Gate"), meta(false)))).unwrap();
+        assert!(!found.writable);
+        let (_, found) =
+            find_cached(&mut cache, "Gate", || Ok((element("Gate"), meta(true)))).unwrap();
+        assert!(!found.writable, "the cache wins over the scan");
     }
 }

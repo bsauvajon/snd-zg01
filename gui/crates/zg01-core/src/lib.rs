@@ -1,20 +1,29 @@
 //! Core library for the Yamaha ZG01 control GUI.
 //!
-//! This crate will host the ALSA control surface, the ZG01 model description
-//! and the `.zgpreset` parser. Task 0 only wires up the crate skeleton so the
-//! workspace builds and the GUI can start.
+//! The crate holds the ALSA control surface, the ZG01 model description,
+//! the background workers that keep the GTK thread free of USB traffic,
+//! and the `.zgpreset` parser.
 
 /// The ALSA control surface: card discovery and the control backend.
 pub mod alsa;
 
+/// The device watcher: the connection transitions of the ZG01.
+pub mod device;
+
 /// The curated layout table: which control goes on which screen.
 pub mod layout;
+
+/// The meter poller: the readings of the four decoded meters.
+pub mod meters;
 
 /// The control model: what a control is and how its value reads.
 pub mod model;
 
 /// The conversions between the raw device values and the user units.
 pub mod units;
+
+/// The coalescing control writer.
+pub mod writer;
 
 /// Placeholder identifier for the ALSA PCM device handled by the GUI.
 ///
