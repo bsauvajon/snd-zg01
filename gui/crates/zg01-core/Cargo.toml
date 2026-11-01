@@ -7,6 +7,10 @@ license.workspace = true
 
 [dependencies]
 alsa = "0.12"
+# The `alsa` crate does not wrap `snd_ctl_elem_info()`, which the control
+# metadata (type, range, read-only flag) needs, so the backend also uses the
+# FFI bindings the crate is built on.
+alsa-sys = "0.6"
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 thiserror = "2"

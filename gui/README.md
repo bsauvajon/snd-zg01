@@ -63,6 +63,7 @@ Versions are pinned in `Cargo.lock`; the manifest uses caret requirements.
 | `libadwaita`    | 0.9.2   | Matches the system libadwaita 1.9.1; MSRV compatible with Rust 1.93.      |
 | `relm4`         | 0.11.0  | Current relm4; MSRV is exactly 1.93, which this toolchain satisfies.     |
 | `alsa`          | 0.12.1  | Current ALSA bindings used by `zg01-core`.                                 |
+| `alsa-sys`      | 0.6.1   | FFI bindings the `alsa` crate is built on, used for the element metadata.  |
 | `serde`         | 1.0.229 | With the `derive` feature, for preset serialisation.                      |
 | `toml`          | 1.1.8   | Current `toml` release, used by the `.zgpreset` parser.                    |
 | `thiserror`     | 2.0.21  | Current major version for the error types.                                 |

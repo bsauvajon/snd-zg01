@@ -1105,6 +1105,7 @@ name = "zg01-core"
 version = "0.1.0"
 dependencies = [
  "alsa",
+ "alsa-sys",
  "cc",
  "serde",
  "thiserror",

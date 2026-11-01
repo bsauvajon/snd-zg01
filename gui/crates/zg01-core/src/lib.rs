@@ -4,6 +4,9 @@
 //! and the `.zgpreset` parser. Task 0 only wires up the crate skeleton so the
 //! workspace builds and the GUI can start.
 
+/// The ALSA control surface: card discovery and the control backend.
+pub mod alsa;
+
 /// Placeholder identifier for the ALSA PCM device handled by the GUI.
 ///
 /// The real device is resolved at runtime in a later task.
