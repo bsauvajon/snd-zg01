@@ -61,8 +61,18 @@ In scope:
 - Write enable/disable and the main value of GATE, COMP, LIMITER.
 - Read and write the EQ preset; read and write EQ bands (from `EDIT`).
 
+The first milestone (enable and value of GATE, COMP, LIMITER plus the EQ
+bands) is implemented, and the driver now also exposes the dynamics
+sub-parameters of those blocks - threshold, range, times, knee and out
+gain.  Those have **no control on the Windows MIC SETTINGS screen**: they
+come from the device parameter map, they use the same proven write frame,
+but their effect and their units in dB or ms are not confirmed on
+hardware yet (see "Driver controls" in `docs/MIC_CONTROL_PROTOCOL.md`).
+
 Out of scope for this plan:
 
+- MIC EFFECT and GAME EFFECT: they are implemented, but recorded in
+  `docs/EFFECTS_CONTROL_PLAN.md` rather than here.
 - Other ZG Controller screens (ZG SURROUND, FOCUS MODE/EQ, 3D CHAT
   SPACE, STREAMING OUTPUT MIXER, HEADPHONE, SETTINGS (HARDWARE)).
 - Firmware update traffic.
@@ -108,9 +118,11 @@ Other message types seen: `04 f0 43 00` carries preset-name payloads
 IN stream (192 bytes, continuously varying) is telemetry, probably meters
 plus state.
 
-The level scale is not pinned yet: a drag "high" produced 65..105, while
-the UI shows small integers (GATE 44, COMP 26, LIMITER 42 in the
-screenshot). The byte may be an internal/scaled value or a 0-127 range.
+The level scale is pinned: GATE, COMP and LIMITER levels are plain 0..100
+integers (`MicGateLevel`/`MicCompLevel`/`MicLimiterLevel`, default 50), and
+every value is carried as base-128 SysEx digits - see the corrected
+analysis in `docs/MIC_CONTROL_PROTOCOL.md`.  The 105 seen during a drag was
+a transient slider value, not a different scale.
 
 Earlier code only sends the `bRequest 7` handshake; it does not touch the
 interface 4 transport.

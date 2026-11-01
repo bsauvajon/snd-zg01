@@ -1,0 +1,1602 @@
+{
+ "BinauralGOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "BinauralGRevErDiffusion": {
+  "default": 10,
+  "max": 10,
+  "min": 0
+ },
+ "BinauralGRevErFeedbackLevel": {
+  "default": 78,
+  "max": 127,
+  "min": 1
+ },
+ "BinauralGRevErHpf": {
+  "default": 2,
+  "max": 52,
+  "min": 0
+ },
+ "BinauralGRevErInitDelay": {
+  "default": 3,
+  "max": 127,
+  "min": 0
+ },
+ "BinauralGRevErLpf": {
+  "default": 50,
+  "max": 60,
+  "min": 34
+ },
+ "BinauralGRevErRoomsize": {
+  "default": 15,
+  "max": 63,
+  "min": 0
+ },
+ "BinauralGRevErType": {
+  "default": 0,
+  "max": 5,
+  "min": 0
+ },
+ "BinauralGRevLevel": {
+  "default": 103,
+  "max": 103,
+  "min": 0
+ },
+ "BinauralGRevOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "BinauralGRevRevDensity": {
+  "default": 4,
+  "max": 4,
+  "min": 0
+ },
+ "BinauralGRevRevDiffusion": {
+  "default": 10,
+  "max": 10,
+  "min": 0
+ },
+ "BinauralGRevRevErSel": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "BinauralGRevRevHighRatio": {
+  "default": 8,
+  "max": 10,
+  "min": 1
+ },
+ "BinauralGRevRevHpf": {
+  "default": 0,
+  "max": 52,
+  "min": 0
+ },
+ "BinauralGRevRevInitDelay": {
+  "default": 16,
+  "max": 63,
+  "min": 0
+ },
+ "BinauralGRevRevLpf": {
+  "default": 53,
+  "max": 60,
+  "min": 34
+ },
+ "BinauralGRevRevTime": {
+  "default": 25,
+  "max": 57,
+  "min": 0
+ },
+ "BinauralGRevRevType": {
+  "default": 0,
+  "max": 4,
+  "min": 0
+ },
+ "BinauralGRevType": {
+  "default": 0,
+  "max": 4,
+  "min": 0
+ },
+ "BinauralVOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "BinauralVPosition": {
+  "default": 3,
+  "max": 16,
+  "min": 0
+ },
+ "BinauralVRevErDiffusion": {
+  "default": 10,
+  "max": 10,
+  "min": 0
+ },
+ "BinauralVRevErFeedbackLevel": {
+  "default": 78,
+  "max": 127,
+  "min": 1
+ },
+ "BinauralVRevErHpf": {
+  "default": 2,
+  "max": 52,
+  "min": 0
+ },
+ "BinauralVRevErInitDelay": {
+  "default": 3,
+  "max": 127,
+  "min": 0
+ },
+ "BinauralVRevErLpf": {
+  "default": 50,
+  "max": 60,
+  "min": 34
+ },
+ "BinauralVRevErRoomsize": {
+  "default": 15,
+  "max": 63,
+  "min": 0
+ },
+ "BinauralVRevErType": {
+  "default": 0,
+  "max": 5,
+  "min": 0
+ },
+ "BinauralVRevLevel": {
+  "default": 103,
+  "max": 103,
+  "min": 0
+ },
+ "BinauralVRevOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "BinauralVRevRevDensity": {
+  "default": 4,
+  "max": 4,
+  "min": 0
+ },
+ "BinauralVRevRevDiffusion": {
+  "default": 10,
+  "max": 10,
+  "min": 0
+ },
+ "BinauralVRevRevErSel": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "BinauralVRevRevHighRatio": {
+  "default": 8,
+  "max": 10,
+  "min": 1
+ },
+ "BinauralVRevRevHpf": {
+  "default": 0,
+  "max": 52,
+  "min": 0
+ },
+ "BinauralVRevRevInitDelay": {
+  "default": 16,
+  "max": 63,
+  "min": 0
+ },
+ "BinauralVRevRevLpf": {
+  "default": 53,
+  "max": 60,
+  "min": 34
+ },
+ "BinauralVRevRevTime": {
+  "default": 25,
+  "max": 57,
+  "min": 0
+ },
+ "BinauralVRevRevType": {
+  "default": 0,
+  "max": 4,
+  "min": 0
+ },
+ "BinauralVRevType": {
+  "default": 0,
+  "max": 4,
+  "min": 0
+ },
+ "CurrentGameEffectButton": {
+  "default": 0,
+  "max": 2,
+  "min": 0
+ },
+ "DirtyFlagMic": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "DirtyFlagMicFx": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "DirtyFlagStreaming": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "EchoDelayHighRatio": {
+  "default": 8,
+  "max": 10,
+  "min": 1
+ },
+ "EchoDelayLevel": {
+  "default": 103,
+  "max": 103,
+  "min": 0
+ },
+ "EchoDelayTime": {
+  "default": 2400,
+  "max": 7430,
+  "min": 200
+ },
+ "EchoDensity": {
+  "default": 4,
+  "max": 4,
+  "min": 0
+ },
+ "EchoDiffusion": {
+  "default": 10,
+  "max": 10,
+  "min": 0
+ },
+ "EchoFeedback": {
+  "default": 94,
+  "max": 127,
+  "min": 1
+ },
+ "EchoHighRatio": {
+  "default": 8,
+  "max": 10,
+  "min": 1
+ },
+ "EchoHpf": {
+  "default": 0,
+  "max": 52,
+  "min": 0
+ },
+ "EchoInitDelay": {
+  "default": 16,
+  "max": 63,
+  "min": 0
+ },
+ "EchoLpf": {
+  "default": 53,
+  "max": 60,
+  "min": 34
+ },
+ "EchoOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "EchoRevLevel": {
+  "default": 91,
+  "max": 103,
+  "min": 0
+ },
+ "EchoRevTime": {
+  "default": 25,
+  "max": 57,
+  "min": 0
+ },
+ "EchoRevType": {
+  "default": 0,
+  "max": 4,
+  "min": 0
+ },
+ "EchoStereo": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "EchoTime": {
+  "default": 1,
+  "max": 2,
+  "min": 0
+ },
+ "GameDeesserMAttack": {
+  "default": 237,
+  "max": 283,
+  "min": 57
+ },
+ "GameDeesserMGain": {
+  "default": 37,
+  "max": 180,
+  "min": 0
+ },
+ "GameDeesserMHiFreq": {
+  "default": 93,
+  "max": 124,
+  "min": 60
+ },
+ "GameDeesserMLoFreq": {
+  "default": 36,
+  "max": 96,
+  "min": 4
+ },
+ "GameDeesserMOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "GameDeesserMRatio": {
+  "default": 10,
+  "max": 120,
+  "min": 0
+ },
+ "GameDeesserMRelease": {
+  "default": 228,
+  "max": 300,
+  "min": 24
+ },
+ "GameDeesserMThreshold": {
+  "default": 57,
+  "max": 73,
+  "min": 19
+ },
+ "GameDeesserSAttack": {
+  "default": 237,
+  "max": 283,
+  "min": 57
+ },
+ "GameDeesserSGain": {
+  "default": 37,
+  "max": 180,
+  "min": 0
+ },
+ "GameDeesserSHiFreq": {
+  "default": 93,
+  "max": 124,
+  "min": 60
+ },
+ "GameDeesserSLoFreq": {
+  "default": 36,
+  "max": 96,
+  "min": 4
+ },
+ "GameDeesserSOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "GameDeesserSRatio": {
+  "default": 10,
+  "max": 120,
+  "min": 0
+ },
+ "GameDeesserSRelease": {
+  "default": 228,
+  "max": 300,
+  "min": 24
+ },
+ "GameDeesserSThreshold": {
+  "default": 57,
+  "max": 73,
+  "min": 19
+ },
+ "GameEffectName": {
+  "default": 0,
+  "max": 255,
+  "min": 0
+ },
+ "GameEffectOnfa": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "GameEffectOnfb": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "GameEffectOnfc": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqMHiFreq": {
+  "default": 112,
+  "max": 124,
+  "min": 60
+ },
+ "GameEqMHiGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqMHiOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqMHiQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqMHiShape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqMLoFreq": {
+  "default": 32,
+  "max": 72,
+  "min": 4
+ },
+ "GameEqMLoGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqMLoOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqMLoQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqMLoShape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqMMhFreq": {
+  "default": 96,
+  "max": 124,
+  "min": 4
+ },
+ "GameEqMMhGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqMMhOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqMMhQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqMMlFreq": {
+  "default": 72,
+  "max": 124,
+  "min": 4
+ },
+ "GameEqMMlGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqMMlOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqMMlQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqMOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqSHiFreq": {
+  "default": 112,
+  "max": 124,
+  "min": 60
+ },
+ "GameEqSHiGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqSHiOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqSHiQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqSHiShape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqSLoFreq": {
+  "default": 32,
+  "max": 72,
+  "min": 4
+ },
+ "GameEqSLoGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqSLoOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqSLoQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqSLoShape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqSMhFreq": {
+  "default": 96,
+  "max": 124,
+  "min": 4
+ },
+ "GameEqSMhGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqSMhOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqSMhQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqSMlFreq": {
+  "default": 72,
+  "max": 124,
+  "min": 4
+ },
+ "GameEqSMlGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqSMlOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqSMlQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqSOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqTotalOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV210F": {
+  "default": 16000,
+  "max": 20000,
+  "min": 500
+ },
+ "GameEqV210G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV210Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV210Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqV21F": {
+  "default": 31,
+  "max": 1000,
+  "min": 20
+ },
+ "GameEqV21G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV21Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV21Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqV22F": {
+  "default": 63,
+  "max": 20000,
+  "min": 20
+ },
+ "GameEqV22G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV22Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV22Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqV23F": {
+  "default": 125,
+  "max": 20000,
+  "min": 20
+ },
+ "GameEqV23G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV23Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV23Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqV24F": {
+  "default": 250,
+  "max": 20000,
+  "min": 20
+ },
+ "GameEqV24G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV24Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV24Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqV25F": {
+  "default": 500,
+  "max": 20000,
+  "min": 20
+ },
+ "GameEqV25G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV25Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV25Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqV26F": {
+  "default": 1000,
+  "max": 20000,
+  "min": 20
+ },
+ "GameEqV26G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV26Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV26Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqV27F": {
+  "default": 2000,
+  "max": 20000,
+  "min": 20
+ },
+ "GameEqV27G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV27Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV27Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqV28F": {
+  "default": 4000,
+  "max": 20000,
+  "min": 20
+ },
+ "GameEqV28G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV28Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV28Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameEqV29F": {
+  "default": 8000,
+  "max": 20000,
+  "min": 20
+ },
+ "GameEqV29G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "GameEqV29Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "GameEqV29Q": {
+  "default": 42,
+  "max": 60,
+  "min": 0
+ },
+ "GameFxOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "GameFxType": {
+  "default": 0,
+  "max": 100,
+  "min": 0
+ },
+ "Hdmi14KMode": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "Hdmi24KMode": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "HdmiHdcpVersion1": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "HdmiHdcpVersion2": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "HdmiMute": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "HdmiSelect": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "LedBrightness": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MicCompAttack": {
+  "default": 237,
+  "max": 283,
+  "min": 57
+ },
+ "MicCompKnee": {
+  "default": 1,
+  "max": 2,
+  "min": 0
+ },
+ "MicCompLevel": {
+  "default": 50,
+  "max": 100,
+  "min": 0
+ },
+ "MicCompOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MicCompOutgain": {
+  "default": 50,
+  "max": 180,
+  "min": 0
+ },
+ "MicCompRatio": {
+  "default": 14,
+  "max": 120,
+  "min": 0
+ },
+ "MicCompRelease": {
+  "default": 228,
+  "max": 300,
+  "min": 24
+ },
+ "MicCompThreshold": {
+  "default": 52,
+  "max": 73,
+  "min": 19
+ },
+ "MicEffectButtonFunc1": {
+  "default": 0,
+  "max": 2,
+  "min": 0
+ },
+ "MicEffectButtonFunc2": {
+  "default": 1,
+  "max": 2,
+  "min": 0
+ },
+ "MicEffectButtonFunc3": {
+  "default": 2,
+  "max": 2,
+  "min": 0
+ },
+ "MicEqName": {
+  "default": 0,
+  "max": 255,
+  "min": 0
+ },
+ "MicEqOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MicEqV21F": {
+  "default": 100,
+  "max": 1000,
+  "min": 20
+ },
+ "MicEqV21G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "MicEqV21Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MicEqV21Q": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "MicEqV21Shape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MicEqV22F": {
+  "default": 500,
+  "max": 20000,
+  "min": 20
+ },
+ "MicEqV22G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "MicEqV22Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MicEqV22Q": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "MicEqV22Shape": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MicEqV23F": {
+  "default": 2500,
+  "max": 20000,
+  "min": 20
+ },
+ "MicEqV23G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "MicEqV23Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MicEqV23Q": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "MicEqV23Shape": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MicEqV24F": {
+  "default": 10000,
+  "max": 20000,
+  "min": 500
+ },
+ "MicEqV24G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "MicEqV24Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MicEqV24Q": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "MicEqV24Shape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MicGateAttack": {
+  "default": 237,
+  "max": 283,
+  "min": 57
+ },
+ "MicGateDecay": {
+  "default": 188,
+  "max": 300,
+  "min": 24
+ },
+ "MicGateHold": {
+  "default": 101,
+  "max": 213,
+  "min": 0
+ },
+ "MicGateLevel": {
+  "default": 50,
+  "max": 100,
+  "min": 0
+ },
+ "MicGateOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MicGateRange": {
+  "default": 17,
+  "max": 73,
+  "min": 0
+ },
+ "MicGateThreshold": {
+  "default": 23,
+  "max": 73,
+  "min": 1
+ },
+ "MicLevel": {
+  "default": 103,
+  "max": 127,
+  "min": 0
+ },
+ "MicLimiterAttack": {
+  "default": 237,
+  "max": 283,
+  "min": 57
+ },
+ "MicLimiterKnee": {
+  "default": 1,
+  "max": 2,
+  "min": 0
+ },
+ "MicLimiterLevel": {
+  "default": 50,
+  "max": 100,
+  "min": 0
+ },
+ "MicLimiterOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MicLimiterOutgain": {
+  "default": 0,
+  "max": 180,
+  "min": 0
+ },
+ "MicLimiterRelease": {
+  "default": 228,
+  "max": 300,
+  "min": 24
+ },
+ "MicLimiterThreshold": {
+  "default": 65,
+  "max": 73,
+  "min": 19
+ },
+ "MicMonitorLevel": {
+  "default": 103,
+  "max": 127,
+  "min": 0
+ },
+ "MicMonitorLevelKnob": {
+  "default": 64,
+  "max": 127,
+  "min": 0
+ },
+ "MicMute": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MicP48V": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorEqName": {
+  "default": 0,
+  "max": 255,
+  "min": 0
+ },
+ "MonitorEqOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorEqV21F": {
+  "default": 100,
+  "max": 1000,
+  "min": 20
+ },
+ "MonitorEqV21G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "MonitorEqV21Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorEqV21Q": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "MonitorEqV21Shape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorEqV22F": {
+  "default": 500,
+  "max": 20000,
+  "min": 20
+ },
+ "MonitorEqV22G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "MonitorEqV22Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorEqV22Q": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "MonitorEqV22Shape": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorEqV23F": {
+  "default": 2500,
+  "max": 20000,
+  "min": 20
+ },
+ "MonitorEqV23G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "MonitorEqV23Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorEqV23Q": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "MonitorEqV23Shape": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorEqV24F": {
+  "default": 10000,
+  "max": 20000,
+  "min": 500
+ },
+ "MonitorEqV24G": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "MonitorEqV24Onf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorEqV24Q": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "MonitorEqV24Shape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorGameLevel": {
+  "default": 64,
+  "max": 127,
+  "min": 0
+ },
+ "MonitorHpVolume": {
+  "default": 55,
+  "max": 127,
+  "min": 0
+ },
+ "MonitorSelect": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "MonitorSpVolume": {
+  "default": 55,
+  "max": 127,
+  "min": 0
+ },
+ "MonitorVoiceLevel": {
+  "default": 64,
+  "max": 127,
+  "min": 0
+ },
+ "PresetVoiceName": {
+  "default": 0,
+  "max": 255,
+  "min": 0
+ },
+ "PresetVoiceOnf1": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "PresetVoiceOnf2": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "SeDbLevel": {
+  "default": 53,
+  "max": 73,
+  "min": 1
+ },
+ "SeFreq": {
+  "default": 44,
+  "max": 52,
+  "min": 29
+ },
+ "SeLevel": {
+  "default": 1,
+  "max": 2,
+  "min": 0
+ },
+ "SeOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "SeWaveform": {
+  "default": 0,
+  "max": 3,
+  "min": 0
+ },
+ "StreamingGameFx": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingGameLevel": {
+  "default": 103,
+  "max": 127,
+  "min": 0
+ },
+ "StreamingGameLink": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingGameMute": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingHdmiOutOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingMicLevel": {
+  "default": 0,
+  "max": 127,
+  "min": 0
+ },
+ "StreamingMicLink": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingMicMute": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingMonitor": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingUsbOutOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingVoiceFx": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingVoiceLevel": {
+  "default": 0,
+  "max": 127,
+  "min": 0
+ },
+ "StreamingVoiceLink": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "StreamingVoiceMute": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "ToPcMuteStreaming": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "ToPcMuteVoice": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceEffectOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceEffectRadioCutoff": {
+  "default": 61,
+  "max": 113,
+  "min": 50
+ },
+ "VoiceEffectRadioDrive": {
+  "default": 10,
+  "max": 25,
+  "min": 1
+ },
+ "VoiceEffectRadioLpfCutoff": {
+  "default": 50,
+  "max": 60,
+  "min": 34
+ },
+ "VoiceEffectRadioOutLevel": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "VoiceEffectTremoloDepth": {
+  "default": 64,
+  "max": 127,
+  "min": 0
+ },
+ "VoiceEffectTremoloOutLevel": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "VoiceEffectTremoloSpeed": {
+  "default": 89,
+  "max": 127,
+  "min": 1
+ },
+ "VoiceEffectType": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceRevDensity": {
+  "default": 4,
+  "max": 4,
+  "min": 0
+ },
+ "VoiceRevDiffusion": {
+  "default": 10,
+  "max": 10,
+  "min": 0
+ },
+ "VoiceRevHighRatio": {
+  "default": 8,
+  "max": 10,
+  "min": 1
+ },
+ "VoiceRevHpf": {
+  "default": 0,
+  "max": 52,
+  "min": 0
+ },
+ "VoiceRevInitDelay": {
+  "default": 16,
+  "max": 63,
+  "min": 0
+ },
+ "VoiceRevLpf": {
+  "default": 53,
+  "max": 60,
+  "min": 34
+ },
+ "VoiceRevOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceRevTime": {
+  "default": 25,
+  "max": 57,
+  "min": 0
+ },
+ "VoiceRevType": {
+  "default": 0,
+  "max": 4,
+  "min": 0
+ },
+ "VoiceRevWet": {
+  "default": 64,
+  "max": 127,
+  "min": 1
+ },
+ "VoiceTcHiFreq": {
+  "default": 112,
+  "max": 124,
+  "min": 60
+ },
+ "VoiceTcHiGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "VoiceTcHiOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceTcHiQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "VoiceTcHiShape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceTcLoFreq": {
+  "default": 32,
+  "max": 72,
+  "min": 4
+ },
+ "VoiceTcLoGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "VoiceTcLoOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceTcLoQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "VoiceTcLoShape": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceTcMdFreq": {
+  "default": 72,
+  "max": 124,
+  "min": 4
+ },
+ "VoiceTcMdGain": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "VoiceTcMdOnf": {
+  "default": 1,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceTcMdQual": {
+  "default": 12,
+  "max": 60,
+  "min": 0
+ },
+ "VoiceTcOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceTransHarmCorrectSense": {
+  "default": 64,
+  "max": 100,
+  "min": 0
+ },
+ "VoiceTransHarmFormant": {
+  "default": 64,
+  "max": 126,
+  "min": 2
+ },
+ "VoiceTransHarmLevel": {
+  "default": 127,
+  "max": 127,
+  "min": 0
+ },
+ "VoiceTransHarmOutLevel": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "VoiceTransHarmTranspose": {
+  "default": 64,
+  "max": 100,
+  "min": 28
+ },
+ "VoiceTransOnf": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ },
+ "VoiceTransPitchFine1": {
+  "default": 64,
+  "max": 114,
+  "min": 14
+ },
+ "VoiceTransPitchFine2": {
+  "default": 64,
+  "max": 114,
+  "min": 14
+ },
+ "VoiceTransPitchLevel1": {
+  "default": 100,
+  "max": 127,
+  "min": 0
+ },
+ "VoiceTransPitchLevel2": {
+  "default": 100,
+  "max": 127,
+  "min": 0
+ },
+ "VoiceTransPitchOutLevel": {
+  "default": 180,
+  "max": 360,
+  "min": 0
+ },
+ "VoiceTransPitchPitch1": {
+  "default": 64,
+  "max": 88,
+  "min": 40
+ },
+ "VoiceTransPitchPitch2": {
+  "default": 64,
+  "max": 88,
+  "min": 40
+ },
+ "VoiceTransType": {
+  "default": 0,
+  "max": 1,
+  "min": 0
+ }
+}

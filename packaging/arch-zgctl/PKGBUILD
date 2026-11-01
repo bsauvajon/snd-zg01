@@ -13,7 +13,12 @@ makedepends=('git')
 optdepends=('snd-zg01-dkms-git: the driver exposing the controls')
 provides=('zgctl')
 conflicts=('zgctl')
-source=("${_pkgname}::git+${url}.git#branch=main")
+
+# Sources come from the main branch.  ZG01_SOURCE overrides that, so a fork, a
+# branch or a local checkout can be packaged - tests/test-arch-zgctl-packaging.sh
+# uses it to build the recipe from the tree under test instead of from main:
+#   ZG01_SOURCE="git+file:///src/snd-zg01#commit=$(git -C /src/snd-zg01 rev-parse HEAD)"
+source=("${_pkgname}::${ZG01_SOURCE:-git+${url}.git#branch=main}")
 sha256sums=('SKIP')
 
 pkgver() {

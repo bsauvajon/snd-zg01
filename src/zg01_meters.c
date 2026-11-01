@@ -143,6 +143,9 @@ int zg01_meters_start(struct zg01_dev *dev)
     struct zg01_meter_state *m = &dev->meters;
     int err;
 
+    if (!dev || !dev->param_available)
+        return 0;
+
     if (m->running)
         return 0;
 

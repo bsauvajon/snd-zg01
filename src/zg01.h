@@ -27,8 +27,12 @@
 
 /*
  * Mixer parameters travel on interface 4 as 512-byte bulk frames
- * (host -> EP 0x03, device -> EP 0x83), not on EP0.  See
- * docs/MIC_CONTROL_PROTOCOL.md for the frame layout and value encodings.
+ * (host -> EP 0x03, device -> EP 0x83), not on EP0.  Each 4-byte unit of
+ * a frame is a USB-MIDI event packet whose first byte is a code index
+ * number, so the payload is a Yamaha system exclusive message
+ * (F0 43 10 3E 14 ... F7) and its data bytes are limited to 7 bits.
+ * See docs/MIC_CONTROL_PROTOCOL.md for the frame layout and the
+ * base-128 value encoding implemented in zg01_codec.h.
  */
 #define ZG01_PARAM_IFACE     4
 #define ZG01_PARAM_EP_OUT    0x03
@@ -36,26 +40,232 @@
 #define ZG01_PARAM_FRAME     512
 #define ZG01_PARAM_TIMEOUT   1000  /* ms */
 
-/* Write-frame word 2 flag: 0x00 for GATE/COMP/LIMITER, 0x02 for EQ. */
-#define ZG01_PARAM_FLAG_MIC  0x00
-#define ZG01_PARAM_FLAG_EQ   0x02
+/*
+ * Parameters are addressed, not numbered: a parameter is one byte in a
+ * page, its address is page * 256 + offset, and the two bytes the write
+ * frame carries (the old "flag" and "id") are that address split into
+ * two base-128 digits, because a system exclusive data byte holds 7 bits.
+ * docs/DEVICE_PARAMETER_MAP.md has the whole map and the evidence, and
+ * tools/vendor/extract-device-map.py regenerates it.
+ *
+ * The digits are derived, never written by hand: ZG01_ADDR_FLAG() and
+ * ZG01_ADDR_ID() in zg01_control.c split whatever address a control
+ * names.  Page 0 offsets below 0x80 therefore travel as flag 0x00 and
+ * page 1 as flag 0x02, but a page 0 offset of 0x80 and above needs the
+ * high digit 0x01 - which is the space the game effect, binaural and
+ * monitor parameters live in.  docs/MIC_CONTROL_PROTOCOL.md has the
+ * argument and what it rests on.
+ */
+#define ZG01_PARAM_PAGES       2       /* pages the driver addresses */
+#define ZG01_PARAM_PAGE_SIZE   0x100   /* offsets per page */
+#define ZG01_ADDR(page, offset) ((u16)((page) * ZG01_PARAM_PAGE_SIZE + (offset)))
 
-/* Mic parameter ids (docs/MIC_CONTROL_PROTOCOL.md). */
-#define ZG01_PARAM_GATE_ENABLE     0x02
-#define ZG01_PARAM_GATE_VALUE      0x03
-#define ZG01_PARAM_COMP_ENABLE     0x09
-#define ZG01_PARAM_COMP_VALUE      0x0a
-#define ZG01_PARAM_EQ_ENABLE       0x11
-#define ZG01_PARAM_LOW_SHAPE       0x24
-#define ZG01_PARAM_HIGH_SHAPE      0x27
-#define ZG01_PARAM_EQ_GAIN(n)      (0x28 + (n))
-#define ZG01_PARAM_EQ_FREQ(n)      (0x2c + (n))
-#define ZG01_PARAM_EQ_Q(n)         (0x30 + (n))
-#define ZG01_PARAM_LIMITER_ENABLE  0x21
-#define ZG01_PARAM_LIMITER_VALUE   0x22
+/* Page 0: the microphone chain and the rest of the DSP. */
+#define ZG01_PARAM_P48V_ENABLE        ZG01_ADDR(0, 0x00)
+#define ZG01_PARAM_MUTE_ENABLE        ZG01_ADDR(0, 0x01)
+#define ZG01_PARAM_GATE_ENABLE        ZG01_ADDR(0, 0x02)
+#define ZG01_PARAM_GATE_VALUE         ZG01_ADDR(0, 0x03)
+#define ZG01_PARAM_GATE_THRESHOLD     ZG01_ADDR(0, 0x04)
+#define ZG01_PARAM_GATE_RANGE         ZG01_ADDR(0, 0x05)
+#define ZG01_PARAM_GATE_ATTACK        ZG01_ADDR(0, 0x06)
+#define ZG01_PARAM_GATE_HOLD          ZG01_ADDR(0, 0x07)
+#define ZG01_PARAM_GATE_DECAY         ZG01_ADDR(0, 0x08)
+#define ZG01_PARAM_COMP_ENABLE        ZG01_ADDR(0, 0x09)
+#define ZG01_PARAM_COMP_VALUE         ZG01_ADDR(0, 0x0a)
+#define ZG01_PARAM_COMP_THRESHOLD     ZG01_ADDR(0, 0x0b)
+#define ZG01_PARAM_COMP_RATIO         ZG01_ADDR(0, 0x0c)
+#define ZG01_PARAM_COMP_ATTACK        ZG01_ADDR(0, 0x0d)
+#define ZG01_PARAM_COMP_RELEASE       ZG01_ADDR(0, 0x0e)
+#define ZG01_PARAM_COMP_KNEE          ZG01_ADDR(0, 0x0f)
+#define ZG01_PARAM_COMP_OUTGAIN       ZG01_ADDR(0, 0x10)
+#define ZG01_PARAM_EQ_ENABLE          ZG01_ADDR(0, 0x11)
+#define ZG01_PARAM_LIMITER_ENABLE     ZG01_ADDR(0, 0x21)
+#define ZG01_PARAM_LIMITER_VALUE      ZG01_ADDR(0, 0x22)
+#define ZG01_PARAM_LIMITER_THRESHOLD  ZG01_ADDR(0, 0x23)
+#define ZG01_PARAM_LIMITER_ATTACK     ZG01_ADDR(0, 0x24)
+#define ZG01_PARAM_LIMITER_RELEASE    ZG01_ADDR(0, 0x25)
+#define ZG01_PARAM_LIMITER_KNEE       ZG01_ADDR(0, 0x26)
+#define ZG01_PARAM_LIMITER_OUTGAIN    ZG01_ADDR(0, 0x27)
 
-/* Cache of raw parameter values, indexed by id (ids reach 0x33). */
-#define ZG01_PARAM_CACHE           0x40
+/* Page 1: the four-band EQ (the one the application's EQ page drives). */
+#define ZG01_PARAM_LOW_SHAPE          ZG01_ADDR(1, 0x24)
+#define ZG01_PARAM_HIGH_SHAPE         ZG01_ADDR(1, 0x27)
+#define ZG01_PARAM_EQ_GAIN(n)         ZG01_ADDR(1, 0x28 + (n))
+#define ZG01_PARAM_EQ_FREQ(n)         ZG01_ADDR(1, 0x2c + (n))
+#define ZG01_PARAM_EQ_Q(n)            ZG01_ADDR(1, 0x30 + (n))
+
+/* microphone effect: voice transformer and voice changer
+ * (page 0 0x2f-0x3a) */
+#define ZG01_PARAM_VIC_TRN_ON       ZG01_ADDR(0, 0x2f)
+#define ZG01_PARAM_VIC_TRN_TYPE     ZG01_ADDR(0, 0x30)
+#define ZG01_PARAM_VIC_TRN_HRM_TRN  ZG01_ADDR(0, 0x31)
+#define ZG01_PARAM_VIC_TRN_HRM_FMT  ZG01_ADDR(0, 0x32)
+#define ZG01_PARAM_VIC_TRN_HRM_LVL  ZG01_ADDR(0, 0x33)
+#define ZG01_PARAM_VIC_TRN_HRM_CORR ZG01_ADDR(0, 0x34)
+#define ZG01_PARAM_VIC_TRN_PIT_PIT1 ZG01_ADDR(0, 0x35)
+#define ZG01_PARAM_VIC_TRN_PIT_FIN1 ZG01_ADDR(0, 0x36)
+#define ZG01_PARAM_VIC_TRN_PIT_LVL1 ZG01_ADDR(0, 0x37)
+#define ZG01_PARAM_VIC_TRN_PIT_PIT2 ZG01_ADDR(0, 0x38)
+#define ZG01_PARAM_VIC_TRN_PIT_FIN2 ZG01_ADDR(0, 0x39)
+#define ZG01_PARAM_VIC_TRN_PIT_LVL2 ZG01_ADDR(0, 0x3a)
+
+/* microphone effect: voice effect, radio and tremolo
+ * (page 0 0x3b-0x41) */
+#define ZG01_PARAM_VIC_FX_ON      ZG01_ADDR(0, 0x3b)
+#define ZG01_PARAM_VIC_FX_TYPE    ZG01_ADDR(0, 0x3c)
+#define ZG01_PARAM_VIC_FX_RDO_CUT ZG01_ADDR(0, 0x3d)
+#define ZG01_PARAM_VIC_FX_RDO_DRV ZG01_ADDR(0, 0x3e)
+#define ZG01_PARAM_VIC_FX_RDO_LPF ZG01_ADDR(0, 0x3f)
+#define ZG01_PARAM_VIC_FX_TRM_SPD ZG01_ADDR(0, 0x40)
+#define ZG01_PARAM_VIC_FX_RDO_DEP ZG01_ADDR(0, 0x41)
+
+/* microphone effect: voice reverb (page 0 0x42-0x4b) */
+#define ZG01_PARAM_VIC_REV_ON   ZG01_ADDR(0, 0x42)
+#define ZG01_PARAM_VIC_REV_WET  ZG01_ADDR(0, 0x43)
+#define ZG01_PARAM_VIC_REV_TYPE ZG01_ADDR(0, 0x44)
+#define ZG01_PARAM_VIC_REV_TIME ZG01_ADDR(0, 0x45)
+#define ZG01_PARAM_VIC_REV_INIT ZG01_ADDR(0, 0x46)
+#define ZG01_PARAM_VIC_REV_HIGH ZG01_ADDR(0, 0x47)
+#define ZG01_PARAM_VIC_REV_DENS ZG01_ADDR(0, 0x48)
+#define ZG01_PARAM_VIC_REV_DIFF ZG01_ADDR(0, 0x49)
+#define ZG01_PARAM_VIC_REV_HPF  ZG01_ADDR(0, 0x4a)
+#define ZG01_PARAM_VIC_REV_LPF  ZG01_ADDR(0, 0x4b)
+
+/* microphone effect: voice tone control, three bands
+ * (page 0 0x4c-0x5a) */
+#define ZG01_PARAM_VIC_TC_ON    ZG01_ADDR(0, 0x4c)
+#define ZG01_PARAM_VIC_TC_HI_ON ZG01_ADDR(0, 0x4d)
+#define ZG01_PARAM_VIC_TC_HI_SH ZG01_ADDR(0, 0x4e)
+#define ZG01_PARAM_VIC_TC_HI_G  ZG01_ADDR(0, 0x4f)
+#define ZG01_PARAM_VIC_TC_HI_F  ZG01_ADDR(0, 0x50)
+#define ZG01_PARAM_VIC_TC_HI_Q  ZG01_ADDR(0, 0x51)
+#define ZG01_PARAM_VIC_TC_MD_ON ZG01_ADDR(0, 0x52)
+#define ZG01_PARAM_VIC_TC_MD_G  ZG01_ADDR(0, 0x53)
+#define ZG01_PARAM_VIC_TC_MD_F  ZG01_ADDR(0, 0x54)
+#define ZG01_PARAM_VIC_TC_MD_Q  ZG01_ADDR(0, 0x55)
+#define ZG01_PARAM_VIC_TC_LO_ON ZG01_ADDR(0, 0x56)
+#define ZG01_PARAM_VIC_TC_LO_SH ZG01_ADDR(0, 0x57)
+#define ZG01_PARAM_VIC_TC_LO_G  ZG01_ADDR(0, 0x58)
+#define ZG01_PARAM_VIC_TC_LO_F  ZG01_ADDR(0, 0x59)
+#define ZG01_PARAM_VIC_TC_LO_Q  ZG01_ADDR(0, 0x5a)
+
+/* microphone effect: sound effect (page 0 0x5b-0x5f) */
+#define ZG01_PARAM_SE_ONF      ZG01_ADDR(0, 0x5b)
+#define ZG01_PARAM_SE_LEVEL    ZG01_ADDR(0, 0x5c)
+#define ZG01_PARAM_SE_DB_LEVEL ZG01_ADDR(0, 0x5d)
+#define ZG01_PARAM_SE_FREQ     ZG01_ADDR(0, 0x5e)
+#define ZG01_PARAM_SE_WAVE     ZG01_ADDR(0, 0x5f)
+
+/* microphone effect: echo (page 0 0x60-0x6f) */
+#define ZG01_PARAM_ECH_ON         ZG01_ADDR(0, 0x60)
+#define ZG01_PARAM_ECH_STEREO     ZG01_ADDR(0, 0x61)
+#define ZG01_PARAM_ECH_TIME       ZG01_ADDR(0, 0x62)
+#define ZG01_PARAM_ECH_DLY_LVL    ZG01_ADDR(0, 0x63)
+#define ZG01_PARAM_ECH_REV_LVL    ZG01_ADDR(0, 0x64)
+#define ZG01_PARAM_ECH_DLY_TIME   ZG01_ADDR(0, 0x65)
+#define ZG01_PARAM_ECH_DLY_HI_RAT ZG01_ADDR(0, 0x66)
+#define ZG01_PARAM_ECH_FEED       ZG01_ADDR(0, 0x67)
+#define ZG01_PARAM_ECH_REV_TYPE   ZG01_ADDR(0, 0x68)
+#define ZG01_PARAM_ECH_REV_TIME   ZG01_ADDR(0, 0x69)
+#define ZG01_PARAM_ECH_INI_DEL    ZG01_ADDR(0, 0x6a)
+#define ZG01_PARAM_ECH_HI_RAT     ZG01_ADDR(0, 0x6b)
+#define ZG01_PARAM_ECH_DENS       ZG01_ADDR(0, 0x6c)
+#define ZG01_PARAM_ECH_DIFF       ZG01_ADDR(0, 0x6d)
+#define ZG01_PARAM_ECH_HPF        ZG01_ADDR(0, 0x6e)
+#define ZG01_PARAM_ECH_LPF        ZG01_ADDR(0, 0x6f)
+
+/* voice effect output levels (page 1 0x1c-0x1f): the four levels
+ * the library keeps apart from the blocks above */
+#define ZG01_PARAM_VOICE_HARM_LEVEL    ZG01_ADDR(1, 0x1c)
+#define ZG01_PARAM_VOICE_PITCH_LEVEL   ZG01_ADDR(1, 0x1d)
+#define ZG01_PARAM_VOICE_RADIO_LEVEL   ZG01_ADDR(1, 0x1e)
+#define ZG01_PARAM_VOICE_TREMOLO_LEVEL ZG01_ADDR(1, 0x1f)
+
+/* game effect: the three effect slots and the game FX block
+ * (page 0 0x70-0x73, 0x9d-0x9e) */
+#define ZG01_PARAM_GAME_FX_A    ZG01_ADDR(0, 0x70)
+#define ZG01_PARAM_GAME_FX_B    ZG01_ADDR(0, 0x71)
+#define ZG01_PARAM_GAME_FX_C    ZG01_ADDR(0, 0x72)
+#define ZG01_PARAM_GAME_FX_ONF  ZG01_ADDR(0, 0x9d)
+#define ZG01_PARAM_GAME_FX_TYPE ZG01_ADDR(0, 0x9e)
+
+/* game effect: de-esser, two instances (page 0 0x9f-0xae) */
+#define ZG01_PARAM_GAM_DEE_M_ON   ZG01_ADDR(0, 0x9f)
+#define ZG01_PARAM_GAM_DEE_M_LO   ZG01_ADDR(0, 0xa0)
+#define ZG01_PARAM_GAM_DEE_M_HI   ZG01_ADDR(0, 0xa1)
+#define ZG01_PARAM_GAM_DEE_M_THR  ZG01_ADDR(0, 0xa2)
+#define ZG01_PARAM_GAM_DEE_M_RAT  ZG01_ADDR(0, 0xa3)
+#define ZG01_PARAM_GAM_DEE_M_ATT  ZG01_ADDR(0, 0xa4)
+#define ZG01_PARAM_GAM_DEE_M_REL  ZG01_ADDR(0, 0xa5)
+#define ZG01_PARAM_GAM_DEE_M_GAIN ZG01_ADDR(0, 0xa6)
+#define ZG01_PARAM_GAM_DEE_S_ONF  ZG01_ADDR(0, 0xa7)
+#define ZG01_PARAM_GAM_DEE_S_LO   ZG01_ADDR(0, 0xa8)
+#define ZG01_PARAM_GAM_DEE_S_HI   ZG01_ADDR(0, 0xa9)
+#define ZG01_PARAM_GAM_DEE_S_THR  ZG01_ADDR(0, 0xaa)
+#define ZG01_PARAM_GAM_DEE_S_RAT  ZG01_ADDR(0, 0xab)
+#define ZG01_PARAM_GAM_DEE_S_ATT  ZG01_ADDR(0, 0xac)
+#define ZG01_PARAM_GAM_DEE_S_REL  ZG01_ADDR(0, 0xad)
+#define ZG01_PARAM_GAM_DEE_S_GAIN ZG01_ADDR(0, 0xae)
+
+/* game effect: EQ M, four bands (page 0 0xaf-0xc1) */
+#define ZG01_PARAM_GAM_EQ_M_ONF   ZG01_ADDR(0, 0xaf)
+#define ZG01_PARAM_GAM_EQ_M_HI_ON ZG01_ADDR(0, 0xb0)
+#define ZG01_PARAM_GAM_EQ_M_HI_SH ZG01_ADDR(0, 0xb1)
+#define ZG01_PARAM_GAM_EQ_M_HI_G  ZG01_ADDR(0, 0xb2)
+#define ZG01_PARAM_GAM_EQ_M_HI_F  ZG01_ADDR(0, 0xb3)
+#define ZG01_PARAM_GAM_EQ_M_HI_Q  ZG01_ADDR(0, 0xb4)
+#define ZG01_PARAM_GAM_EQ_M_MH_ON ZG01_ADDR(0, 0xb5)
+#define ZG01_PARAM_GAM_EQ_M_MH_G  ZG01_ADDR(0, 0xb6)
+#define ZG01_PARAM_GAM_EQ_M_MH_F  ZG01_ADDR(0, 0xb7)
+#define ZG01_PARAM_GAM_EQ_M_MH_Q  ZG01_ADDR(0, 0xb8)
+#define ZG01_PARAM_GAM_EQ_M_ML_ON ZG01_ADDR(0, 0xb9)
+#define ZG01_PARAM_GAM_EQ_M_ML_G  ZG01_ADDR(0, 0xba)
+#define ZG01_PARAM_GAM_EQ_M_ML_F  ZG01_ADDR(0, 0xbb)
+#define ZG01_PARAM_GAM_EQ_M_ML_Q  ZG01_ADDR(0, 0xbc)
+#define ZG01_PARAM_GAM_EQ_M_LO_ON ZG01_ADDR(0, 0xbd)
+#define ZG01_PARAM_GAM_EQ_M_LO_SH ZG01_ADDR(0, 0xbe)
+#define ZG01_PARAM_GAM_EQ_M_LO_G  ZG01_ADDR(0, 0xbf)
+#define ZG01_PARAM_GAM_EQ_M_LO_F  ZG01_ADDR(0, 0xc0)
+#define ZG01_PARAM_GAM_EQ_M_LO_Q  ZG01_ADDR(0, 0xc1)
+
+/* game effect: EQ S, four bands (page 0 0xc2-0xd4) */
+#define ZG01_PARAM_GAM_EQ_S_ONF   ZG01_ADDR(0, 0xc2)
+#define ZG01_PARAM_GAM_EQ_S_HI_ON ZG01_ADDR(0, 0xc3)
+#define ZG01_PARAM_GAM_EQ_S_HI_SH ZG01_ADDR(0, 0xc4)
+#define ZG01_PARAM_GAM_EQ_S_HI_G  ZG01_ADDR(0, 0xc5)
+#define ZG01_PARAM_GAM_EQ_S_HI_F  ZG01_ADDR(0, 0xc6)
+#define ZG01_PARAM_GAM_EQ_S_HI_Q  ZG01_ADDR(0, 0xc7)
+#define ZG01_PARAM_GAM_EQ_S_MH_ON ZG01_ADDR(0, 0xc8)
+#define ZG01_PARAM_GAM_EQ_S_MH_G  ZG01_ADDR(0, 0xc9)
+#define ZG01_PARAM_GAM_EQ_S_MH_F  ZG01_ADDR(0, 0xca)
+#define ZG01_PARAM_GAM_EQ_S_MH_Q  ZG01_ADDR(0, 0xcb)
+#define ZG01_PARAM_GAM_EQ_S_ML_ON ZG01_ADDR(0, 0xcc)
+#define ZG01_PARAM_GAM_EQ_S_ML_G  ZG01_ADDR(0, 0xcd)
+#define ZG01_PARAM_GAM_EQ_S_ML_F  ZG01_ADDR(0, 0xce)
+#define ZG01_PARAM_GAM_EQ_S_ML_Q  ZG01_ADDR(0, 0xcf)
+#define ZG01_PARAM_GAM_EQ_S_LO_ON ZG01_ADDR(0, 0xd0)
+#define ZG01_PARAM_GAM_EQ_S_LO_SH ZG01_ADDR(0, 0xd1)
+#define ZG01_PARAM_GAM_EQ_S_LO_G  ZG01_ADDR(0, 0xd2)
+#define ZG01_PARAM_GAM_EQ_S_LO_F  ZG01_ADDR(0, 0xd3)
+#define ZG01_PARAM_GAM_EQ_S_LO_Q  ZG01_ADDR(0, 0xd4)
+
+/* game effect: EQ master switch (page 0 0xd5) */
+#define ZG01_PARAM_GAM_EQ_T_ONF ZG01_ADDR(0, 0xd5)
+
+/*
+ * Page 1: the ten-band game EQ - the EQ the application's GAME
+ * EFFECT page drives (bands 1-10) - laid out as four runs of ten
+ * consecutive offsets.  It shares the master switch above.
+ */
+#define ZG01_PARAM_GAME_EQ_SWITCH(n)     ZG01_ADDR(1, 0x34 + (n))
+#define ZG01_PARAM_GAME_EQ_GAIN(n)       ZG01_ADDR(1, 0x3e + (n))
+#define ZG01_PARAM_GAME_EQ_FREQ(n)       ZG01_ADDR(1, 0x48 + (n))
+#define ZG01_PARAM_GAME_EQ_Q(n)          ZG01_ADDR(1, 0x52 + (n))
+
+/* Cache of the raw device values, keyed by address: page 0 offset 0x24
+ * and page 1 offset 0x24 are different parameters (LIMITER attack and EQ
+ * low shape), so an id-only cache would serve the wrong value. */
+#define ZG01_PARAM_CACHE  ZG01_PARAM_PAGES * ZG01_PARAM_PAGE_SIZE
 
 #define ISO_PKTS_OUT         32      /* 32 microframes = 4ms per URB */
 #define ISO_PKT_SIZE_OUT     280     /* up to seven 40-byte frames */
@@ -285,7 +495,18 @@ struct zg01_dev {
      * mic values back the kcontrol getters when the device is idle.
      */
     struct mutex param_mutex;
-    u32 param_cache[ZG01_PARAM_CACHE];
+    u32 param_cache[ZG01_PARAM_PAGES][ZG01_PARAM_PAGE_SIZE];
+
+    /*
+     * Interfaces this anchor claimed in addition to interface 1.  They
+     * are released when probe unwinds or the anchor disconnects, so a
+     * failed probe does not leave interface 3/4 bound to a dead card.
+     * param_available is false when interface 4 belongs to another
+     * driver: the mixer controls are then not created, because their
+     * callbacks would submit bulk traffic to that driver's endpoints.
+     */
+    u32 claimed_mask;
+    bool param_available;
 
     struct zg01_meter_state meters;
 
@@ -315,8 +536,8 @@ void zg01_chain_quiesce_fn(struct work_struct *work);
 /* zg01_control.c */
 int zg01_init_control(struct zg01_dev *dev);
 int zg01_create_controls(struct zg01_dev *dev);
-int zg01_param_write(struct zg01_dev *dev, u8 id, u8 flag, u32 value);
-int zg01_param_read(struct zg01_dev *dev, u8 id, u32 *value);
+int zg01_param_write(struct zg01_dev *dev, u16 addr, u32 value);
+int zg01_param_read(struct zg01_dev *dev, u16 addr, u32 *value);
 int zg01_param_save(struct zg01_dev *dev);
 int zg01_param_reset(struct zg01_dev *dev);
 int zg01_param_keepalive(struct zg01_dev *dev);

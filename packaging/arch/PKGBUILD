@@ -18,7 +18,12 @@ optdepends=(
 provides=('snd-zg01-dkms')
 conflicts=('snd-zg01-dkms')
 install=snd-zg01-dkms-git.install
-source=("${_pkgname}::git+${url}.git#branch=main")
+
+# Sources come from the main branch.  ZG01_SOURCE overrides that, so a fork, a
+# branch or a local checkout can be packaged - the packaging contract test uses
+# it to build the tree under test instead of main.  The default must stay
+# identical: packaging/arch/.SRCINFO records it and the test compares the two.
+source=("${_pkgname}::${ZG01_SOURCE:-git+${url}.git#branch=main}")
 sha256sums=('SKIP')
 
 pkgver() {

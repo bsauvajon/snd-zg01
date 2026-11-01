@@ -118,12 +118,21 @@ arecord -D hw:zg01,2 -f S32_LE -r 48000 -c 2 -d 5 test.wav
 Voice In logs bursts of `-ECONNRESET` on the first open. They are benign;
 the chain resubmits.
 
-## Mic controls
+## Mixer controls
 
-The card exposes the mic DSP as ALSA controls: GATE, COMP and LIMITER
-switches and levels, the EQ switch, four EQ band gains, frequencies and
-Q, and the low/high shelf types.  They are written to the device through
-the interface 4 bulk protocol (`docs/MIC_CONTROL_PROTOCOL.md`).
+The card exposes 367 writable mixer controls: the 208 original controls
+plus 159 generated from the 375-address control map.  The eight read-only
+status addresses (`docs/FEATURE_PARITY.md`) have no ALSA control.  The
+microphone DSP block came first: GATE, COMP and LIMITER switches and
+levels, the EQ switch, four EQ band gains, frequencies and Q, and the
+low/high shelf types.  The microphone effect chain (voice changer,
+radio/tremolo, voice reverb, tone control, sound effect, echo) and the
+game effect chain (three effect slots, the game FX switch and type, the
+de-esser, the M and S four-band EQs and the ten-band game EQ) follow it,
+then the monitor/headphone, binaural, streaming, preset-name and remaining
+controls.  They are written to the device through the interface 4 bulk
+protocol (`docs/MIC_CONTROL_PROTOCOL.md`); the two effect blocks have
+their own record in `docs/EFFECTS_CONTROL_PLAN.md`.
 
 ```bash
 make -C tools
@@ -131,13 +140,24 @@ make -C tools
 ./tools/zgctl set 'EQ Band 1 Gain' +6.0
 ./tools/zgctl set 'EQ Band 2 Frequency' 1k
 ./tools/zgctl set 'Limiter' 42
+./tools/zgctl set 'Voice Reverb Wet' 40
+./tools/zgctl set 'Game EQ Band 1 Gain' +3.0
 ./tools/zgctl save          # persist the current settings to the device
 ./tools/zgctl reset         # reload the persisted settings
 ```
 
 `zgctl` accepts dB for gains, Hz/kHz for frequencies, ratios for Q and
 on/off for switches; the same controls are reachable with `amixer
-cget/cset`.  `zgctl save` (the `Save to ZG01` control) persists the
+cget/cset`.  Gains cover -18.0..+18.0 dB in 0.1 dB steps, Q spans
+0.5..16 (12 steps per octave) and every band frequency is taken in plain
+Hz inside its own range; the controls start from the vendor defaults
+(100 Hz / 500 Hz / 2.5 kHz / 10 kHz, Q 1, gains 0 dB, gate and compressor
+levels 50).  The effect controls keep the same units where the vendor
+model establishes them (the 0..360 gains in 0.1 dB, the 0..60 bandwidths
+in 0.01 Q, the ten-band game EQ in Hz) and publish device steps
+otherwise; the tone-control and game EQ M/S band frequencies are indices
+on a 1/12-octave grid, which `docs/EFFECTS_CONTROL_PLAN.md` documents.
+`zgctl save` (the `Save to ZG01` control) persists the
 current settings to the device's non-volatile memory; `zgctl reset`
 (the `Reset to ZG01` control) reloads the persisted settings.
 
@@ -173,6 +193,43 @@ distinct. GAME has no card meter in v1: its strip uses PipeWire `Game
 Out` in v1.1. HDMI is not registered until its field is decoded. See
 `docs/METER_PROTOCOL.md` and the acceptance record in `docs/METER_TEST.md`.
 
+## Presets
+
+`zgctl` reads Yamaha `.zgpreset` files and loads their mixer values through
+the same ALSA controls.  `preset list` and `preset show` only read the file;
+`preset load` writes the device.  `.zg01` backups are not parsed yet: every
+preset command rejects one with a clear "backup not supported" error.
+
+```bash
+./tools/zgctl preset list mic.zgpreset
+./tools/zgctl preset show mic.zgpreset
+./tools/zgctl preset load mic.zgpreset --dry-run
+./tools/zgctl preset load mic.zgpreset
+./tools/zgctl preset load mic.zgpreset --block 'MIC INPUT'
+./tools/zgctl preset load mic.zgpreset --allow-raw
+```
+
+`--dry-run` prints every parameter, the target control, the converted value
+and its status (`apply`, `raw, skipped`, `out_of_range, skipped`,
+`unsupported, skipped`) without touching the card.  `--block NAME` restricts
+the load to the file's block label (`MIC INPUT`, `MONITOR EQ`,
+`GAME EFFECT`, `MIC EFFECT`); matching is case-insensitive and
+whitespace-normalized.  Options may come before or after the file path.
+`--allow-raw` opts in to control-map rows whose provenance is `raw`; those
+are the only rows it changes.  Many `... Steps` controls are vendor-model
+rows (for example `Streaming Mic Level Steps`) and apply without the flag.
+
+Read-only status rows (`Mic Level Status`, `Monitor Level Status`,
+`Mic Monitor Level Knob Status` and the `Dirty ... Status` flags) are
+reported by `preset show` and always skipped by `preset load`.  Out-of-range
+values are reported and skipped too, never clamped.  Loading is best-effort
+and not transactional: a failed write leaves earlier writes in place, and
+the command prints `applied=N skipped=N failed=N` and exits `1` if anything
+was skipped or failed.
+
+`preset load` does not call `Save to ZG01`; run `zgctl save` to persist the
+settings.  The file format is documented in `docs/PRESET_FORMAT.md`.
+
 ## DKMS
 
 Both packages install the source to DKMS. DKMS rebuilds the module on kernel
@@ -201,15 +258,26 @@ install. If a pre-2026 package left broken DKMS state, remove
 - `docs/PROTOCOL_CAPTURE.md`: capture workflow for knobs, buttons, routing
 - `docs/INITIALIZATION_ANALYSIS.md`: device USB topology and packet formats
 - `docs/MIC_CONTROL_PLAN.md`: mic control implementation plan
-- `docs/MIC_CONTROL_PROTOCOL.md`: decoded mic parameter protocol
+- `docs/MIC_CONTROL_PROTOCOL.md`: decoded mixer parameter protocol
+- `docs/EFFECTS_CONTROL_PLAN.md`: the microphone and game effect chains
+- `docs/VENDOR_PACKAGE.md`: parameter model extracted from the Windows package
+- `docs/PARAMETER_INVENTORY.md`: every parameter the vendor application drives
+- `docs/DEVICE_PARAMETER_MAP.md`: the address of every parameter the device registers
+- `docs/PRESET_FORMAT.md`: the `.zgpreset` container, components and value layout
+- `docs/FEATURE_PARITY.md`: what is left to reach ZG Controller parity
 - `packaging/arch/README.md`: Arch packaging, verification, rollback
 
 ## Scope and status
 
 Working: Game Out + Voice Out simultaneous playback, Voice In capture,
-suspend/resume, replug, single module, single card, and live write of the
-mic GATE/COMP/EQ/LIMITER controls (ALSA + `zgctl`). Not implemented: MIDI,
-other sample rates, reading device state back.
+suspend/resume, replug, single module, single card, and live write of 367
+mixer controls, covering every one of the 375 device addresses except the
+eight read-only status rows, through ALSA and `zgctl`. Not implemented:
+MIDI, other sample rates, reading device state back.
+
+`docs/FEATURE_PARITY.md` maps the 375-address surface (367 writable
+controls, 8 read-only exclusions) to the vendor's seven screens and lists
+what each remaining unit or status decode needs.
 
 Experimental out-of-tree driver. Kernel updates can break the build; report
 issues with `dmesg` output.

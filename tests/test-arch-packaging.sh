@@ -1,9 +1,41 @@
 #!/usr/bin/env bash
 
+# Contract test for the Arch DKMS package: the PKGBUILD must describe what the
+# package ships (its .SRCINFO is compared against a regenerated one) and the
+# package must build, install into a DKMS tree and produce snd-zg01.ko.
+#
+# makepkg only exists on Arch, so when it is missing fall back to a static
+# check of the PKGBUILD.
+
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 package_dir="$repo_root/packaging/arch"
+pkgbuild="$package_dir/PKGBUILD"
+
+test -f "$pkgbuild"
+test -f "$package_dir/.SRCINFO"
+test -f "$package_dir/snd-zg01-dkms-git.install"
+
+grep -Fxq "pkgname=snd-zg01-dkms-git" "$pkgbuild"
+grep -Fxq "arch=('any')" "$pkgbuild"
+grep -Fxq 'install=snd-zg01-dkms-git.install' "$pkgbuild"
+grep -Fq 'install -m644 "${_pkgname}/dkms.conf"' "$pkgbuild"
+grep -Fq 'install -Dm644 "${_pkgname}/ucm/conf.d/zg01_usb/zg01_usb.conf"' "$pkgbuild"
+# The source must stay overridable (that is how this test builds the tree
+# under test) while its default stays what .SRCINFO records.
+grep -Fq 'source=("${_pkgname}::${ZG01_SOURCE:-git+${url}.git#branch=main}")' "$pkgbuild"
+grep -Fxq '	source = snd-zg01::git+https://github.com/bsauvajon/snd-zg01.git#branch=main' \
+  "$package_dir/.SRCINFO"
+
+if ! command -v makepkg >/dev/null 2>&1; then
+  printf 'Arch DKMS PKGBUILD static contract passed (makepkg absent)\n'
+  exit 0
+fi
+
+# shellcheck source=lib/stage-source.sh
+. "$repo_root/tests/lib/stage-source.sh"
+
 test_root=$(mktemp -d /tmp/snd-zg01-arch-test.XXXXXX)
 trap 'rm -rf "$test_root"' EXIT
 
@@ -11,9 +43,6 @@ trap 'rm -rf "$test_root"' EXIT
 # but containers can override it to match the installed kernel-headers package
 # (e.g. Arch's linux-headers in a Docker container on a foreign host kernel).
 kernel_version=${KERNEL_VERSION:-$(uname -r)}
-
-test -f "$package_dir/PKGBUILD"
-test -f "$package_dir/.SRCINFO"
 
 cp -a "$package_dir/." "$test_root/"
 
@@ -23,12 +52,21 @@ cp -a "$package_dir/." "$test_root/"
 ) > "$test_root/generated.SRCINFO"
 cmp "$test_root/.SRCINFO" "$test_root/generated.SRCINFO"
 
+# Build the package from the tree under test: the PKGBUILD fetches branch=main
+# by default, which does not carry the change being tested (and cannot carry
+# packaging that the pull request itself adds).
+stage=$(zg01_stage_source_tree "$repo_root" "$test_root/stage")
+
 (
   cd "$test_root"
-  PKGDEST="$test_root/packages" makepkg --cleanbuild --clean --noconfirm
+  ZG01_SOURCE="git+file://$stage#branch=main" \
+    PKGDEST="$test_root/packages" makepkg --cleanbuild --clean --noconfirm
 )
 
-package=$(find "$test_root/packages" -maxdepth 1 -type f -name 'snd-zg01-dkms-git-*.pkg.tar.zst' -print -quit)
+# makepkg also emits a -debug package whose path matches the same glob; pick
+# the real one explicitly instead of whichever `find` happens to return first.
+package=$(find "$test_root/packages" -maxdepth 1 -type f \
+  -name 'snd-zg01-dkms-git-*.pkg.tar.zst' ! -name '*-debug-*' -print -quit)
 test -n "$package"
 
 bsdtar -xOf "$package" .PKGINFO > "$test_root/PKGINFO"

@@ -1,0 +1,18 @@
+{
+  "block": "MIC INPUT",
+  "name": "Custom",
+  "params": [
+    {
+      "address": 288,
+      "value": 1
+    },
+    {
+      "address": 289,
+      "value": 0
+    },
+    {
+      "address": 296,
+      "value": 150
+    }
+  ]
+}
