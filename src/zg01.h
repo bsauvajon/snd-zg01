@@ -202,10 +202,19 @@ struct zg01_in_trace {
     struct zg01_in_record records[ZG01_TRACE_RECORDS];
 };
 
+/* Order matches struct zg01_meter_values in zg01_meters.h. */
+enum zg01_meter_index {
+    ZG01_METER_MIC_IN,
+    ZG01_METER_MIC_OUT,
+    ZG01_METER_PC_IN,
+    ZG01_METER_STREAM_MIX,
+    ZG01_METER_COUNT,
+};
+
 /*
  * Background reader for device -> host meter frames on EP 0x83.  One URB,
- * completed and resubmitted from its own callback.  Written only by
- * zg01_meters.c and by probe (initialisation).
+ * completed and resubmitted from its own callback.  The URB callback is
+ * the only writer of the levels; probe, start and stop reset `valid`.
  */
 struct zg01_meter_state {
     struct urb *urb;
@@ -215,8 +224,13 @@ struct zg01_meter_state {
     bool keepalive_running;                  /* param_mutex */
     unsigned int errors;                     /* consecutive failed completions */
     unsigned long long frames;               /* 192-byte completions */
+    unsigned long long invalid;              /* 192-byte frames the parser rejected */
     unsigned long long other;                /* other successful completions */
     unsigned long last_log_jiffies;
+
+    atomic_t levels[ZG01_METER_COUNT];       /* last valid snapshot, 0..127 */
+    atomic_t valid;                          /* a valid frame was seen since start */
+    atomic_long_t valid_jiffies;             /* time of the last valid frame */
 };
 
 struct zg01_dev {
@@ -309,6 +323,7 @@ int zg01_param_keepalive(struct zg01_dev *dev);
 int zg01_meters_start(struct zg01_dev *dev);
 void zg01_meters_stop(struct zg01_dev *dev);
 void zg01_meters_keepalive_fn(struct work_struct *work);
+int zg01_meters_value(struct zg01_dev *dev, unsigned int index);
 
 /* zg01_usb_discovery.c (best-effort, debug only) */
 int zg01_discover_usb_config(struct zg01_dev *dev);

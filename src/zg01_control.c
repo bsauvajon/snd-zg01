@@ -637,6 +637,46 @@ static int zg01_reset_put(struct snd_kcontrol *kcontrol,
     return zg01_param_reset(dev);
 }
 
+/*
+ * Read-only meter levels, fed by the 0x83 reader (zg01_meters.c).  Game
+ * and HDMI are reserved and not registered until their fields decode.
+ */
+struct zg01_meter_ctl {
+    const char *name;
+    enum zg01_meter_index index;
+};
+
+static const struct zg01_meter_ctl zg01_meter_ctls[] = {
+    { "Meter Mic In", ZG01_METER_MIC_IN },
+    { "Meter Mic Out", ZG01_METER_MIC_OUT },
+    { "Meter PC In", ZG01_METER_PC_IN },
+    { "Meter Stream Mix", ZG01_METER_STREAM_MIX },
+};
+
+static int zg01_meter_info(struct snd_kcontrol *kcontrol,
+                           struct snd_ctl_elem_info *uinfo)
+{
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    uinfo->count = 1;
+    uinfo->value.integer.min = 0;
+    uinfo->value.integer.max = 127;
+    return 0;
+}
+
+static int zg01_meter_ctl_get(struct snd_kcontrol *kcontrol,
+                              struct snd_ctl_elem_value *ucontrol)
+{
+    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+    const struct zg01_meter_ctl *c =
+        (const struct zg01_meter_ctl *)kcontrol->private_value;
+    int level = zg01_meters_value(dev, c->index);
+
+    if (level < 0)
+        return level;
+    ucontrol->value.integer.value[0] = level;
+    return 0;
+}
+
 int zg01_create_controls(struct zg01_dev *dev)
 {
     unsigned int i;
@@ -692,6 +732,26 @@ int zg01_create_controls(struct zg01_dev *dev)
             .info = zg01_reset_info,
             .get = zg01_reset_get,
             .put = zg01_reset_put,
+        };
+        struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
+        int ret;
+
+        if (!kctl)
+            return -ENOMEM;
+        ret = snd_ctl_add(dev->card, kctl);
+        if (ret)
+            return ret;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(zg01_meter_ctls); i++) {
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = zg01_meter_ctls[i].name,
+            .access = SNDRV_CTL_ELEM_ACCESS_READ |
+                      SNDRV_CTL_ELEM_ACCESS_VOLATILE,
+            .info = zg01_meter_info,
+            .get = zg01_meter_ctl_get,
+            .private_value = (unsigned long)&zg01_meter_ctls[i],
         };
         struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
         int ret;

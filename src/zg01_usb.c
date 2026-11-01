@@ -88,6 +88,7 @@ static int zg01_probe(struct usb_interface *interface,
     dev->meters.buf = NULL;
     dev->meters.running = false;
     dev->meters.keepalive_running = false;
+    atomic_set(&dev->meters.valid, 0);
     INIT_DELAYED_WORK(&dev->meters.keepalive_work, zg01_meters_keepalive_fn);
 
     for (int i = 0; i < ZG01_N_STREAMS; i++) {
