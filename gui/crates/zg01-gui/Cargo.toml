@@ -1,0 +1,18 @@
+[package]
+name = "zg01-gui"
+description = "GTK4/libadwaita control GUI for the Yamaha ZG01"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zg01-control"
+path = "src/main.rs"
+
+[dependencies]
+gtk4 = "0.11"
+libadwaita = "0.9"
+relm4 = { version = "0.11", features = ["libadwaita", "gnome_50"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+zg01-core = { path = "../zg01-core" }

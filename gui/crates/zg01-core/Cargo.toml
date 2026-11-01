@@ -1,0 +1,16 @@
+[package]
+name = "zg01-core"
+description = "Device, model and preset logic for the Yamaha ZG01 control GUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+alsa = "0.12"
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[build-dependencies]
+cc = "1"
