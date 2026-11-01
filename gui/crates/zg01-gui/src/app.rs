@@ -32,6 +32,12 @@ const WINDOW_HEIGHT: i32 = 680;
 /// How often the device watcher polls the card list.
 const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
+/// The first delay before trying to read a card again after a failure.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
+
+/// The longest delay between two retries.
+const RETRY_MAX: Duration = Duration::from_secs(2);
+
 /// The screens of the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Page {
@@ -110,6 +116,8 @@ pub(crate) struct App {
     shell: Shell,
     /// The window, used as the parent of the About dialog.
     root: adw::ApplicationWindow,
+    /// Serialises the asynchronous reloads with the presence events.
+    reloads: ReloadTracker,
 }
 
 /// What the application reacts to.
@@ -126,7 +134,17 @@ pub(crate) enum Msg {
     /// The device watcher saw a transition.
     Device(DeviceEvent),
     /// Reading a card finished.
-    ReloadFinished(Result<Loaded, String>),
+    ReloadFinished {
+        /// The reload generation this completion belongs to.
+        generation: u64,
+        /// The card and its controls, or the reason the read failed.
+        result: Result<Loaded, String>,
+    },
+    /// A retry timer fired.
+    RetryDue {
+        /// The reload generation the timer was scheduled for.
+        generation: u64,
+    },
 }
 
 /// A card and the controls that were read from it.
@@ -143,6 +161,112 @@ impl std::fmt::Debug for Loaded {
             .field("card", &self.card)
             .field("controls", &self.controls.len())
             .finish()
+    }
+}
+
+/// Why a reload completion cannot be installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReloadCompletion {
+    /// A disconnect or a newer reload invalidated this one.
+    Stale,
+    /// The generation is current, but the card is no longer present.
+    CardGone,
+    /// The controls can be installed.
+    Accepted,
+}
+
+/// Serialises the asynchronous reloads with the device presence.
+///
+/// A reload reads several controls on a worker thread, so a disconnect or
+/// a newer card can happen before it finishes. Every reload carries the
+/// generation it was started with, and a completion is only installed
+/// when that generation is still current and the card is still present.
+#[derive(Debug, Default)]
+struct ReloadTracker {
+    generation: u64,
+    in_flight: bool,
+    retry_scheduled: bool,
+    failures: u32,
+}
+
+impl ReloadTracker {
+    /// Invalidates every reload and retry started so far.
+    fn invalidate(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.in_flight = false;
+        self.retry_scheduled = false;
+        self.failures = 0;
+    }
+
+    /// Starts a reload and returns its generation.
+    fn begin(&mut self) -> u64 {
+        self.generation = self.generation.wrapping_add(1);
+        self.in_flight = true;
+        self.retry_scheduled = false;
+        self.generation
+    }
+
+    /// Validates a failed reload and accepts a retry for it.
+    fn failed(&mut self, generation: u64) -> bool {
+        if generation != self.generation || !self.in_flight {
+            return false;
+        }
+        self.in_flight = false;
+        true
+    }
+
+    /// Validates a successful reload and the card presence.
+    fn completion(
+        &mut self,
+        generation: u64,
+        loaded_index: u32,
+        present_index: Option<u32>,
+    ) -> ReloadCompletion {
+        if generation != self.generation || !self.in_flight {
+            return ReloadCompletion::Stale;
+        }
+        self.in_flight = false;
+        if present_index != Some(loaded_index) {
+            return ReloadCompletion::CardGone;
+        }
+        self.failures = 0;
+        ReloadCompletion::Accepted
+    }
+
+    /// Schedules one retry and returns its generation and delay.
+    ///
+    /// There is never more than one retry timer pending, and no retry is
+    /// scheduled while a read is in flight.
+    fn retry(&mut self) -> Option<(u64, Duration)> {
+        if self.in_flight || self.retry_scheduled {
+            return None;
+        }
+        self.retry_scheduled = true;
+        self.failures = self.failures.saturating_add(1);
+        Some((self.generation, retry_delay(self.failures)))
+    }
+
+    /// Accepts a retry timer, unless it was invalidated or superseded.
+    fn retry_due(&mut self, generation: u64) -> bool {
+        if !self.retry_scheduled || generation != self.generation {
+            return false;
+        }
+        self.retry_scheduled = false;
+        true
+    }
+
+    /// Forgets a retry timer whose thread could not start.
+    fn cancel_retry(&mut self) {
+        self.retry_scheduled = false;
+    }
+}
+
+/// The delay before the next retry: one second, then two seconds at most.
+fn retry_delay(failures: u32) -> Duration {
+    if failures <= 1 {
+        RETRY_FIRST
+    } else {
+        RETRY_MAX
     }
 }
 
@@ -214,6 +338,7 @@ impl SimpleComponent for App {
             page: Page::Mixage,
             shell,
             root: root.clone(),
+            reloads: ReloadTracker::default(),
         };
 
         let widgets = view_output!();
@@ -243,12 +368,10 @@ impl SimpleComponent for App {
             }
             Msg::Device(DeviceEvent::Disconnected) => self.disconnect(),
             Msg::Device(DeviceEvent::Connected(card)) => self.connect(card, sender),
-            Msg::ReloadFinished(Ok(loaded)) => self.reloaded(loaded),
-            Msg::ReloadFinished(Err(err)) => {
-                tracing::warn!("could not read the ZG01: {err}");
-                self.shell
-                    .toast("ZG01 détecté, mais ses contrôles sont illisibles");
+            Msg::ReloadFinished { generation, result } => {
+                self.reload_finished(generation, result, sender);
             }
+            Msg::RetryDue { generation } => self.retry_due(generation, sender),
         }
     }
 }
@@ -282,38 +405,129 @@ impl App {
     }
 
     /// Shows the connection view when the card goes away.
+    ///
+    /// Always invalidates the reload tracker, even when the state is
+    /// already disconnected: a read started before this event must not
+    /// install the card afterwards.
     fn disconnect(&mut self) {
-        if !self.state.device.is_connected() {
-            return;
-        }
+        self.reloads.invalidate();
+        self.show_disconnected(true);
+    }
+
+    /// Drops the controls and shows the connection view.
+    fn show_disconnected(&mut self, notify: bool) {
+        let was_connected = self.state.device.is_connected();
         let layout = self.state.layout.clone();
         self.state = AppState::new(DeviceState::Disconnected, Vec::new(), layout);
         self.backend = None;
         self.shell.show_disconnected();
         self.shell.set_save_enabled(false);
-        self.shell.toast("ZG01 déconnecté");
+        if notify && was_connected {
+            self.shell.toast("ZG01 déconnecté");
+        }
     }
 
     /// Reads a card that just appeared, off the GTK thread.
-    fn connect(&self, card: CardInfo, sender: ComponentSender<Self>) {
+    fn connect(&mut self, card: CardInfo, sender: ComponentSender<Self>) {
         if self.state.device.card().map(|current| current.index) == Some(card.index) {
             return;
         }
+        self.start_reload(sender);
+    }
 
+    /// Starts one reload and remembers the generation it belongs to.
+    fn start_reload(&mut self, sender: ComponentSender<Self>) {
+        let generation = self.reloads.begin();
         let layout = self.state.layout.clone();
-        let sender = sender.clone();
+        let thread_sender = sender.clone();
         let spawned = std::thread::Builder::new()
             .name("zg01-reload".to_string())
             .spawn(move || {
                 let result = load_device(&layout);
-                sender.input(Msg::ReloadFinished(result));
+                thread_sender.input(Msg::ReloadFinished { generation, result });
             });
         if let Err(err) = spawned {
             tracing::warn!("could not start the reload thread: {err}");
+            self.reload_finished(
+                generation,
+                Err(format!("could not start the reload thread: {err}")),
+                sender,
+            );
         }
     }
 
-    /// Installs the state of a card that was read.
+    /// Handles the completion of a reload, if it is still current.
+    fn reload_finished(
+        &mut self,
+        generation: u64,
+        result: Result<Loaded, String>,
+        sender: ComponentSender<Self>,
+    ) {
+        match result {
+            Ok(loaded) => {
+                let present = find_card(None).ok().map(|card| card.index);
+                match self
+                    .reloads
+                    .completion(generation, loaded.card.index, present)
+                {
+                    ReloadCompletion::Stale => {}
+                    ReloadCompletion::CardGone => self.disconnect(),
+                    ReloadCompletion::Accepted => self.reloaded(loaded),
+                }
+            }
+            Err(err) => {
+                if !self.reloads.failed(generation) {
+                    return;
+                }
+                let first_failure = self.reloads.failures == 0;
+                if first_failure {
+                    tracing::warn!("could not read the ZG01: {err}");
+                } else {
+                    tracing::debug!("the ZG01 retry failed: {err}");
+                }
+                if find_card(None).is_err() {
+                    self.disconnect();
+                    return;
+                }
+
+                if let Some((generation, delay)) = self.reloads.retry() {
+                    if first_failure {
+                        self.shell
+                            .toast("ZG01 détecté, mais ses contrôles sont illisibles");
+                    }
+                    self.spawn_retry(generation, delay, sender);
+                }
+            }
+        }
+    }
+
+    /// Waits for the retry delay and asks the component to try again.
+    fn spawn_retry(&mut self, generation: u64, delay: Duration, sender: ComponentSender<Self>) {
+        let spawned = std::thread::Builder::new()
+            .name("zg01-retry".to_string())
+            .spawn(move || {
+                std::thread::sleep(delay);
+                sender.input(Msg::RetryDue { generation });
+            });
+        if let Err(err) = spawned {
+            tracing::warn!("could not start the retry thread: {err}");
+            self.reloads.cancel_retry();
+        }
+    }
+
+    /// Runs a retry timer, unless it was invalidated or superseded.
+    fn retry_due(&mut self, generation: u64, sender: ComponentSender<Self>) {
+        if !self.reloads.retry_due(generation) {
+            return;
+        }
+        if find_card(None).is_ok() {
+            self.start_reload(sender);
+        } else {
+            self.disconnect();
+        }
+    }
+
+    /// Installs the state of a card that was read and is still present.
     fn reloaded(&mut self, loaded: Loaded) {
         let layout = self.state.layout.clone();
         self.state = AppState::new(DeviceState::Connected(loaded.card), loaded.controls, layout);
@@ -407,7 +621,11 @@ fn unit_for(layout: &Layout, name: &str, kind: ControlKind) -> Unit {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_controls, unit_for, Page};
+    use super::{
+        read_controls, retry_delay, unit_for, Page, ReloadCompletion, ReloadTracker, RETRY_FIRST,
+        RETRY_MAX,
+    };
+    use std::time::Duration;
     use zg01_core::alsa::{ControlInfo, ControlKind, FakeAlsa};
     use zg01_core::layout::{load_layout_str, LAYOUT_TOML};
     use zg01_core::model::{ControlValue, Unit};
@@ -473,5 +691,76 @@ mod tests {
         assert_eq!(controls[0].value, ControlValue::Known(42));
         assert_eq!(controls[1].name(), "Meter Mic In");
         assert_eq!(controls[1].value, ControlValue::Unknown);
+    }
+
+    #[test]
+    fn a_reload_started_before_a_disconnect_cannot_install_the_card() {
+        let mut reloads = ReloadTracker::default();
+        let generation = reloads.begin();
+
+        // The card goes away while the read is in flight.
+        reloads.invalidate();
+
+        assert_eq!(
+            reloads.completion(generation, 2, Some(2)),
+            ReloadCompletion::Stale,
+            "a completion from before the disconnect must not install the card"
+        );
+    }
+
+    #[test]
+    fn a_reload_completed_after_the_card_vanished_is_rejected() {
+        let mut reloads = ReloadTracker::default();
+        let generation = reloads.begin();
+
+        // The watcher event has not arrived yet, but the card is gone.
+        assert_eq!(
+            reloads.completion(generation, 2, None),
+            ReloadCompletion::CardGone
+        );
+    }
+
+    #[test]
+    fn a_transient_failure_is_retried_and_the_retry_installs_the_card() {
+        let mut reloads = ReloadTracker::default();
+        let first = reloads.begin();
+
+        // The first read fails while the card is still present.
+        assert!(reloads.failed(first));
+        let (retry_generation, delay) = reloads.retry().expect("a retry is scheduled");
+        assert_eq!(delay, RETRY_FIRST);
+
+        // The timer fires, the retry starts, and the second read succeeds.
+        assert!(reloads.retry_due(retry_generation));
+        let second = reloads.begin();
+        assert_ne!(second, first);
+        assert_eq!(
+            reloads.completion(second, 2, Some(2)),
+            ReloadCompletion::Accepted
+        );
+        assert_eq!(reloads.failures, 0, "a success forgets the failures");
+    }
+
+    #[test]
+    fn the_retry_backoff_is_short_and_capped() {
+        assert_eq!(retry_delay(1), RETRY_FIRST);
+        assert_eq!(retry_delay(2), RETRY_MAX);
+        assert_eq!(retry_delay(9), RETRY_MAX);
+        assert!(RETRY_MAX <= Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_retry_timer_is_ignored_after_the_card_goes_away() {
+        let mut reloads = ReloadTracker::default();
+        let first = reloads.begin();
+        assert!(reloads.failed(first));
+        let (retry_generation, _) = reloads.retry().expect("a retry is scheduled");
+
+        reloads.invalidate();
+
+        assert!(
+            !reloads.retry_due(retry_generation),
+            "a retry scheduled before the disconnect must not run"
+        );
     }
 }
