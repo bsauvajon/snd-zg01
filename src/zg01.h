@@ -222,6 +222,8 @@ struct zg01_meter_state {
     bool running;
     struct delayed_work keepalive_work;      /* 0x03 doorbell, once a second */
     bool keepalive_running;                  /* param_mutex */
+    struct delayed_work poll_work;           /* EP0 status poll, four times a second */
+    bool poll_running;                       /* param_mutex */
     unsigned int errors;                     /* consecutive failed completions */
     unsigned long long frames;               /* 192-byte completions */
     unsigned long long invalid;              /* 192-byte frames the parser rejected */
@@ -319,11 +321,13 @@ int zg01_param_save(struct zg01_dev *dev);
 int zg01_param_reset(struct zg01_dev *dev);
 int zg01_param_keepalive(struct zg01_dev *dev);
 int zg01_param_meter_init(struct zg01_dev *dev);
+int zg01_status_poll(struct zg01_dev *dev);
 
 /* zg01_meters.c */
 int zg01_meters_start(struct zg01_dev *dev);
 void zg01_meters_stop(struct zg01_dev *dev);
 void zg01_meters_keepalive_fn(struct work_struct *work);
+void zg01_meters_poll_fn(struct work_struct *work);
 int zg01_meters_value(struct zg01_dev *dev, unsigned int index);
 
 /* zg01_usb_discovery.c (best-effort, debug only) */

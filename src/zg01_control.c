@@ -97,6 +97,52 @@ static int zg01_bulk_out(struct zg01_dev *dev, const u8 *buf, unsigned int len)
 }
 
 /*
+ * Status poll on EP0.  The app sends vendor request 7 (3-byte answer
+ * 80bb00) and then request 4 (1-byte answer) about every 250 ms, from
+ * app start through the whole meter session (Windows capture
+ * 00-mic-baseline).  The driver sent request 7 only once at probe and
+ * the device then kept returning zero-length meter packets.
+ */
+int zg01_status_poll(struct zg01_dev *dev)
+{
+    unsigned char *buf;
+    int ret;
+
+    /* The USB core needs a DMA-mappable buffer, not a stack one. */
+    buf = kmalloc(4, GFP_KERNEL);
+    if (!buf)
+        return -ENOMEM;
+
+    ret = usb_control_msg(dev->udev,
+                           usb_rcvctrlpipe(dev->udev, 0),
+                           7,      /* bRequest */
+                           0xc0,   /* bmRequestType: vendor, device-to-host */
+                           0x0000, /* wValue */
+                           0,      /* wIndex */
+                           buf, 3, /* expect 3 bytes response (80bb00) */
+                           1000);
+    if (ret < 0)
+        goto out;
+
+    ret = usb_control_msg(dev->udev,
+                           usb_rcvctrlpipe(dev->udev, 0),
+                           4,      /* bRequest */
+                           0xc0,   /* bmRequestType: vendor, device-to-host */
+                           0x0000, /* wValue */
+                           0,      /* wIndex */
+                           buf, 1, /* expect 1 byte response */
+                           1000);
+    if (ret < 0)
+        goto out;
+
+    ret = 0;
+
+out:
+    kfree(buf);
+    return ret;
+}
+
+/*
  * The app polls the channel; a keepalive precedes each write, and the
  * meter reader sends one every second (zg01_meters.c).
  */

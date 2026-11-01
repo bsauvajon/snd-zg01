@@ -110,6 +110,34 @@ void zg01_meters_keepalive_fn(struct work_struct *work)
     mutex_unlock(&dev->param_mutex);
 }
 
+/*
+ * Periodic status poll on EP0.  The app sends vendor request 7 and then
+ * request 4 about every 250 ms, from app start through the whole meter
+ * session (Windows capture 00-mic-baseline); the driver sent request 7
+ * only once at probe.  The transfer uses EP0, so it does not take
+ * param_mutex; the mutex only guards the running flag and the re-arm.
+ */
+void zg01_meters_poll_fn(struct work_struct *work)
+{
+    struct zg01_dev *dev = container_of(work, struct zg01_dev,
+                                        meters.poll_work.work);
+    struct zg01_meter_state *m = &dev->meters;
+    int ret;
+
+    if (!READ_ONCE(m->poll_running) || atomic_read(&dev->disconnecting))
+        return;
+
+    ret = zg01_status_poll(dev);
+    if (ret)
+        dev_warn_ratelimited(&dev->interface->dev,
+                             "meter status poll failed: %d\n", ret);
+
+    mutex_lock(&dev->param_mutex);
+    if (m->poll_running && !atomic_read(&dev->disconnecting))
+        schedule_delayed_work(&m->poll_work, HZ / 4);
+    mutex_unlock(&dev->param_mutex);
+}
+
 int zg01_meters_start(struct zg01_dev *dev)
 {
     struct zg01_meter_state *m = &dev->meters;
@@ -161,6 +189,8 @@ int zg01_meters_start(struct zg01_dev *dev)
                              "meter session init failed: %d\n", err);
 
     mutex_lock(&dev->param_mutex);
+    m->poll_running = true;
+    schedule_delayed_work(&m->poll_work, 0);
     m->keepalive_running = true;
     schedule_delayed_work(&m->keepalive_work, HZ);
     mutex_unlock(&dev->param_mutex);
@@ -176,6 +206,11 @@ void zg01_meters_stop(struct zg01_dev *dev)
     m->keepalive_running = false;
     mutex_unlock(&dev->param_mutex);
     cancel_delayed_work_sync(&m->keepalive_work);
+
+    mutex_lock(&dev->param_mutex);
+    m->poll_running = false;
+    mutex_unlock(&dev->param_mutex);
+    cancel_delayed_work_sync(&m->poll_work);
 
     m->running = false;
     if (m->urb) {
