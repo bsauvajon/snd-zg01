@@ -291,3 +291,24 @@ switch.unknown-value {
   font-size: 12px;
   color: alpha(@zg_text, 0.62);
 }
+
+.preset-block,
+.preset-preview-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.preset-summary {
+  font-size: 12px;
+  color: alpha(@zg_text, 0.72);
+}
+
+.preset-skips {
+  background: transparent;
+}
+
+.preset-skip {
+  font-size: 12px;
+  padding: 4px 8px;
+  color: alpha(@zg_text, 0.72);
+}

@@ -40,6 +40,8 @@ pub(crate) enum MixageEvent {
         /// The value to write.
         value: i64,
     },
+    /// The user asked to load a `.zgpreset` file.
+    LoadPreset,
 }
 
 /// One card meter and the reading slot it uses.
@@ -114,6 +116,8 @@ pub(crate) struct MixageScreen {
     root: gtk::Box,
     strips: Vec<StripWidgets>,
     output: StreamOutputWidgets,
+    /// The preset bar label naming the last applied preset.
+    preset_name: gtk::Label,
 }
 
 impl MixageScreen {
@@ -160,18 +164,25 @@ impl MixageScreen {
         panel.append(&node);
         root.append(&panel);
 
-        root.append(&build_preset_bar());
+        let (preset_bar, preset_name) = build_preset_bar(state, &on_event);
+        root.append(&preset_bar);
 
         MixageScreen {
             root,
             strips,
             output,
+            preset_name,
         }
     }
 
     /// The widget to install in the content stack.
     pub(crate) fn widget(&self) -> &gtk::Box {
         &self.root
+    }
+
+    /// Names the preset that was just applied in the preset bar.
+    pub(crate) fn set_preset_name(&self, name: &str) {
+        self.preset_name.set_text(name);
     }
 
     /// Installs one meter reading, in 0–127 device steps.
@@ -451,8 +462,11 @@ fn build_toggle(
     )
 }
 
-/// The preset bar, a placeholder until Task 9.
-fn build_preset_bar() -> gtk::Box {
+/// The preset bar: the load action and the last applied preset.
+fn build_preset_bar(
+    state: &AppState,
+    on_event: &Rc<dyn Fn(MixageEvent)>,
+) -> (gtk::Box, gtk::Label) {
     let bar = gtk::Box::new(Orientation::Horizontal, 12);
     bar.add_css_class("panel");
     bar.add_css_class("preset-bar");
@@ -469,18 +483,22 @@ fn build_preset_bar() -> gtk::Box {
 
     let recent = gtk::Button::with_label("Récent");
     recent.set_sensitive(false);
-    recent.set_tooltip_text(Some(
-        "La liste des presets récents arrive avec le chargement des presets",
-    ));
+    recent.set_tooltip_text(Some("La liste des presets récents arrive plus tard"));
     bar.append(&recent);
 
     let load = gtk::Button::with_label("Charger");
     load.add_css_class("suggested-action");
-    load.set_sensitive(false);
-    load.set_tooltip_text(Some("Le chargement des presets arrive à la tâche 9"));
+    load.set_sensitive(state.device.is_connected());
+    load.set_tooltip_text(Some(if state.device.is_connected() {
+        "Charger un preset .zgpreset et appliquer ses réglages"
+    } else {
+        "Le chargement d'un preset demande un ZG01 connecté"
+    }));
+    let emit = on_event.clone();
+    load.connect_clicked(move |_| emit(MixageEvent::LoadPreset));
     bar.append(&load);
 
-    bar
+    (bar, name)
 }
 
 /// A muted fallback for a strip or a block with no usable control.

@@ -24,8 +24,11 @@
 //! followed by a write leaves the setting where it was. The port keeps
 //! that behaviour, including the two binary searches it costs.
 
+use serde::Deserialize;
+
 /// The conversion a control applies to its raw value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Conv {
     /// The raw value is the user value: switches, the 0..100 levels, the
     /// shapes.

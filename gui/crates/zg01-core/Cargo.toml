@@ -12,6 +12,7 @@ alsa = "0.12"
 # FFI bindings the crate is built on.
 alsa-sys = "0.6"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "1"
 thiserror = "2"
 tracing = "0.1"

@@ -28,6 +28,9 @@ pub mod mic;
 /// The control model: what a control is and how its value reads.
 pub mod model;
 
+/// Loading a `.zgpreset` file and planning the values it applies.
+pub mod preset;
+
 /// The conversions between the raw device values and the user units.
 pub mod units;
 

@@ -26,9 +26,13 @@ use zg01_core::mixage::{MeterId, MixageModel};
 use zg01_core::model::{
     apply_reset, AppState, Control, ControlValue, DeviceState, Unit, RESET_ACTION, SAVE_ACTION,
 };
+use zg01_core::preset::{apply_plan, ApplyReport};
 use zg01_core::writer::{ControlWriter, WriteOutcome};
 
-use crate::ui::{MicEvent, MicScreen, MixageEvent, MixageScreen};
+use crate::ui::{
+    present_preset_dialog, present_preset_report, MicEvent, MicScreen, MixageEvent, MixageScreen,
+    PresetChoice,
+};
 use crate::window::Shell;
 
 /// Title of the main window.
@@ -182,6 +186,15 @@ pub(crate) enum Msg {
     WriteOutcome(WriteOutcome),
     /// The meter pump read the four meters.
     Meters(MeterSnapshot),
+    /// The preset preview handed a plan to apply.
+    PresetChosen(PresetChoice),
+    /// Applying a preset finished.
+    PresetApplied {
+        /// The block and name of the preset, for the report.
+        label: String,
+        /// What landed and what did not.
+        report: ApplyReport,
+    },
 }
 
 /// A card and the controls that were read from it.
@@ -457,10 +470,13 @@ impl SimpleComponent for App {
             Msg::Mixage(event) => match event {
                 MixageEvent::OpenMic => self.open_mic(),
                 MixageEvent::Write { name, value } => self.write_control(&name, value),
+                MixageEvent::LoadPreset => self.open_preset(sender),
             },
             Msg::Mic(MicEvent::Write { name, value }) => self.write_control(&name, value),
             Msg::WriteOutcome(outcome) => self.write_outcome(outcome),
             Msg::Meters(snapshot) => self.update_meters(snapshot),
+            Msg::PresetChosen(choice) => self.apply_preset(choice, sender),
+            Msg::PresetApplied { label, report } => self.preset_applied(&label, &report),
         }
     }
 }
@@ -621,6 +637,64 @@ impl App {
         }
         self.page = Page::Micro;
         self.shell.set_page(Page::Micro);
+    }
+
+    /// Opens the preset chooser against the current controls.
+    fn open_preset(&mut self, sender: ComponentSender<Self>) {
+        if !self.state.device.is_connected() {
+            self.shell.toast("Aucun ZG01 connecté");
+            return;
+        }
+        let controls = self.state.controls.clone();
+        let sender = sender.clone();
+        present_preset_dialog(&self.root, controls, move |choice| {
+            sender.input(Msg::PresetChosen(choice));
+        });
+    }
+
+    /// Applies a confirmed plan, off the GTK thread.
+    ///
+    /// Each write is stamped with the current epoch before the thread runs,
+    /// so its outcome may mark the value known. The report comes back as a
+    /// message; the values stay unsaved until the header Save action.
+    fn apply_preset(&mut self, choice: PresetChoice, sender: ComponentSender<Self>) {
+        let Some(writer) = self.writer.clone() else {
+            self.shell.toast("Aucun ZG01 connecté");
+            return;
+        };
+        for apply in &choice.plan.applies {
+            self.writes.issue(&apply.name);
+        }
+
+        let label = preset_label(&choice.block, &choice.name);
+        let plan = choice.plan;
+        let sender = sender.clone();
+        let spawned = std::thread::Builder::new()
+            .name("zg01-preset".to_string())
+            .spawn(move || {
+                let report = apply_plan(&plan, &writer);
+                sender.input(Msg::PresetApplied { label, report });
+            });
+        if let Err(err) = spawned {
+            tracing::warn!("could not start the preset thread: {err}");
+            self.shell.toast("Impossible de charger le preset");
+        }
+    }
+
+    /// Names the applied preset in the bar and shows the apply report.
+    fn preset_applied(&self, label: &str, report: &ApplyReport) {
+        tracing::info!(
+            "preset {label:?}: {} applied, {} skipped, {} failed",
+            report.applied.len(),
+            report.skipped.len(),
+            report.failed.len()
+        );
+        if !report.applied.is_empty() {
+            if let Some(screen) = &self.mixage {
+                screen.set_preset_name(label);
+            }
+        }
+        present_preset_report(&self.root, label, report);
     }
 
     /// Queues one control write on the coalescing writer.
@@ -880,6 +954,16 @@ impl App {
     }
 }
 
+/// The name the preset bar shows for a preset.
+fn preset_label(block: &str, name: &str) -> String {
+    match (block.is_empty(), name.is_empty()) {
+        (true, true) => "Preset sans nom".to_string(),
+        (true, false) => name.to_string(),
+        (false, true) => block.to_string(),
+        (false, false) => format!("{block} · {name}"),
+    }
+}
+
 /// Starts the watcher that forwards the connection transitions.
 fn spawn_device_watcher(sender: ComponentSender<App>) {
     let events = spawn_watcher(|| find_card(None).ok(), WATCH_INTERVAL);
@@ -960,8 +1044,8 @@ fn unit_for(layout: &Layout, name: &str, kind: ControlKind) -> Unit {
 #[cfg(test)]
 mod tests {
     use super::{
-        read_controls, retry_delay, unit_for, Page, ReloadCompletion, ReloadTracker, WriteEpoch,
-        RETRY_FIRST, RETRY_MAX,
+        preset_label, read_controls, retry_delay, unit_for, Page, ReloadCompletion, ReloadTracker,
+        WriteEpoch, RETRY_FIRST, RETRY_MAX,
     };
     use std::time::Duration;
     use zg01_core::alsa::{ControlInfo, ControlKind, FakeAlsa};
@@ -981,6 +1065,14 @@ mod tests {
 
     fn layout() -> zg01_core::layout::Layout {
         load_layout_str(LAYOUT_TOML).expect("the compiled table parses")
+    }
+
+    #[test]
+    fn the_preset_label_names_the_block_and_the_preset() {
+        assert_eq!(preset_label("MIC INPUT", "Studio"), "MIC INPUT · Studio");
+        assert_eq!(preset_label("MIC INPUT", ""), "MIC INPUT");
+        assert_eq!(preset_label("", "Studio"), "Studio");
+        assert_eq!(preset_label("", ""), "Preset sans nom");
     }
 
     #[test]
