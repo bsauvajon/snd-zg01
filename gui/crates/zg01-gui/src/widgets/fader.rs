@@ -132,9 +132,12 @@ impl FaderInner {
             return;
         };
         let delta = notches.saturating_mul(self.step());
-        let value = current
+        let target = current
             .saturating_add(delta)
             .clamp(self.spec.min, self.spec.max);
+        // A device correction can leave the value off the published grid;
+        // a key press puts it back on the nearest step.
+        let value = snap_to_step(target, self.spec.min, self.spec.max, self.spec.step);
         self.set_value(area, label, ControlValue::Known(value), true);
     }
 
@@ -402,6 +405,21 @@ fn default_value(spec: &FaderSpec) -> i64 {
     )
 }
 
+/// The value on the step grid closest to `value`.
+///
+/// The grid is anchored on `min`, like [`fraction_to_value`], and the
+/// result is clamped to the range.
+fn snap_to_step(value: i64, min: i64, max: i64, step: i64) -> i64 {
+    if max <= min {
+        return min;
+    }
+    let step = step.max(1);
+    let value = value.clamp(min, max);
+    let steps = ((value as f64 - min as f64) / step as f64).round();
+    let snapped = min as f64 + steps * step as f64;
+    snapped.clamp(min as f64, max as f64) as i64
+}
+
 /// The top and bottom of the track for a drawing area of `height`.
 fn track_bounds(height: i32) -> (f64, f64) {
     let height = height.max(1) as f64;
@@ -530,7 +548,7 @@ fn draw_ticks(context: &gtk4::cairo::Context, centre: f64, top: f64, bottom: f64
 
 #[cfg(test)]
 mod tests {
-    use super::{default_value, fraction_from_y, track_bounds, FaderSpec};
+    use super::{default_value, fraction_from_y, snap_to_step, track_bounds, FaderSpec};
     use zg01_core::model::{ControlValue, Unit};
 
     fn spec() -> FaderSpec {
@@ -601,5 +619,17 @@ mod tests {
             10,
             "the grid starts on the minimum"
         );
+    }
+
+    #[test]
+    fn a_key_press_snaps_an_off_grid_value_back_to_the_grid() {
+        assert_eq!(snap_to_step(50, 0, 100, 5), 50);
+        assert_eq!(snap_to_step(63, 0, 100, 5), 65);
+        assert_eq!(snap_to_step(62, 0, 100, 5), 60);
+        assert_eq!(snap_to_step(100, 0, 100, 5), 100);
+        assert_eq!(snap_to_step(101, 0, 100, 5), 100);
+        assert_eq!(snap_to_step(-1, 0, 100, 5), 0);
+        assert_eq!(snap_to_step(-185, -180, 180, 1), -180);
+        assert_eq!(snap_to_step(42, 0, 100, 0), 42, "a zero step is one");
     }
 }

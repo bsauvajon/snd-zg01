@@ -68,6 +68,32 @@ pub(crate) struct MeterSpec {
     pub(crate) linux: Option<f64>,
     /// The peak of the current readings, normalised to `0.0..=1.0`.
     pub(crate) peak: f64,
+    /// Whether the Linux source exists, independently of its reading.
+    ///
+    /// A Linux source that exists but cannot be read still has a bar: it
+    /// is drawn as an unknown (dashed) bar, not removed. Set this to
+    /// `true` even when `linux` is `None`.
+    pub(crate) linux_present: bool,
+}
+
+/// How one bar of a meter is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BarState {
+    /// The source does not exist: there is no bar at all.
+    Absent,
+    /// The source exists but has no reading: a dashed outline.
+    Unknown,
+    /// The source has a reading, normalised to `0.0..=1.0`.
+    Level(f64),
+}
+
+/// The state of one bar: presence is separate from the reading.
+fn bar_state(present: bool, reading: Option<f64>) -> BarState {
+    match (present, normalise(reading)) {
+        (false, _) => BarState::Absent,
+        (true, Some(level)) => BarState::Level(level),
+        (true, None) => BarState::Unknown,
+    }
 }
 
 /// The state a meter keeps between two readings.
@@ -87,13 +113,20 @@ pub(crate) struct Meter {
 
 impl Meter {
     /// Builds a meter for `spec`.
-    pub(crate) fn new(spec: MeterSpec) -> Self {
+    pub(crate) fn new(mut spec: MeterSpec) -> Self {
+        // A reading proves that the source exists, even when the caller
+        // forgot to set `linux_present`.
+        spec.card = normalise(spec.card);
+        spec.linux = normalise(spec.linux);
+        spec.peak = normalise(Some(spec.peak)).unwrap_or(0.0);
+        spec.linux_present |= spec.linux.is_some();
+
         let root = gtk::Box::new(Orientation::Vertical, 4);
         root.add_css_class("meter-root");
         root.set_halign(gtk::Align::Center);
 
         let area = gtk::DrawingArea::new();
-        let width = meter_width(spec.linux.is_some());
+        let width = meter_width(spec.linux_present);
         area.set_content_width(width);
         area.set_content_height(AREA_HEIGHT);
         area.set_vexpand(true);
@@ -142,12 +175,19 @@ impl Meter {
         let card = normalise(card);
         let linux = normalise(linux);
         let peak = normalise(Some(peak)).unwrap_or(0.0);
+        let had_linux = self.inner.spec.borrow().linux_present;
 
         {
             let mut spec = self.inner.spec.borrow_mut();
             spec.card = card;
             spec.linux = linux;
             spec.peak = peak;
+            // A reading proves presence; a missing reading never removes
+            // a source that exists, so its bar stays visible as unknown.
+            spec.linux_present |= linux.is_some();
+        }
+        if !had_linux && linux.is_some() {
+            self.area.set_content_width(meter_width(true));
         }
         refresh_accessible(&self.area, &self.inner.spec.borrow());
         self.area.queue_draw();
@@ -197,29 +237,65 @@ fn normalise(level: Option<f64>) -> Option<f64> {
         .map(|level| level.clamp(0.0, 1.0))
 }
 
+/// The remaining peak hold after `elapsed`, or `None` when it is over.
+///
+/// A newer peak moves the deadline; a timer armed for an older peak must
+/// wait only for the remainder, never a fresh `PEAK_HOLD`.
+fn peak_clear_delay(elapsed: Duration) -> Option<Duration> {
+    let remaining = PEAK_HOLD.saturating_sub(elapsed);
+    if remaining.is_zero() {
+        None
+    } else {
+        Some(remaining)
+    }
+}
+
 /// Schedules the end of the peak hold, if no timer is pending.
 ///
 /// A newer, higher peak moves the deadline; the timer that fires early
-/// notices it and waits for the new one instead of clearing the line.
+/// notices it and waits for the remainder of that deadline instead of
+/// clearing the line or starting another full second.
 fn schedule_peak_clear(inner: &Rc<MeterInner>, area: &gtk::DrawingArea) {
     if inner.timer_pending.replace(true) {
         return;
     }
+    schedule_peak_timer(inner, area);
+}
+
+/// Arms one timer for the remaining hold, or clears an expired peak.
+fn schedule_peak_timer(inner: &Rc<MeterInner>, area: &gtk::DrawingArea) {
+    let Some(at) = inner.peak_at.get() else {
+        clear_peak(inner, area);
+        return;
+    };
+    let Some(delay) = peak_clear_delay(at.elapsed()) else {
+        clear_peak(inner, area);
+        return;
+    };
+
     let inner = inner.clone();
     let area = area.clone();
-    let _ = gtk4::glib::timeout_add_local_once(PEAK_HOLD, move || {
-        if let Some(at) = inner.peak_at.get() {
-            if at.elapsed() < PEAK_HOLD {
-                inner.timer_pending.set(false);
-                schedule_peak_clear(&inner, &area);
-                return;
-            }
+    let _ = gtk4::glib::timeout_add_local_once(delay, move || {
+        // A newer peak may have moved the deadline while we waited.
+        let still_held = inner
+            .peak_at
+            .get()
+            .and_then(|at| peak_clear_delay(at.elapsed()))
+            .is_some();
+        if still_held {
+            schedule_peak_timer(&inner, &area);
+        } else {
+            clear_peak(&inner, &area);
         }
-        inner.timer_pending.set(false);
-        inner.held_peak.set(0.0);
-        inner.peak_at.set(None);
-        area.queue_draw();
     });
+}
+
+/// Drops the held peak and repaints.
+fn clear_peak(inner: &Rc<MeterInner>, area: &gtk::DrawingArea) {
+    inner.timer_pending.set(false);
+    inner.held_peak.set(0.0);
+    inner.peak_at.set(None);
+    area.queue_draw();
 }
 
 /// Updates the accessible label and value of the meter.
@@ -252,7 +328,7 @@ fn refresh_accessible(area: &gtk::DrawingArea, spec: &MeterSpec) {
 /// Draws the tracks, the fills, the peak line, the clip markers and `PW`.
 fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
     let spec = inner.spec.borrow();
-    let has_linux = spec.linux.is_some();
+    let has_linux = spec.linux_present;
     let top = if has_linux {
         TOP_MARGIN + BADGE_HEIGHT
     } else {
@@ -271,24 +347,31 @@ fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
     let card_x = start;
     let linux_x = start + CARD_WIDTH + METER_GAP;
 
+    // The card meter always exists; only its reading can be unknown. The
+    // Linux source may be absent, in which case it has no bar at all.
+    let card_state = bar_state(true, spec.card);
+    let linux_state = bar_state(has_linux, spec.linux);
+
     draw_track(context, card_x, CARD_WIDTH, top, bottom);
     if has_linux {
         draw_track(context, linux_x, LINUX_WIDTH, top, bottom);
     }
-    if spec.card.is_none() {
-        draw_unknown(context, card_x, CARD_WIDTH, top, bottom);
-    }
-    if has_linux && spec.linux.is_none() {
-        draw_unknown(context, linux_x, LINUX_WIDTH, top, bottom);
-    }
 
-    if let Some(level) = spec.card {
-        draw_fill(context, card_x, CARD_WIDTH, level, top, bottom, 1.0);
-        draw_clip(context, card_x, CARD_WIDTH, level, top);
+    match card_state {
+        BarState::Unknown => draw_unknown(context, card_x, CARD_WIDTH, top, bottom),
+        BarState::Level(level) => {
+            draw_fill(context, card_x, CARD_WIDTH, level, top, bottom, 1.0);
+            draw_clip(context, card_x, CARD_WIDTH, level, top);
+        }
+        BarState::Absent => {}
     }
-    if let Some(level) = spec.linux {
-        draw_fill(context, linux_x, LINUX_WIDTH, level, top, bottom, 0.65);
-        draw_clip(context, linux_x, LINUX_WIDTH, level, top);
+    match linux_state {
+        BarState::Unknown => draw_unknown(context, linux_x, LINUX_WIDTH, top, bottom),
+        BarState::Level(level) => {
+            draw_fill(context, linux_x, LINUX_WIDTH, level, top, bottom, 0.65);
+            draw_clip(context, linux_x, LINUX_WIDTH, level, top);
+        }
+        BarState::Absent => {}
     }
 
     let held = inner.held_peak.get();
@@ -412,7 +495,12 @@ fn draw_badge(context: &cairo::Context, width: i32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{initial_peak, is_clipping, meter_width, normalise, MeterSpec};
+    use std::time::Duration;
+
+    use super::{
+        bar_state, initial_peak, is_clipping, meter_width, normalise, peak_clear_delay, BarState,
+        MeterSpec, PEAK_HOLD,
+    };
 
     #[test]
     fn the_card_meter_is_narrower_than_the_pair() {
@@ -441,6 +529,7 @@ mod tests {
             card: Some(0.5),
             linux: None,
             peak: 0.7,
+            linux_present: false,
         };
         assert_eq!(spec.label, "MIC");
         assert_eq!(spec.card, Some(0.5));
@@ -454,6 +543,7 @@ mod tests {
             card: Some(0.4),
             linux: None,
             peak: 0.8,
+            linux_present: false,
         };
         assert_eq!(initial_peak(&spec), 0.8);
         let spec = MeterSpec {
@@ -461,6 +551,7 @@ mod tests {
             card: Some(0.9),
             linux: None,
             peak: 0.2,
+            linux_present: false,
         };
         assert_eq!(initial_peak(&spec), 0.9);
     }
@@ -471,5 +562,44 @@ mod tests {
         assert!(is_clipping(1.0));
         assert!(!is_clipping(0.97));
         assert!(!is_clipping(0.0));
+    }
+
+    #[test]
+    fn the_peak_hold_never_exceeds_one_second() {
+        assert_eq!(peak_clear_delay(Duration::ZERO), Some(PEAK_HOLD));
+        assert_eq!(
+            peak_clear_delay(Duration::from_millis(200)),
+            Some(Duration::from_millis(800))
+        );
+        assert_eq!(
+            peak_clear_delay(Duration::from_millis(900)),
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(peak_clear_delay(PEAK_HOLD), None);
+        assert_eq!(peak_clear_delay(Duration::from_secs(2)), None);
+
+        // A peak that arrives 200 ms before the old deadline makes the
+        // early timer wait 800 ms: 200 + 800 is one second from the new
+        // peak, not a fresh second plus the old wait.
+        let since_new_peak = Duration::from_millis(200);
+        let remaining = peak_clear_delay(since_new_peak).expect("the peak is still held");
+        assert_eq!(since_new_peak + remaining, PEAK_HOLD);
+    }
+
+    #[test]
+    fn a_present_but_unreadable_linux_source_is_unknown() {
+        assert_eq!(bar_state(true, None), BarState::Unknown);
+        assert_eq!(bar_state(true, Some(0.4)), BarState::Level(0.4));
+        assert_eq!(bar_state(false, None), BarState::Absent);
+        assert_eq!(
+            bar_state(false, Some(0.4)),
+            BarState::Absent,
+            "a reading cannot create a source that does not exist"
+        );
+        assert_eq!(
+            bar_state(true, Some(f64::NAN)),
+            BarState::Unknown,
+            "a non-finite reading is unreadable, not a zero"
+        );
     }
 }
