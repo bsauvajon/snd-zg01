@@ -3,7 +3,8 @@
 Status: **partial**. The framing, the header, the 14-bit layout, the dB scale
 and the current/peak pairing are measured. Four meters are decoded with
 stated confidence: `pc_in` (high), `mic_out` and `mic_in` (medium), and
-`stream_mix` (medium). `game_mix` and `hdmi_in` are not decoded.
+`stream_mix` (medium). `game_mix` and `hdmi_in` are not decoded. GAME is
+deferred to v1.1 (see "Scope and reserved names").
 
 ## Transport
 
@@ -16,9 +17,9 @@ stated confidence: `pc_in` (high), `mic_out` and `mic_in` (medium), and
 - Stripping the CIN bytes gives a 144-byte SysEx message (the payload
   below). Payload bytes are 7-bit (`< 0x80`) except the `F0`/`F7`
   delimiters.
-- Frames arrive once the driver's `0x83` reader is running and the 1 Hz
-  `0x03` keepalive is sent (driver commits `93ae2cb` and `9f352fe`). The
-  captures arrived at about 20 Hz (roughly every 50 ms).
+- Frames arrive once the driver's `0x83` meter reader is running and its
+  1 Hz `0x03` keepalive is sent. The captures arrived at about 20 Hz
+  (roughly every 50 ms).
 
 Raw frame offset `r` maps to payload index `p` as `p = 3*(r//4) + (r%4) - 1`
 for `r % 4 != 0`. Payload index `p` maps to raw offset `r = 4*(p//3) + 1 + p%3`.
@@ -51,9 +52,16 @@ level_dB = (code - 16384) / 10        # 16384 = 0 dBFS, 10 codes per dB
 - Codes are always `== 4 (mod 10)`. Since `16384 == 4 (mod 10)`, the
   quantisation is exact at 1 dB; this is the `10*k + 4` observation.
 - `code 15114` is -127 dB, the floor that many captures sit at.
-- `decode_frame` returns `level_dB + 127` as an integer, clamped to
-  `0..127` (0 = -127 dB, 127 = 0 dBFS). This is linear in dB, the device's
-  own unit, on a 0-127 range.
+- `decode_frame` returns `level_dB + 127` as an integer, in `0..127`
+  (0 = -127 dB, 127 = 0 dBFS). This is linear in dB, the device's own unit,
+  on a 0-127 range.
+- Rounding: codes on the 10-step grid decode exactly. An off-grid code,
+  never observed, rounds to the nearest dB (`round()`, so ties go to the
+  even dB).
+- Clamping: two bounds apply. The two-byte field tops out at code 16383,
+  which is −0.1 dB, so the device cannot encode a level above 0 dBFS and
+  the output tops out at 127. Codes below −127 dB clamp to 0. The top
+  clamp is a guard, not a reachable case.
 - The device applies its own path gains. The decoder does not correct them.
 
 ## Current/peak pairs
@@ -76,6 +84,9 @@ peak was never below its current field.
 
 - E and G equal C in 98% of frames, and O equals M in 98%. F and H equal
   D in 99.6% of frames, and P equals N in 99.3%.
+- The fixture frame `mic-decay-peak-held` covers a clear current/peak
+  difference (A −25 against its held peak −14). `decode_frame` must return
+  the current value there.
 - The payload index is for the pair's high byte. The raw offsets are
   the `columns` output.
 
@@ -106,6 +117,16 @@ show otherwise:
   `stream_mix`, the post-gate sum.
 - The 7 group (now A) is pre-gate and so is `mic_in`.
 - `mic_out` (C) was not decoded before.
+
+## Scope and reserved names
+
+- **GAME is deferred to v1.1.** The decoded frame has no separable
+  game-only tap (see `game_mix` above). The GUI's GAME strip uses PipeWire
+  `Game Out` in v1.1, not a card meter.
+- **`Meter Game Mix` and `Meter HDMI In` are reserved names.** They are not
+  registered in v1. A kcontrol is added only when its field is decoded.
+- Registered in v1 (the four decoded meters): `Meter Mic In`,
+  `Meter Mic Out`, `Meter PC In`, `Meter Stream Mix`.
 
 ## Evidence
 
@@ -175,7 +196,12 @@ sweeps. That response is not explained by any mic path (see Anomalies).
 
 - **`mic_in` and `mic_out` respond to playback** in the sweeps (A at
   about −40 dB, C at about −54 dB for Voice Out). A pre-gate mic input
-  should not carry playback. The cause is not established.
+  should not carry playback, so the cause is not established by the
+  captures. The approved working hypothesis is **likely acoustic
+  coupling**: the playback leaves the speakers and reaches the mic, which
+  would show up on the mic fields and not on the playback paths. This is
+  unconfirmed. A test with the speakers silent or the mic isolated would
+  settle it.
 - **Voice −60 dBFS (`run2`)** read the floor on `pc_in`. The same level in
   `run4` read −60.0 exactly. The cause is not established.
 - **Stream curve**: `stream_mix` is not linear in dB at low levels. It fits
@@ -198,11 +224,15 @@ sweeps. That response is not explained by any mic path (see Anomalies).
 
 ## Validation rules
 
-A frame is a meter frame when all of these hold:
+`decode_frame` accepts a frame only when all of these hold. It raises
+`ValueError` otherwise:
 
 - Length is 192 bytes.
 - Bytes 0-7 are `04 f0 43 10 04 3e 14 02`.
-- CIN bytes at 0,4,...,184 are `04`, and at 188 is `07`.
+- The CIN byte of every packet from 0 to 184 (every multiple of 4) is `04`.
+  Byte 188 (packet 47) is `07`.
 - Byte 191 is `F7`.
 
-`decode_frame` raises `ValueError` for a frame that fails these rules.
+The rules check the framing only. The payload bytes between them are not
+checked for the 7-bit range. The `decode` command skips a rejected frame,
+reports `decode-meters: skipped frame: ...` on stderr, and exits 1.

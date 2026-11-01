@@ -12,7 +12,7 @@ import os
 import pathlib
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -132,38 +132,109 @@ FIXTURE_EXPECTED = [
     {"mic_in": 119, "mic_out": 122, "pc_in": 37, "stream_mix": 126}, # mic speech
     {"mic_in": 68, "mic_out": 13, "pc_in": 107, "stream_mix": 107},  # voice -20 dBFS
     {"mic_in": 81, "mic_out": 26, "pc_in": 37, "stream_mix": 117},   # game -6 dBFS
+    # mic decay: the current fields (-25, -19, -15) are below their held peaks
+    # (-14, -11, -7); the output must use the current values.
+    {"mic_in": 102, "mic_out": 108, "pc_in": 36, "stream_mix": 112},
 ]
+PEAK_HELD_INDEX = 6
+
+
+def fixture_frames() -> list[bytes]:
+    return extract_meter_frames(read_frames(str(FIXTURE)))
+
+
+def assert_rejected(frame: bytes) -> None:
+    try:
+        decode_meters.decode_frame(frame)
+    except ValueError:
+        return
+    raise AssertionError("decode_frame accepted an invalid meter frame")
 
 
 def test_decode_fixture_frames():
     decode_frame = decode_meters.decode_frame
-    frames = extract_meter_frames(read_frames(str(FIXTURE)))
+    frames = fixture_frames()
     assert len(frames) == len(FIXTURE_EXPECTED)
     for frame, expected in zip(frames, FIXTURE_EXPECTED):
         assert decode_frame(frame) == expected
 
 
 def test_decode_omits_undecoded_meters():
-    values = decode_meters.decode_frame(extract_meter_frames(read_frames(str(FIXTURE)))[0])
+    values = decode_meters.decode_frame(fixture_frames()[0])
     assert not {"game_mix", "hdmi_in"} & set(values)
 
 
-def test_decode_rejects_non_meter_frames():
-    decode_frame = decode_meters.decode_frame
-    good = extract_meter_frames(read_frames(str(FIXTURE)))[0]
-    for bad in (good[:191], good + b"\x00", b"\x00" + good[1:]):
-        try:
-            decode_frame(bad)
-        except ValueError:
-            continue
-        raise AssertionError("decode_frame accepted a non-meter frame")
+def test_decode_rejects_bad_length_and_header():
+    good = fixture_frames()[0]
+    assert_rejected(good[:191])
+    assert_rejected(good + b"\x00")
+    assert_rejected(b"\x00" + good[1:])
 
 
-def test_decode_clamps_below_floor():
+def test_decode_rejects_bad_cin():
+    good = fixture_frames()[0]
+    for offset, value in ((100, 0x05), (184, 0x00), (188, 0x04)):
+        bad = bytearray(good)
+        bad[offset] = value
+        assert_rejected(bytes(bad))
+
+
+def test_decode_rejects_missing_f7():
+    good = fixture_frames()[0]
+    for value in (0x00, 0x07, 0xF0):
+        bad = bytearray(good)
+        bad[191] = value
+        assert_rejected(bytes(bad))
+
+
+def test_decode_rounds_off_grid_codes_to_nearest_db():
     decode_frame = decode_meters.decode_frame
-    frame = bytearray(extract_meter_frames(read_frames(str(FIXTURE)))[0])
+    frame = bytearray(fixture_frames()[0])
+    for code, expected in ((16320, 121), (16318, 120)):
+        frame[10], frame[11] = divmod(code, 128)
+        assert decode_frame(bytes(frame))["mic_in"] == expected
+
+
+def test_decode_clamps_below_floor_and_top_of_range():
+    decode_frame = decode_meters.decode_frame
+    frame = bytearray(fixture_frames()[0])
     frame[10], frame[11] = 0x00, 0x00
     assert decode_frame(bytes(frame))["mic_in"] == 0
+    frame[10], frame[11] = divmod(16383, 128)
+    assert decode_frame(bytes(frame))["mic_in"] == 127
+
+
+def test_decode_uses_current_not_peak():
+    decode_frame = decode_meters.decode_frame
+    frame = bytearray(fixture_frames()[PEAK_HELD_INDEX])
+    frame[13], frame[14] = divmod(16383, 128)  # mic peak raised to the top code
+    assert decode_frame(bytes(frame))["mic_in"] == 102
+
+
+def test_decode_cli_skips_invalid_frames():
+    good = fixture_frames()[0]
+    bad = bytearray(good)
+    bad[100] = 0x05
+    rows = [
+        {"endpoint": "0x83", "transfer": "bulk", "direction": "in",
+         "data": good.hex(), "time": 1.0},
+        {"endpoint": "0x83", "transfer": "bulk", "direction": "in",
+         "data": bytes(bad).hex(), "time": 1.1},
+    ]
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as stream:
+        for row in rows:
+            stream.write(json.dumps(row) + "\n")
+        path = stream.name
+    try:
+        out = io.StringIO()
+        err = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            status = decode_meters.main(["decode", path])
+        assert status == 1
+        assert len(out.getvalue().strip().splitlines()) == 1
+        assert "skipped frame" in err.getvalue()
+    finally:
+        os.unlink(path)
 
 
 if __name__ == "__main__":
@@ -174,6 +245,11 @@ if __name__ == "__main__":
     test_columns_cli_prints_offset_min_max()
     test_decode_fixture_frames()
     test_decode_omits_undecoded_meters()
-    test_decode_rejects_non_meter_frames()
-    test_decode_clamps_below_floor()
+    test_decode_rejects_bad_length_and_header()
+    test_decode_rejects_bad_cin()
+    test_decode_rejects_missing_f7()
+    test_decode_rounds_off_grid_codes_to_nearest_db()
+    test_decode_clamps_below_floor_and_top_of_range()
+    test_decode_uses_current_not_peak()
+    test_decode_cli_skips_invalid_frames()
     print("decode-meters contract passed")

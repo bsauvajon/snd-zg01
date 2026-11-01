@@ -66,20 +66,35 @@ LEVEL_FLOOR_DB = -127
 
 
 def decode_level(data: bytes, field: tuple[int, int]) -> int:
-    """Return one meter as 0..127, linear in dB (0 = -127 dB, 127 = 0 dBFS)."""
+    """Return one meter as 0..127, linear in dB (0 = -127 dB, 127 = 0 dBFS).
+
+    Codes on the 10-step grid decode exactly. Off-grid codes, never observed,
+    round to the nearest dB. Levels above 0 dBFS clamp to 127 and levels below
+    -127 dB clamp to 0.
+    """
     hi, lo = field
     code = data[hi] * 128 + data[lo]
-    db = (code - LEVEL_ZERO_CODE) // LEVEL_CODES_PER_DB
+    db = round((code - LEVEL_ZERO_CODE) / LEVEL_CODES_PER_DB)
     return max(0, min(127, db - LEVEL_FLOOR_DB))
+
+
+def has_meter_framing(data: bytes) -> bool:
+    """True when the frame has the CIN bytes and the final F7 of a meter frame."""
+    if len(data) != METER_LEN or not data.startswith(METER_HEADER):
+        return False
+    if any(data[i] != 0x04 for i in range(0, METER_LEN - 4, 4)):
+        return False
+    return data[METER_LEN - 4] == 0x07 and data[METER_LEN - 1] == 0xF7
 
 
 def decode_frame(data: bytes) -> dict[str, int]:
     """Decode the meters this module can attribute; see docs/METER_PROTOCOL.md.
 
     game_mix (no game-only pair) and hdmi_in (no source) are not decoded.
+    Raises ValueError for a frame that fails has_meter_framing.
     """
-    if len(data) != METER_LEN or not data.startswith(METER_HEADER):
-        raise ValueError("not a 192-byte meter frame")
+    if not has_meter_framing(data):
+        raise ValueError("not a valid 192-byte meter frame")
     return {
         "mic_in": decode_level(data, MIC_IN_FIELD),
         "mic_out": decode_level(data, MIC_OUT_FIELD),
@@ -133,9 +148,14 @@ def main(argv: list[str]) -> int:
             print(offset, low, high)
         return 0
 
+    status = 0
     for frame in meter_frames:
-        print(decode_frame(frame))
-    return 0
+        try:
+            print(decode_frame(frame))
+        except ValueError as error:
+            print("decode-meters: skipped frame: %s" % error, file=sys.stderr)
+            status = 1
+    return status
 
 
 if __name__ == "__main__":
