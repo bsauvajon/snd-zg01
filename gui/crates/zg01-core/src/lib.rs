@@ -19,6 +19,9 @@ pub mod layout;
 /// The meter poller: the readings of the four decoded meters.
 pub mod meters;
 
+/// The Mixage screen model: the three stream sends and the stream output.
+pub mod mixage;
+
 /// The control model: what a control is and how its value reads.
 pub mod model;
 

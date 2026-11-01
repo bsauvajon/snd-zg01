@@ -237,6 +237,7 @@ impl Fader {
     }
 
     /// The value the fader currently shows.
+    #[allow(dead_code)] // TODO(task-7): the Micro screen reads it back.
     pub(crate) fn value(&self) -> ControlValue {
         self.inner.value()
     }

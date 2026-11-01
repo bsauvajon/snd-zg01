@@ -8,18 +8,13 @@
 //!
 //! The widgets are pure presentation: they hold the value the parent gives
 //! them, never read the device, and report a user change through the
-//! callback the parent passes to [`Fader::new`]. The Mixage and Micro
-//! screens (Tasks 6 and 7) build them; until then nothing in the binary
-//! references them, hence the module-level `dead_code` allowance.
-
-// The screens of Tasks 6 and 7 consume these widgets; nothing in the
-// binary does yet, so the compiler sees them as unused.
-#![allow(dead_code)] // TODO(task-6/7): remove once the screens build the widgets.
+//! callback the parent passes to [`Fader::new`]. The Mixage screen builds
+//! them; the Micro screen (Task 7) consumes the rest.
 
 mod fader;
 mod meter;
 
-// Re-exported for the screens of Tasks 6 and 7.
+// Re-exported for the screens.
 #[allow(unused_imports)]
 pub(crate) use fader::{Fader, FaderOutput, FaderSpec};
 #[allow(unused_imports)]

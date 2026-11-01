@@ -202,6 +202,7 @@ impl Meter {
     }
 
     /// Enables or dims the meter.
+    #[allow(dead_code)] // TODO(task-7): the Micro screen dims its meters.
     pub(crate) fn set_sensitive(&self, sensitive: bool) {
         self.root.set_sensitive(sensitive);
     }

@@ -31,6 +31,24 @@ pub fn controls(names: &[&str]) -> Vec<Control> {
     names.iter().map(|name| control(name, 0, 100)).collect()
 }
 
+/// The controls the Mixage screen claims: the three send levels, the
+/// three mutes, the two per-send FX switches and the stream outputs.
+pub fn controls_with_mixage() -> Vec<Control> {
+    controls(&[
+        "Streaming Mic Level Steps",
+        "Streaming Voice Level Steps",
+        "Streaming Game Level Steps",
+        "Streaming Mic Mute Steps",
+        "Streaming Voice Mute Steps",
+        "Streaming Game Mute Steps",
+        "Streaming Voice FX Steps",
+        "Streaming Game FX Steps",
+        "Streaming USB Out",
+        "Streaming HDMI Out",
+        "Streaming Monitor Steps",
+    ])
+}
+
 /// The card the tests pretend to be talking to.
 pub fn card() -> CardInfo {
     CardInfo {

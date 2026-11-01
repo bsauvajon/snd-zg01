@@ -198,3 +198,50 @@ button.suggested-action:disabled {
   font-size: 11px;
   color: alpha(@zg_text, 0.52);
 }
+
+/* Mixage ------------------------------------------------------------------ */
+
+.strip {
+  padding: 14px 16px;
+}
+
+.output-strip {
+  background-color: alpha(@zg_accent_strong, 0.06);
+}
+
+.strip-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: @zg_text;
+}
+
+.strip-title-button {
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+
+.strip-title-button:hover {
+  background-color: alpha(@zg_accent, 0.12);
+}
+
+.strip-subtitle {
+  font-size: 11px;
+  color: alpha(@zg_text, 0.52);
+}
+
+.tag-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.preset-bar {
+  padding: 10px 14px;
+}
+
+.preset-name {
+  font-size: 12px;
+  color: alpha(@zg_text, 0.62);
+}

@@ -3,9 +3,12 @@
 //! Startup discovers the ZG01 card, reads every control into the model and
 //! shows the shell. A watcher reports the connection transitions, so
 //! unplugging the card shows the connection view and plugging it back in
-//! reloads the controls. The Mixage, Micro and Avancé bodies are
-//! placeholders until their own tasks replace them.
+//! reloads the controls. The Mixage screen is rebuilt from the controls
+//! whenever they are read; the Micro and Avancé bodies are placeholders
+//! until their own tasks replace them.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,8 +19,12 @@ use zg01_core::alsa::{
 };
 use zg01_core::device::{spawn_watcher, DeviceEvent};
 use zg01_core::layout::{load_layout_str, Layout, LAYOUT_TOML};
+use zg01_core::meters::{spawn_poller, MeterSnapshot, METER_INTERVAL};
+use zg01_core::mixage::{MeterId, MixageModel};
 use zg01_core::model::{AppState, Control, ControlValue, DeviceState, Unit};
+use zg01_core::writer::{ControlWriter, WriteOutcome};
 
+use crate::ui::{MixageEvent, MixageScreen};
 use crate::window::Shell;
 
 /// Title of the main window.
@@ -37,6 +44,9 @@ const RETRY_FIRST: Duration = Duration::from_secs(1);
 
 /// The longest delay between two retries.
 const RETRY_MAX: Duration = Duration::from_secs(2);
+
+/// How often the pump threads check their stop flag.
+const PUMP_TICK: Duration = Duration::from_millis(200);
 
 /// The screens of the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +124,14 @@ pub(crate) struct App {
     page: Page,
     /// The shell widgets.
     shell: Shell,
+    /// The Mixage screen, rebuilt whenever the controls are read.
+    mixage: Option<MixageScreen>,
+    /// The coalescing writer of the connected card.
+    writer: Option<ControlWriter>,
+    /// The stop flag of the write-outcome pump, when it runs.
+    writer_stop: Option<Arc<AtomicBool>>,
+    /// The stop flag of the meter pump, when it runs.
+    meters_stop: Option<Arc<AtomicBool>>,
     /// The window, used as the parent of the About dialog.
     root: adw::ApplicationWindow,
     /// Serialises the asynchronous reloads with the presence events.
@@ -145,6 +163,12 @@ pub(crate) enum Msg {
         /// The reload generation the timer was scheduled for.
         generation: u64,
     },
+    /// The Mixage screen reported a user action.
+    Mixage(MixageEvent),
+    /// The control writer finished a write.
+    WriteOutcome(WriteOutcome),
+    /// The meter pump read the four meters.
+    Meters(MeterSnapshot),
 }
 
 /// A card and the controls that were read from it.
@@ -321,25 +345,34 @@ impl SimpleComponent for App {
             }
         };
 
-        match state.device.card() {
-            Some(card) => {
-                shell.show_connected(card);
-                shell.set_page(Page::Mixage);
-            }
-            None => shell.show_disconnected(),
+        if let Some(card) = state.device.card() {
+            shell.show_connected(card);
+        } else {
+            shell.show_disconnected();
         }
         shell.set_save_enabled(state.can_save());
 
         spawn_device_watcher(sender.clone());
 
-        let model = App {
+        let mut model = App {
             state,
             backend,
             page: Page::Mixage,
+            mixage: None,
+            writer: None,
+            writer_stop: None,
+            meters_stop: None,
             shell,
             root: root.clone(),
             reloads: ReloadTracker::default(),
         };
+
+        if model.state.device.is_connected() {
+            model.install_mixage(sender.clone());
+            model.start_writer(&sender);
+            model.start_meters(&sender);
+            model.shell.set_page(Page::Mixage);
+        }
 
         let widgets = view_output!();
 
@@ -372,6 +405,12 @@ impl SimpleComponent for App {
                 self.reload_finished(generation, result, sender);
             }
             Msg::RetryDue { generation } => self.retry_due(generation, sender),
+            Msg::Mixage(event) => match event {
+                MixageEvent::OpenMic => self.open_mic(),
+                MixageEvent::Write { name, value } => self.write_control(&name, value),
+            },
+            Msg::WriteOutcome(outcome) => self.write_outcome(outcome),
+            Msg::Meters(snapshot) => self.update_meters(snapshot),
         }
     }
 }
@@ -404,6 +443,155 @@ impl App {
         }
     }
 
+    /// Builds the Mixage screen from the current controls and installs it.
+    fn install_mixage(&mut self, sender: ComponentSender<Self>) {
+        let model = MixageModel::from_controls(&self.state.controls);
+        let screen_sender = sender.clone();
+        let screen = MixageScreen::new(&model, &self.state, move |event| {
+            screen_sender.input(Msg::Mixage(event));
+        });
+        self.shell.install_mixage(screen.widget());
+        self.mixage = Some(screen);
+    }
+
+    /// Starts the coalescing writer and the pump that forwards its
+    /// outcomes.
+    fn start_writer(&mut self, sender: &ComponentSender<Self>) {
+        self.stop_writer();
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let (writer, outcomes) = ControlWriter::spawn(backend);
+        self.writer = Some(writer);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        self.writer_stop = Some(stop.clone());
+        let sender = sender.clone();
+        let spawned = std::thread::Builder::new()
+            .name("zg01-write-events".to_string())
+            .spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    match outcomes.recv_timeout(PUMP_TICK) {
+                        Ok(outcome) => sender.input(Msg::WriteOutcome(outcome)),
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            });
+        if let Err(err) = spawned {
+            tracing::warn!("could not start the write event thread: {err}");
+        }
+    }
+
+    /// Drops the writer, which flushes what is pending and stops.
+    fn stop_writer(&mut self) {
+        if let Some(stop) = self.writer_stop.take() {
+            stop.store(true, Ordering::Relaxed);
+        }
+        self.writer = None;
+    }
+
+    /// Starts the meter poller and the pump that forwards its snapshots.
+    fn start_meters(&mut self, sender: &ComponentSender<Self>) {
+        self.stop_meters();
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        self.meters_stop = Some(stop.clone());
+        let events = spawn_poller(backend, METER_INTERVAL);
+        let sender = sender.clone();
+        let spawned = std::thread::Builder::new()
+            .name("zg01-meter-events".to_string())
+            .spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    match events.recv_timeout(PUMP_TICK) {
+                        Ok(snapshot) => sender.input(Msg::Meters(snapshot)),
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            });
+        if let Err(err) = spawned {
+            tracing::warn!("could not start the meter event thread: {err}");
+        }
+    }
+
+    /// Asks the meter pump to stop; the poller stops when its receiver is
+    /// dropped.
+    fn stop_meters(&mut self) {
+        if let Some(stop) = self.meters_stop.take() {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Shows the Micro screen, from a click on the MIC strip.
+    fn open_mic(&mut self) {
+        if !self.state.device.is_connected() {
+            return;
+        }
+        self.page = Page::Micro;
+        self.shell.set_page(Page::Micro);
+    }
+
+    /// Queues one control write on the coalescing writer.
+    fn write_control(&mut self, name: &str, value: i64) {
+        match &self.writer {
+            Some(writer) => writer.set(name, value),
+            None => {
+                self.shell.toast("Aucun ZG01 connecté");
+                self.revert_control(name);
+            }
+        }
+    }
+
+    /// Puts a widget back to the value the model still holds.
+    fn revert_control(&self, name: &str) {
+        if let Some(screen) = &self.mixage {
+            let value = self
+                .state
+                .control(name)
+                .map(|control| control.value)
+                .unwrap_or(ControlValue::Unknown);
+            screen.set_control(name, value);
+        }
+    }
+
+    /// Handles the outcome of a control write.
+    fn write_outcome(&mut self, outcome: WriteOutcome) {
+        match outcome {
+            WriteOutcome::Ok { name, value } => {
+                if let Some(control) = self.state.control_mut(&name) {
+                    control.value = ControlValue::Known(value);
+                }
+                if let Some(screen) = &self.mixage {
+                    screen.set_control(&name, ControlValue::Known(value));
+                }
+            }
+            WriteOutcome::Err { name, error } => {
+                tracing::warn!("could not write the control {name:?}: {error}");
+                self.shell
+                    .toast(&format!("Écriture de {name} impossible : {error}"));
+                self.revert_control(&name);
+            }
+        }
+    }
+
+    /// Installs the meter readings on the Mixage screen.
+    fn update_meters(&self, snapshot: MeterSnapshot) {
+        let Some(screen) = &self.mixage else {
+            return;
+        };
+        for id in [
+            MeterId::MicIn,
+            MeterId::MicOut,
+            MeterId::PcIn,
+            MeterId::StreamMix,
+        ] {
+            screen.set_meter(id, snapshot.value(id.index()));
+        }
+    }
+
     /// Shows the connection view when the card goes away.
     ///
     /// Always invalidates the reload tracker, even when the state is
@@ -420,6 +608,9 @@ impl App {
         let layout = self.state.layout.clone();
         self.state = AppState::new(DeviceState::Disconnected, Vec::new(), layout);
         self.backend = None;
+        self.stop_writer();
+        self.stop_meters();
+        self.mixage = None;
         self.shell.show_disconnected();
         self.shell.set_save_enabled(false);
         if notify && was_connected {
@@ -472,7 +663,7 @@ impl App {
                 {
                     ReloadCompletion::Stale => {}
                     ReloadCompletion::CardGone => self.disconnect(),
-                    ReloadCompletion::Accepted => self.reloaded(loaded),
+                    ReloadCompletion::Accepted => self.reloaded(loaded, sender),
                 }
             }
             Err(err) => {
@@ -528,7 +719,7 @@ impl App {
     }
 
     /// Installs the state of a card that was read and is still present.
-    fn reloaded(&mut self, loaded: Loaded) {
+    fn reloaded(&mut self, loaded: Loaded, sender: ComponentSender<Self>) {
         let layout = self.state.layout.clone();
         self.state = AppState::new(DeviceState::Connected(loaded.card), loaded.controls, layout);
         self.backend = Some(loaded.backend);
@@ -537,6 +728,9 @@ impl App {
             self.shell.show_connected(card);
         }
         self.shell.set_save_enabled(self.state.can_save());
+        self.install_mixage(sender.clone());
+        self.start_writer(&sender);
+        self.start_meters(&sender);
         self.shell.set_page(self.page);
         self.shell.toast("ZG01 connecté");
     }
