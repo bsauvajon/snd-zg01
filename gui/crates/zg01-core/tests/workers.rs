@@ -160,6 +160,51 @@ fn set_and_wait_reports_the_failure() {
     );
 }
 
+/// A direct write reports its outcome on the channel too: one write,
+/// one outcome.
+#[test]
+fn set_and_wait_reports_one_outcome_on_the_channel() {
+    let backend = Arc::new(RecordingBackend::default());
+    let (writer, rx) = ControlWriter::spawn(backend);
+    assert!(writer.set_and_wait("Gate", 42).is_ok());
+    let outcome = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(
+        outcome,
+        WriteOutcome::Ok {
+            name: "Gate".to_string(),
+            value: 42
+        }
+    );
+    assert!(
+        rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "one write, one outcome"
+    );
+}
+
+/// The outcome on the channel and the returned result tell the same
+/// story when the direct write fails.
+#[test]
+fn a_failed_set_and_wait_reports_one_outcome_on_the_channel() {
+    let backend = Arc::new(FailingBackend);
+    let (writer, rx) = ControlWriter::spawn(backend);
+    let error = writer.set_and_wait("Gate", 42).unwrap_err();
+    let outcome = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    match outcome {
+        WriteOutcome::Err {
+            name,
+            error: reported,
+        } => {
+            assert_eq!(name, "Gate");
+            assert_eq!(reported, error, "the channel and the result agree");
+        }
+        other => panic!("expected a failure, got {other:?}"),
+    }
+    assert!(
+        rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "one write, one outcome"
+    );
+}
+
 #[test]
 fn set_and_wait_is_not_overwritten_by_a_pending_value() {
     let backend = Arc::new(RecordingBackend::default());

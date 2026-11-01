@@ -109,9 +109,11 @@ impl ControlWriter {
     /// dropped, so the value asked for is the one the device holds when
     /// the call returns.
     ///
-    /// The outcome is returned to the caller and is *not* reported on the
-    /// channel of [`ControlWriter::spawn`], so a preset application
-    /// counts its own failures.
+    /// The outcome is returned to the caller **and** reported on the
+    /// channel of [`ControlWriter::spawn`]: the thread sends one
+    /// [`WriteOutcome`] per write, whatever the path it took. A caller
+    /// that only uses the returned result must drain that outcome (or
+    /// ignore it), otherwise the outcomes pile up in the channel.
     pub fn set_and_wait(&self, name: &str, value: i64) -> Result<(), String> {
         let (reply, answer) = mpsc::channel();
         self.commands
