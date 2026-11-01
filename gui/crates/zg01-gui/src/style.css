@@ -13,6 +13,8 @@
 @define-color zg_success #34c759;
 @define-color zg_warning #f0b429;
 @define-color zg_error #f0523b;
+@define-color zg_track #2a2f3a;
+@define-color zg_muted #8f96a3;
 
 window,
 .background {
@@ -146,8 +148,36 @@ button.suggested-action:disabled {
   padding: 5px 9px;
 }
 
-/* Footer ------------------------------------------------------------------ */
+/* Faders and meters ------------------------------------------------------- */
 
+.fader-root,
+.meter-root {
+  padding: 2px;
+}
+
+.fader-value {
+  font-size: 12px;
+  font-weight: 600;
+  font-feature-settings: "tnum" 1;
+  color: @zg_accent;
+}
+
+.fader-value.unknown {
+  color: alpha(@zg_muted, 0.72);
+}
+
+.fader-label,
+.meter-label {
+  font-size: 11px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.meter-label {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* Footer ------------------------------------------------------------------ */
 .footer {
   background-color: @zg_panel;
   border-top: 1px solid @zg_border;

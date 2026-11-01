@@ -6,6 +6,7 @@
 //! later tasks.
 
 mod app;
+mod widgets;
 mod window;
 
 use relm4::prelude::*;

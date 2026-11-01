@@ -10,6 +10,9 @@ pub mod alsa;
 /// The device watcher: the connection transitions of the ZG01.
 pub mod device;
 
+/// The value/fraction geometry of the custom widgets.
+pub mod geometry;
+
 /// The curated layout table: which control goes on which screen.
 pub mod layout;
 
