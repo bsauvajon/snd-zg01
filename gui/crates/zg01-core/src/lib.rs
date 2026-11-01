@@ -7,6 +7,15 @@
 /// The ALSA control surface: card discovery and the control backend.
 pub mod alsa;
 
+/// The curated layout table: which control goes on which screen.
+pub mod layout;
+
+/// The control model: what a control is and how its value reads.
+pub mod model;
+
+/// The conversions between the raw device values and the user units.
+pub mod units;
+
 /// Placeholder identifier for the ALSA PCM device handled by the GUI.
 ///
 /// The real device is resolved at runtime in a later task.
