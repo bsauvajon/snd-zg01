@@ -24,6 +24,7 @@ use std::rc::Rc;
 use gtk4::pango;
 use gtk4::prelude::*;
 use gtk4::{self as gtk, glib::Propagation, Orientation};
+use zg01_core::geometry::snap_to_step;
 use zg01_core::model::{format_value, AppState, ControlValue, Unit};
 
 use super::advanced_model::{AdvancedModel, AdvancedRow};
@@ -78,6 +79,15 @@ fn editor_kind(unit: Unit, min: i64, max: i64) -> EditorKind {
     }
 }
 
+/// The value an editor emits for the raw value a user picked.
+///
+/// A scale drag or a typed number can land between two device steps; the
+/// driver only accepts the `min + n * step` grid, so every emitted value is
+/// snapped there, exactly like the shared [`crate::widgets`] fader.
+fn snapped_edit(raw: i64, min: i64, max: i64, step: i64) -> i64 {
+    snap_to_step(raw, min, max, step)
+}
+
 /// What the screen asks the application to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AdvancedEvent {
@@ -107,6 +117,8 @@ struct ControlEditor {
     value_label: gtk::Label,
     /// Keeps a programmatic update from looking like a user change.
     guard: Rc<Cell<bool>>,
+    /// The last value the editor showed or emitted, for de-duplication.
+    last: Rc<Cell<Option<i64>>>,
     /// Whether the driver accepts writes.
     writable: bool,
 }
@@ -131,6 +143,7 @@ impl ControlEditor {
         };
 
         let guard = Rc::new(Cell::new(false));
+        let last = Rc::new(Cell::new(value.known()));
         let value_label = gtk::Label::new(None);
         value_label.add_css_class("fader-value");
         value_label.set_xalign(1.0);
@@ -178,15 +191,29 @@ impl ControlEditor {
                 slider.set_width_request(EDITOR_WIDTH);
                 slider.add_css_class("advanced-scale");
                 let handler_guard = guard.clone();
+                let handler_last = last.clone();
                 let emit = on_event.clone();
                 let control_name = row.name.clone();
                 slider.connect_value_changed(move |slider| {
                     if handler_guard.get() {
                         return;
                     }
+                    let raw = slider.value().round() as i64;
+                    let value = snapped_edit(raw, min, max, step);
+                    if value != raw {
+                        // Put the handle back on the grid without treating
+                        // the correction as a second user change.
+                        handler_guard.set(true);
+                        slider.set_value(value as f64);
+                        handler_guard.set(false);
+                    }
+                    if handler_last.get() == Some(value) {
+                        return;
+                    }
+                    handler_last.set(Some(value));
                     emit(AdvancedEvent::Write {
                         name: control_name.clone(),
-                        value: slider.value().round() as i64,
+                        value,
                     });
                 });
                 scale = Some(slider.clone());
@@ -203,15 +230,27 @@ impl ControlEditor {
                 ));
                 entry.set_value(start as f64);
                 let handler_guard = guard.clone();
+                let handler_last = last.clone();
                 let emit = on_event.clone();
                 let control_name = row.name.clone();
                 entry.connect_value_changed(move |entry| {
                     if handler_guard.get() {
                         return;
                     }
+                    let raw = entry.value().round() as i64;
+                    let value = snapped_edit(raw, min, max, step);
+                    if value != raw {
+                        handler_guard.set(true);
+                        entry.set_value(value as f64);
+                        handler_guard.set(false);
+                    }
+                    if handler_last.get() == Some(value) {
+                        return;
+                    }
+                    handler_last.set(Some(value));
                     emit(AdvancedEvent::Write {
                         name: control_name.clone(),
-                        value: entry.value().round() as i64,
+                        value,
                     });
                 });
                 spin = Some(entry.clone());
@@ -227,6 +266,7 @@ impl ControlEditor {
             spin,
             value_label,
             guard,
+            last,
             writable: row.writable,
         };
         editor.set(value);
@@ -250,6 +290,7 @@ impl ControlEditor {
                 }
                 self.value_label.set_text(&format_value(self.unit, value));
                 self.value_label.remove_css_class("unknown");
+                self.last.set(Some(value));
             }
             ControlValue::Unknown => {
                 if let Some(switch) = &self.switch {
@@ -257,6 +298,7 @@ impl ControlEditor {
                 }
                 self.value_label.set_text(UNKNOWN_TEXT);
                 self.value_label.add_css_class("unknown");
+                self.last.set(None);
             }
         }
         if let Some(switch) = &self.switch {
@@ -437,20 +479,7 @@ impl AdvancedScreen {
             empty,
         });
 
-        {
-            let filter = filter.clone();
-            let group_filter = group_filter.clone();
-            search.connect_search_changed(move |search| {
-                filter.apply(search.text().as_str(), group_filter.selected());
-            });
-        }
-        {
-            let filter = filter.clone();
-            let search = search.clone();
-            group_filter.connect_selected_notify(move |group_filter| {
-                filter.apply(search.text().as_str(), group_filter.selected());
-            });
-        }
+        connect_filters(&search, &group_filter, filter.clone());
         filter.apply("", 0);
 
         AdvancedScreen { root, rows }
@@ -469,6 +498,34 @@ impl AdvancedScreen {
             }
         }
     }
+}
+
+/// Wires the search and section filters to the table.
+///
+/// Each handler holds the other widget weakly. A strong capture on both
+/// sides would form a reference cycle between the search entry and the
+/// drop-down and keep the whole row tree alive after a reload replaced the
+/// screen. The [`FilterBar`] is held strongly by the two handlers and is
+/// released with them.
+fn connect_filters(search: &gtk::SearchEntry, group_filter: &gtk::DropDown, filter: Rc<FilterBar>) {
+    let group_weak = group_filter.downgrade();
+    {
+        let filter = filter.clone();
+        search.connect_search_changed(move |search| {
+            let Some(group_filter) = group_weak.upgrade() else {
+                return;
+            };
+            filter.apply(search.text().as_str(), group_filter.selected());
+        });
+    }
+
+    let search_weak = search.downgrade();
+    group_filter.connect_selected_notify(move |group_filter| {
+        let Some(search) = search_weak.upgrade() else {
+            return;
+        };
+        filter.apply(search.text().as_str(), group_filter.selected());
+    });
 }
 
 /// The column header of the table.
@@ -606,7 +663,11 @@ fn type_label(unit: Unit) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{editor_kind, type_label, unit_label, EditorKind};
+    use super::{connect_filters, editor_kind, snapped_edit, type_label, unit_label, EditorKind};
+    use crate::ui::advanced_model::AdvancedModel;
+    use gtk4 as gtk;
+    use gtk4::prelude::*;
+    use std::rc::Rc;
     use zg01_core::model::Unit;
 
     #[test]
@@ -625,5 +686,62 @@ mod tests {
         assert_eq!(editor_kind(Unit::Steps, 0, 127), EditorKind::Scale);
         assert_eq!(editor_kind(Unit::Steps, 0, 2097151), EditorKind::Number);
         assert_eq!(editor_kind(Unit::Raw, 0, 2097151), EditorKind::Number);
+    }
+
+    #[test]
+    fn an_off_grid_scale_or_spin_value_snaps_to_the_control_grid() {
+        assert_eq!(snapped_edit(63, 0, 100, 5), 65);
+        assert_eq!(snapped_edit(62, 0, 100, 5), 60);
+        assert_eq!(
+            snapped_edit(-173, -180, 180, 10),
+            -170,
+            "the grid is anchored on the control minimum"
+        );
+        assert_eq!(
+            snapped_edit(7, 0, 2_097_151, 1),
+            7,
+            "a one-step register is already on its grid"
+        );
+        assert_eq!(
+            snapped_edit(42, 0, 100, 0),
+            42,
+            "a control with no published step moves one value at a time"
+        );
+    }
+
+    /// The search and section handlers must not form a reference cycle.
+    ///
+    /// Each handler used to capture the other widget strongly, which kept
+    /// both, the `FilterBar` and every `ListBoxRow` alive after a reload
+    /// replaced the screen. The weak captures release them.
+    #[test]
+    #[ignore = "needs a GTK display; run under Xvfb with --ignored"]
+    fn the_filter_handlers_do_not_keep_the_widgets_alive() {
+        gtk::init().expect("a GTK display, e.g. Xvfb");
+
+        let search = gtk::SearchEntry::new();
+        let group_filter = gtk::DropDown::from_strings(&["Tous les groupes", "MIC"]);
+        let filter = Rc::new(super::FilterBar {
+            model: AdvancedModel { rows: Vec::new() },
+            entries: Vec::new(),
+            groups: vec!["MIC".to_string()],
+            count: gtk::Label::new(None),
+            empty: gtk::Label::new(None),
+        });
+        connect_filters(&search, &group_filter, filter);
+
+        let search_weak = search.downgrade();
+        let group_weak = group_filter.downgrade();
+        drop(search);
+        drop(group_filter);
+
+        assert!(
+            search_weak.upgrade().is_none(),
+            "the drop-down handler must not keep the search entry alive"
+        );
+        assert!(
+            group_weak.upgrade().is_none(),
+            "the search handler must not keep the drop-down alive"
+        );
     }
 }
