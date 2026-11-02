@@ -22,12 +22,17 @@
 static void zg01_meters_store(struct zg01_meter_state *m,
                               const struct zg01_meter_values *v)
 {
+    /*
+     * Publish the snapshot with release ordering: a reader that observes
+     * valid == 1 with acquire ordering sees the levels and the timestamp
+     * written before it, even on a weakly ordered CPU (arm64).
+     */
     atomic_set(&m->levels[ZG01_METER_MIC_IN], v->mic_in);
     atomic_set(&m->levels[ZG01_METER_MIC_OUT], v->mic_out);
     atomic_set(&m->levels[ZG01_METER_PC_IN], v->pc_in);
     atomic_set(&m->levels[ZG01_METER_STREAM_MIX], v->stream_mix);
     atomic_long_set(&m->valid_jiffies, jiffies);
-    atomic_set(&m->valid, 1);
+    atomic_set_release(&m->valid, 1);
 }
 
 static void zg01_meters_complete(struct urb *urb)
@@ -47,7 +52,7 @@ static void zg01_meters_complete(struct urb *urb)
         if (m->errors >= ZG01_METER_MAX_ERRORS) {
             dev_err(&dev->interface->dev,
                     "meter reader stopped after %u errors\n", m->errors);
-            m->running = false;
+            WRITE_ONCE(m->running, false);
             return;
         }
     } else {
@@ -76,14 +81,14 @@ static void zg01_meters_complete(struct urb *urb)
         }
     }
 
-    if (atomic_read(&dev->disconnecting) || !m->running)
+    if (atomic_read(&dev->disconnecting) || !READ_ONCE(m->running))
         return;
 
     err = usb_submit_urb(urb, GFP_ATOMIC);
     if (err == -EPERM)
         return;
     if (err) {
-        m->running = false;
+        WRITE_ONCE(m->running, false);
         dev_err(&dev->interface->dev,
                 "meter URB resubmit failed: %d\n", err);
     }
@@ -96,7 +101,7 @@ void zg01_meters_keepalive_fn(struct work_struct *work)
     struct zg01_meter_state *m = &dev->meters;
     int ret;
 
-    if (!m->keepalive_running || atomic_read(&dev->disconnecting))
+    if (!READ_ONCE(m->keepalive_running) || atomic_read(&dev->disconnecting))
         return;
 
     ret = zg01_param_keepalive(dev);
@@ -105,7 +110,7 @@ void zg01_meters_keepalive_fn(struct work_struct *work)
                              "meter keepalive failed: %d\n", ret);
 
     mutex_lock(&dev->param_mutex);
-    if (m->keepalive_running && !atomic_read(&dev->disconnecting))
+    if (READ_ONCE(m->keepalive_running) && !atomic_read(&dev->disconnecting))
         schedule_delayed_work(&m->keepalive_work, HZ);
     mutex_unlock(&dev->param_mutex);
 }
@@ -133,7 +138,7 @@ void zg01_meters_poll_fn(struct work_struct *work)
                              "meter status poll failed: %d\n", ret);
 
     mutex_lock(&dev->param_mutex);
-    if (m->poll_running && !atomic_read(&dev->disconnecting))
+    if (READ_ONCE(m->poll_running) && !atomic_read(&dev->disconnecting))
         schedule_delayed_work(&m->poll_work, HZ / 4);
     mutex_unlock(&dev->param_mutex);
 }
@@ -146,7 +151,7 @@ int zg01_meters_start(struct zg01_dev *dev)
     if (!dev || !dev->param_available)
         return 0;
 
-    if (m->running)
+    if (READ_ONCE(m->running))
         return 0;
 
     /* Release a URB left by an error stop before allocating another. */
@@ -173,12 +178,12 @@ int zg01_meters_start(struct zg01_dev *dev)
     m->invalid = 0;
     m->other = 0;
     m->last_log_jiffies = 0;
-    atomic_set(&m->valid, 0);
-    m->running = true;
+    atomic_set_release(&m->valid, 0);
+    WRITE_ONCE(m->running, true);
 
     err = usb_submit_urb(m->urb, GFP_KERNEL);
     if (err) {
-        m->running = false;
+        WRITE_ONCE(m->running, false);
         usb_free_urb(m->urb);
         m->urb = NULL;
         kfree(m->buf);
@@ -192,9 +197,9 @@ int zg01_meters_start(struct zg01_dev *dev)
                              "meter session init failed: %d\n", err);
 
     mutex_lock(&dev->param_mutex);
-    m->poll_running = true;
+    WRITE_ONCE(m->poll_running, true);
     schedule_delayed_work(&m->poll_work, 0);
-    m->keepalive_running = true;
+    WRITE_ONCE(m->keepalive_running, true);
     schedule_delayed_work(&m->keepalive_work, HZ);
     mutex_unlock(&dev->param_mutex);
 
@@ -206,16 +211,16 @@ void zg01_meters_stop(struct zg01_dev *dev)
     struct zg01_meter_state *m = &dev->meters;
 
     mutex_lock(&dev->param_mutex);
-    m->keepalive_running = false;
+    WRITE_ONCE(m->keepalive_running, false);
     mutex_unlock(&dev->param_mutex);
     cancel_delayed_work_sync(&m->keepalive_work);
 
     mutex_lock(&dev->param_mutex);
-    m->poll_running = false;
+    WRITE_ONCE(m->poll_running, false);
     mutex_unlock(&dev->param_mutex);
     cancel_delayed_work_sync(&m->poll_work);
 
-    m->running = false;
+    WRITE_ONCE(m->running, false);
     if (m->urb) {
         usb_kill_urb(m->urb);
         usb_free_urb(m->urb);
@@ -223,7 +228,7 @@ void zg01_meters_stop(struct zg01_dev *dev)
     }
     kfree(m->buf);
     m->buf = NULL;
-    atomic_set(&m->valid, 0);
+    atomic_set_release(&m->valid, 0);
 }
 
 /*
@@ -238,7 +243,7 @@ int zg01_meters_value(struct zg01_dev *dev, unsigned int index)
 
     if (index >= ZG01_METER_COUNT)
         return -EINVAL;
-    if (!atomic_read(&m->valid))
+    if (!atomic_read_acquire(&m->valid))
         return -ENODATA;
     if (time_after(jiffies, atomic_long_read(&m->valid_jiffies) +
                    msecs_to_jiffies(ZG01_METER_STALE_MS)))
