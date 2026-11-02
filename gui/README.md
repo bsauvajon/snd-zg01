@@ -104,7 +104,15 @@ directory (`<dir>/fr/LC_MESSAGES/zg01-control.mo`).
 
 ## Status
 
-v1 is complete: Mixage, Micro, Avancé, the preset loader, Save/Reset,
-disconnect/reconnect, the custom fader and meter widgets, the French
-translation and the packaging. The hardware acceptance checklist lives in
-`../docs/GUI_TEST.md`.
+The v1 settings surface is complete: Mixage, Micro, Avancé, the preset
+loader, Save/Reset, disconnect/reconnect, the custom fader and meter
+widgets, the French translation and the packaging. The hardware
+acceptance checklist lives in `../docs/GUI_TEST.md`.
+
+**Live-meter acceptance is blocked.** The decode and the meter controls
+are implemented, and earlier captures showed live values, but the latest
+hardware session returns only zero-length meter frames and `-ENODATA`
+after a suspend, even after a power cycle. On that device the GUI draws
+the four card meters dashed/unknown instead of a fake zero; this is the
+documented state, not a pass of the live-meter acceptance. See
+`../docs/METER_TEST.md` and `../docs/METER_PROTOCOL.md`.

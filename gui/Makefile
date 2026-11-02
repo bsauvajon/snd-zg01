@@ -30,7 +30,7 @@ check-po:
 # harmless. POTFILES lists every source file that carries a message.
 pot:
 	$(XGETTEXT) --language=C++ --from-code=UTF-8 --foreign-user \
-		--copyright-holder="Bernard Sauvajon" \
+		--copyright-holder="Brice Sauvajon" \
 		--package-name="ZG01 Control" \
 		--msgid-bugs-address="https://github.com/bsauvajon/snd-zg01/issues" \
 		--add-comments=TRANSLATORS: \

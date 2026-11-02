@@ -1,10 +1,16 @@
 # ZG01 meter frames (bulk IN 0x83)
 
-Status: **partial**. The framing, the header, the 14-bit layout, the dB scale
-and the current/peak pairing are measured. Four meters are decoded with
-stated confidence: `pc_in` (high), `mic_out` and `mic_in` (medium), and
+Status: **partial; live-meter acceptance is blocked**. The framing, the
+header, the 14-bit layout, the dB scale and the current/peak pairing are
+measured from earlier captures. Four meters are decoded with stated
+confidence: `pc_in` (high), `mic_out` and `mic_in` (medium), and
 `stream_mix` (medium). `game_mix` and `hdmi_in` are not decoded. GAME is
 deferred to v1.1 (see "Scope and reserved names").
+
+The decode below is still the documented contract, but the latest
+hardware session does **not** produce live frames: see "Current session
+status". Do not read the earlier playback tables as a claim that the
+current device streams.
 
 ## Transport
 
@@ -20,12 +26,14 @@ deferred to v1.1 (see "Scope and reserved names").
 - Frames arrive once the driver's `0x83` meter reader is running and its
   1 Hz `0x03` keepalive is sent. The captures arrived at about 20 Hz
   (roughly every 50 ms).
-- Start-up, measured on a cold device (`docs/METER_TEST.md`): the first
-  `0x83` IN URB may complete at once with one 192-byte frame. Then the
-  device returns zero-length packets about every 100 ms until the first
-  keepalive. The first 192-byte frame after that keepalive arrived 49 ms
-  later, and the zero-length packets stopped. Resume after a system
-  suspend showed the same sequence.
+- Start-up, measured on a cold device that still streamed (earlier
+  captures; `docs/METER_TEST.md`): the first `0x83` IN URB may complete at
+  once with one 192-byte frame. Then the device returns zero-length
+  packets about every 100 ms until the first keepalive. The first 192-byte
+  frame after that keepalive arrived 49 ms later, and the zero-length
+  packets stopped. An earlier resume after a system suspend showed the
+  same sequence. The current device is stuck in the zero-length phase and
+  does not reach the 192-byte frames (see "Current session status").
 
 Raw frame offset `r` maps to payload index `p` as `p = 3*(r//4) + (r%4) - 1`
 for `r % 4 != 0`. Payload index `p` maps to raw offset `r = 4*(p//3) + 1 + p%3`.
@@ -133,6 +141,26 @@ show otherwise:
   registered in v1. A kcontrol is added only when its field is decoded.
 - Registered in v1 (the four decoded meters): `Meter Mic In`,
   `Meter Mic Out`, `Meter PC In`, `Meter Stream Mix`.
+
+## Current session status
+
+The latest meter ledger (`.superpowers/sdd/2026-10-31-zg01-meters/`,
+2026-11-01) records a **blocked** live-meter session:
+
+- After the suspend that produced `-71` (`EPROTO`) enumeration errors, the
+  ZG01 never leaves the "waiting for keepalive" state on this unit.
+- EP `0x83` returns zero-length packets about every 100 ms and no 192-byte
+  frame. `frames` stays 0 while `other` climbs.
+- The driver sends the same `0x03` keepalive and the same 250 ms EP0
+  status poll (`bRequest 7`, then `bRequest 4`) as the Windows application,
+  and the device answers both. A power cycle, `usbreset`, a hub port cycle
+  and a replay of the Windows preamble did not restore frames.
+- `amixer cget` on the four meter controls returns `-ENODATA`.
+
+This is a device/session blocker, not a decode change. The GUI must draw
+the affected meters as unknown (dashed), never as zero. See
+`docs/METER_TEST.md` for the acceptance status and `docs/GUI_TEST.md` for
+the GUI-side state.
 
 ## Evidence
 

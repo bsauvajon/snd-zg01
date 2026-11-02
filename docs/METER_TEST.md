@@ -5,6 +5,17 @@ Acceptance for the four card meters: `Meter Mic In`, `Meter Mic Out`,
 `docs/METER_PROTOCOL.md`; this file records the hardware checks and what
 they showed.
 
+> **Acceptance status: BLOCKED (2026-11-01).** The checks below passed on
+> an earlier session, while the device still streamed 192-byte frames.
+> The latest session does not: after a suspend that produced `-71`
+> (`EPROTO`) enumeration errors, EP `0x83` returns only zero-length
+> packets, `frames` stays 0, and the four controls read `-ENODATA` even
+> after a power cycle, `usbreset`, a hub port cycle and a replay of the
+> Windows preamble. The earlier results are kept as the decode evidence;
+> they are **not** the current behavior. Live-meter acceptance is
+> blocked on the device/session, not on a new protocol. The GUI state for
+> this case is the dashed/unknown meter documented in `docs/GUI_TEST.md`.
+
 Values are the control's integer, 0..127, where `value = dB + 127`
 (0 = −127 dB, 127 = 0 dBFS). Rounded to whole steps; the decode is 1 dB
 per step.
@@ -36,8 +47,8 @@ the min values include the decay.
 | 4 | Silence reads the floor (see note) | PASS, with tolerance |
 | 5 | Mic In / Mic Out track a deliberate mic input | NOT RUN (see note) |
 | 6 | Disconnect while streaming: no crash, stream ends cleanly | PASS |
-| 7 | Replug recreates the card and the four controls, and values resume | PASS |
-| 8 | Suspend/resume restarts the reader and the keepalive | PASS for `freeze` (s2idle) with plain resume; `reset_resume` not exercised |
+| 7 | Replug recreates the card and the four controls, and values resume | PASS in the earlier session; **BLOCKED now** (controls reappear, reads are `-ENODATA`) |
+| 8 | Suspend/resume restarts the reader and the keepalive | PASS for the reader/keepalive in `freeze` (s2idle); **frames never resumed** in the latest session; `reset_resume` not exercised |
 | 9 | `alsactl store` and `restore` succeed; meters are not restored | PASS |
 | 10 | No oops, BUG, WARNING or lockdep splat in the log | PASS |
 
@@ -91,9 +102,13 @@ the device was deauthorised (`echo 0 > …/1-5.3.3/authorized`, the same path
 as an unplug). The player exited with `ENODEV`. The card left
 `/proc/asound/cards` and no oops, BUG, WARNING or lockdep line followed.
 
-**7. Replug.** `echo 1 > …/authorized` recreated the card
-(`2 [zg01] zg01_usb - ZG01`) and the four controls. The reader started
-again, and the controls returned live values (idle `pc_in` 38).
+**7. Replug.** In the earlier session, `echo 1 > …/authorized` recreated
+the card (`2 [zg01] zg01_usb - ZG01`) and the four controls. The reader
+started again, and the controls returned live values (idle `pc_in` 38).
+In the latest session the card and the four controls come back, but every
+read returns `-ENODATA`: the device sends zero-length packets and no
+192-byte frame. The earlier result is evidence for the probe path, not a
+claim about the current unit.
 
 **8. Suspend/resume.** Run as a system suspend-to-idle
 (`rtcwake -m freeze -s 15`, the `freeze` state, about 17 s). A usbmon capture
@@ -108,6 +123,11 @@ of the device's bus showed:
 - After resume the device sent one buffered frame, then zero-length packets
   until the keepalive, then 192-byte frames.
 - The control reads after resume returned live values.
+
+**Latest session:** this resume was the one after which the device stopped
+metering. The reader and keepalive restarted as above, but the device
+stayed on zero-length packets and no later frame arrived; reads were
+`-ENODATA`. Do not treat this check as a current pass.
 
 Not exercised: `zg01_reset_resume`. The device resumed without a reset, so the
 core used plain `resume`. The reset path calls the same `zg01_meters_start`,

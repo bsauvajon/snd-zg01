@@ -43,8 +43,20 @@ Expected:
 - A silent input falls back to the bottom; it does not stay frozen.
 - A meter whose control is missing or unreadable is drawn dashed, never as a
   solid zero.
+- A control that reads `-ENODATA` (the driver has no valid frame) is also
+  dashed/unknown, and the value label shows `—`; it is never shown as zero.
 - `GAME` has no card meter in v1. Do not report this as a failure; it is the
   documented v1.1 item.
+
+> **Current hardware note (2026-11-01).** The meter protocol decode passes
+> on the earlier captures, but the current test unit stops streaming after
+> a suspend: EP `0x83` returns zero-length packets and the four meter
+> controls read `-ENODATA`. The expected GUI presentation is therefore
+> four dashed/unknown card meters, not moving bars. Record that as the
+> observed state; live-meter acceptance stays **blocked** until a session
+> brings the 192-byte frames back (see `docs/METER_TEST.md`). A moving bar
+> cannot be required from this unit, and a dashed bar is not a code
+> failure.
 
 ## 3. Fader writes
 
