@@ -18,6 +18,8 @@
 //! | [`Unit::Bool`] | a switch, shown as `on`/`off` |
 //! | [`Unit::Raw`] | a value without a unit |
 
+use std::sync::mpsc::{self, Receiver};
+
 use serde::Deserialize;
 
 use crate::alsa::{CardInfo, ControlInfo};
@@ -274,14 +276,42 @@ impl AppState {
 /// not leave the GUI claiming to know what the device holds. The error is
 /// returned for the caller to report.
 pub fn apply_reset(state: &mut AppState, writer: &ControlWriter) -> Result<(), String> {
+    let result = reset_device(writer);
+    state.mark_all_unknown();
+    result
+}
+
+/// Performs the `Reset to ZG01` action without touching the model.
+///
+/// The GUI runs this on a worker thread: the flush and the awaited action
+/// can block on the USB device, and the GTK loop must not wait for them.
+/// The caller marks the values unknown when the completion arrives.
+pub fn reset_device(writer: &ControlWriter) -> Result<(), String> {
     let flushed = writer.flush_and_wait();
     let reset = writer.set_and_wait(RESET_ACTION, 1);
-    state.mark_all_unknown();
     match (flushed, reset) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(err), _) => Err(format!("could not flush the pending writes: {err}")),
         (Ok(()), Err(err)) => Err(err),
     }
+}
+
+/// Runs [`reset_device`] on a worker and returns its completion channel.
+///
+/// The function returns as soon as the worker is started; a delayed device
+/// never blocks the caller. The receiver yields exactly one result.
+pub fn spawn_reset(writer: ControlWriter) -> Receiver<Result<(), String>> {
+    let (results, receiver) = mpsc::channel();
+    let thread_results = results.clone();
+    let spawned = std::thread::Builder::new()
+        .name("zg01-reset".to_string())
+        .spawn(move || {
+            let _ = thread_results.send(reset_device(&writer));
+        });
+    if let Err(err) = spawned {
+        let _ = results.send(Err(format!("could not start the reset thread: {err}")));
+    }
+    receiver
 }
 
 /// Whether a control holds a value the GUI must know to save.

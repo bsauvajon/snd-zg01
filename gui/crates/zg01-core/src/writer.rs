@@ -44,6 +44,17 @@ pub enum WriteOutcome {
         /// What the driver answered.
         error: String,
     },
+    /// The card went away while the write was in flight.
+    ///
+    /// The GUI must drop the backend and re-read the card, not just revert
+    /// the widget: a quick unplug/replug with the same ALSA index would
+    /// otherwise keep using the old handle.
+    DeviceLost {
+        /// The name of the control.
+        name: String,
+        /// What the driver answered.
+        error: String,
+    },
 }
 
 /// A request for the writer thread.
@@ -68,6 +79,19 @@ enum Command {
     Flush {
         /// Where the result is sent back once the pending values are on
         /// the device.
+        reply: Sender<Result<(), String>>,
+    },
+    /// Flush every pending value, then write one value and confirm it.
+    ///
+    /// This is the Save path: a Save must not reach the device before the
+    /// edits that were queued before it. Doing both in the worker makes
+    /// the barrier and the action one serialized command.
+    FlushSetAndWait {
+        /// The name of the control.
+        name: String,
+        /// The value to write.
+        value: i64,
+        /// Where the outcome is sent back.
         reply: Sender<Result<(), String>>,
     },
 }
@@ -156,6 +180,28 @@ impl ControlWriter {
             .recv_timeout(ANSWER_TIMEOUT)
             .map_err(|err| format!("the writer thread did not answer: {err}"))?
     }
+
+    /// Flushes every pending value, then writes `name` and waits for it.
+    ///
+    /// This is the Save action: it is a global barrier followed by one
+    /// awaited write, performed by the same worker. A fader, a toggle or a
+    /// preset value queued before it is on the device when the call
+    /// returns, so the persisted settings cannot miss it. If the flush
+    /// fails, the action is **not** written: saving would persist a value
+    /// the user did not ask for.
+    pub fn flush_set_and_wait(&self, name: &str, value: i64) -> Result<(), String> {
+        let (reply, answer) = mpsc::channel();
+        self.commands
+            .send(Command::FlushSetAndWait {
+                name: name.to_string(),
+                value,
+                reply,
+            })
+            .map_err(|_| "the writer thread is gone".to_string())?;
+        answer
+            .recv_timeout(ANSWER_TIMEOUT)
+            .map_err(|err| format!("the writer thread did not answer: {err}"))?
+    }
 }
 
 /// The body of the writer thread.
@@ -190,22 +236,29 @@ fn run(backend: Arc<dyn AlsaBackend>, inbox: Receiver<Command>, outcomes: Sender
                 // The value asked for wins over the queued one.
                 pending.remove(&name);
                 let result = backend.write(&name, value);
-                let _ = outcomes.send(match &result {
-                    Ok(()) => WriteOutcome::Ok {
-                        name: name.clone(),
-                        value,
-                    },
-                    Err(err) => WriteOutcome::Err {
-                        name: name.clone(),
-                        error: err.to_string(),
-                    },
-                });
+                report(&outcomes, &name, value, &result);
                 let _ = reply.send(result.map_err(|err| err.to_string()));
             }
             Ok(Command::Flush { reply }) => {
                 let result = flush(&*backend, &mut pending, &outcomes);
                 deadline = None;
                 let _ = reply.send(result);
+            }
+            Ok(Command::FlushSetAndWait { name, value, reply }) => {
+                // The barrier must succeed before the action is written:
+                // saving after a failed flush would persist a stale value.
+                match flush(&*backend, &mut pending, &outcomes) {
+                    Ok(()) => {
+                        let result = backend.write(&name, value);
+                        report(&outcomes, &name, value, &result);
+                        let _ = reply.send(result.map_err(|err| err.to_string()));
+                    }
+                    Err(error) => {
+                        let _ =
+                            reply.send(Err(format!("could not flush the pending writes: {error}")));
+                    }
+                }
+                deadline = None;
             }
             Err(RecvTimeoutError::Timeout) => {
                 let _ = flush(&*backend, &mut pending, &outcomes);
@@ -218,6 +271,30 @@ fn run(backend: Arc<dyn AlsaBackend>, inbox: Receiver<Command>, outcomes: Sender
             }
         }
     }
+}
+
+/// Reports one write on the outcome channel, keeping liveness errors apart.
+fn report(
+    outcomes: &Sender<WriteOutcome>,
+    name: &str,
+    value: i64,
+    result: &Result<(), crate::alsa::AlsaError>,
+) {
+    let outcome = match result {
+        Ok(()) => WriteOutcome::Ok {
+            name: name.to_string(),
+            value,
+        },
+        Err(err) if err.is_liveness() => WriteOutcome::DeviceLost {
+            name: name.to_string(),
+            error: err.to_string(),
+        },
+        Err(err) => WriteOutcome::Err {
+            name: name.to_string(),
+            error: err.to_string(),
+        },
+    };
+    let _ = outcomes.send(outcome);
 }
 
 /// Writes the last value of every pending control.
@@ -237,14 +314,11 @@ fn flush(
     let batch: Vec<(String, i64)> = pending.drain().collect();
     let mut failures = Vec::new();
     for (name, value) in batch {
-        let _ = outcomes.send(match backend.write(&name, value) {
-            Ok(()) => WriteOutcome::Ok { name, value },
-            Err(err) => {
-                let error = err.to_string();
-                failures.push(error.clone());
-                WriteOutcome::Err { name, error }
-            }
-        });
+        let result = backend.write(&name, value);
+        if let Err(err) = &result {
+            failures.push(err.to_string());
+        }
+        report(outcomes, &name, value, &result);
     }
     if failures.is_empty() {
         Ok(())

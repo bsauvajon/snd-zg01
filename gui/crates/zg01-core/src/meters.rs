@@ -37,6 +37,11 @@ pub struct MeterSnapshot {
     pub values: [Option<i64>; 4],
     /// When the readings were taken.
     pub at: Instant,
+    /// Whether a read failed because the card went away.
+    ///
+    /// The GUI drops the backend and re-reads the card when this is set;
+    /// an `-ENODATA` meter is not a disconnect.
+    pub lost: bool,
 }
 
 impl MeterSnapshot {
@@ -53,11 +58,15 @@ impl MeterSnapshot {
 /// same way, so one broken meter never hides the others.
 pub fn poll_meters(backend: &dyn AlsaBackend) -> MeterSnapshot {
     let mut values = [None; 4];
+    let mut lost = false;
     for (slot, name) in values.iter_mut().zip(METER_CONTROLS) {
         *slot = match backend.read(name) {
             Ok(value) => Some(value),
             Err(AlsaError::Unknown(_)) | Err(AlsaError::NoData(_)) => None,
             Err(err) => {
+                if err.is_liveness() {
+                    lost = true;
+                }
                 tracing::warn!("could not read the meter {name}: {err}");
                 None
             }
@@ -66,6 +75,7 @@ pub fn poll_meters(backend: &dyn AlsaBackend) -> MeterSnapshot {
     MeterSnapshot {
         values,
         at: Instant::now(),
+        lost,
     }
 }
 
@@ -102,6 +112,7 @@ mod tests {
         let snapshot = MeterSnapshot {
             values: [Some(1), None, Some(3), None],
             at: std::time::Instant::now(),
+            lost: false,
         };
         assert_eq!(snapshot.value(0), Some(1));
         assert_eq!(snapshot.value(1), None);

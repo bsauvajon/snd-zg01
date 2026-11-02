@@ -32,6 +32,12 @@ const ZG01_DRIVER: &str = "zg01";
 /// can tell "no reading" from "the control failed".
 const ENODATA: i32 = 61;
 
+/// `EIO`: the device went away while an operation was in flight.
+const EIO: i32 = 5;
+
+/// `ENODEV`: the device is gone.
+const ENODEV: i32 = 19;
+
 /// A sound card of the ZG01 driver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardInfo {
@@ -41,6 +47,12 @@ pub struct CardInfo {
     pub id: String,
     /// The driver name, e.g. `zg01_usb`.
     pub driver: String,
+    /// The USB bus and device number, e.g. `1:7`.
+    ///
+    /// A card that is unplugged and plugged back in gets the same ALSA index
+    /// but a new USB device number. The watcher compares this field so a
+    /// quick replug is not mistaken for an unchanged card.
+    pub generation: Option<String>,
 }
 
 /// The kind of value an ALSA element carries.
@@ -99,6 +111,23 @@ pub enum AlsaError {
     NoData(String),
 }
 
+impl AlsaError {
+    /// Whether the error means the card went away.
+    ///
+    /// `ENODEV` and `EIO` are what a read or a write reports after the USB
+    /// device was unplugged (or replaced by a card with the same index).
+    /// The GUI must then drop the backend and re-read the card instead of
+    /// treating the value as a transient control failure.
+    pub fn is_liveness(&self) -> bool {
+        let errno = match self {
+            AlsaError::Alsa(error) => error.errno(),
+            AlsaError::Io(error) => error.raw_os_error().unwrap_or(0),
+            _ => return false,
+        };
+        errno == ENODEV || errno == EIO
+    }
+}
+
 /// The control surface the GUI talks to.
 pub trait AlsaBackend: Send + Sync {
     /// Every control the device publishes.
@@ -141,7 +170,31 @@ pub fn find_card_text(text: &str, want: Option<&str>) -> Option<CardInfo> {
 /// Finds the ZG01 card on the running system.
 pub fn find_card(want: Option<&str>) -> Result<CardInfo, AlsaError> {
     let text = std::fs::read_to_string(CARDS_PATH)?;
-    find_card_text(&text, want).ok_or(AlsaError::CardNotFound)
+    let mut card = find_card_text(&text, want).ok_or(AlsaError::CardNotFound)?;
+    card.generation = card_generation(card.index);
+    Ok(card)
+}
+
+/// The USB bus and device numbers of a card, when sysfs exposes them.
+///
+/// `/proc/asound/cards` only carries the ALSA index, which a quick replug
+/// keeps. The USB `devnum` changes, so it tells the watcher that the card
+/// behind the same index is a new device.
+fn card_generation(index: u32) -> Option<String> {
+    let device = std::fs::canonicalize(format!("/sys/class/sound/card{index}/device")).ok()?;
+    let usb = device
+        .ancestors()
+        .find(|path| path.join("devnum").exists() && path.join("busnum").exists())?;
+    let bus = read_trimmed(usb.join("busnum"))?;
+    let dev = read_trimmed(usb.join("devnum"))?;
+    Some(format!("{bus}:{dev}"))
+}
+
+/// Reads a one-line sysfs attribute.
+fn read_trimmed(path: std::path::PathBuf) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 /// Parses one line of `/proc/asound/cards`.
@@ -163,7 +216,12 @@ fn parse_card_line(line: &str) -> Option<CardInfo> {
     let rest = rest.strip_prefix(':')?;
     let driver = rest.split_whitespace().next()?.to_string();
 
-    Some(CardInfo { index, id, driver })
+    Some(CardInfo {
+        index,
+        id,
+        driver,
+        generation: None,
+    })
 }
 
 /// The backend that talks to the real device.
@@ -641,6 +699,8 @@ pub enum FakeError {
     ReadOnly,
     /// The control kind cannot be handled as a number.
     Unsupported,
+    /// The card went away (`ENODEV`).
+    DeviceLost,
 }
 
 /// A test double for [`AlsaBackend`].
@@ -751,6 +811,7 @@ fn fake_error(error: &FakeError, name: &str) -> AlsaError {
         FakeError::Unknown => AlsaError::Unknown(name.to_string()),
         FakeError::ReadOnly => AlsaError::ReadOnly(name.to_string()),
         FakeError::Unsupported => AlsaError::Unsupported(name.to_string()),
+        FakeError::DeviceLost => AlsaError::Alsa(alsa::Error::new("fake", ENODEV)),
     }
 }
 
@@ -761,6 +822,19 @@ mod tests {
     use super::{
         element_name, find_cached, AlsaError, ControlKind, ElemCache, ElemMeta, RawElemId,
     };
+
+    #[test]
+    fn a_missing_device_is_a_liveness_error() {
+        let gone = AlsaError::Alsa(alsa::Error::new("snd_ctl_elem_read", 19));
+        let io = AlsaError::Io(std::io::Error::from_raw_os_error(5));
+        let unknown = AlsaError::Unknown("Gate".to_string());
+        assert!(gone.is_liveness(), "ENODEV means the card went away");
+        assert!(io.is_liveness(), "EIO means the card went away");
+        assert!(
+            !unknown.is_liveness(),
+            "a missing control is not a disconnect"
+        );
+    }
 
     /// An element identifier that names `name`, without a card.
     fn element(name: &str) -> RawElemId {

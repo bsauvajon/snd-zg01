@@ -28,7 +28,8 @@ use std::os::raw::{c_char, c_int};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -238,10 +239,34 @@ pub enum SkipReason {
 /// One value the plan applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Apply {
+    /// The device address of the parameter.
+    pub address: u16,
     /// The ALSA name of the control.
     pub name: String,
     /// The user value to write.
     pub value: i64,
+}
+
+/// One value that reached the device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Applied {
+    /// The device address of the parameter.
+    pub address: u16,
+    /// The ALSA name of the control.
+    pub name: String,
+    /// The user value that was written.
+    pub value: i64,
+}
+
+/// One value the driver refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Failed {
+    /// The device address of the parameter.
+    pub address: u16,
+    /// The ALSA name of the control.
+    pub name: String,
+    /// What the driver answered.
+    pub error: String,
 }
 
 /// One preset parameter the plan does not apply.
@@ -265,12 +290,42 @@ pub struct PresetPlan {
 /// The outcome of applying a plan.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApplyReport {
-    /// The names of the controls that were written.
-    pub applied: Vec<String>,
+    /// The values that reached the device.
+    pub applied: Vec<Applied>,
     /// The parameters that were not applied, as planned.
     pub skipped: Vec<Skip>,
     /// The controls whose write failed, with the driver's error.
-    pub failed: Vec<(String, String)>,
+    pub failed: Vec<Failed>,
+    /// Whether the user cancelled the operation before every value landed.
+    pub cancelled: bool,
+}
+
+/// A token that stops a preset application between two writes.
+///
+/// The check happens before every write, so cancelling never interrupts a
+/// write that is already in flight. Reset and disconnect cancel the token
+/// before they act, and the operation reports itself as cancelled instead
+/// of claiming success.
+#[derive(Debug, Clone, Default)]
+pub struct ApplyCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl ApplyCancellation {
+    /// A token that is not cancelled yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Asks the application to stop before its next write.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether the operation was cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
 }
 
 /// Resolves every preset parameter through the control map.
@@ -332,6 +387,7 @@ pub fn plan_preset(preset: &Preset, controls: &[Control], allow_raw: bool) -> Pr
         }
 
         plan.applies.push(Apply {
+            address: param.address,
             name: entry.control_name.clone(),
             value: user,
         });
@@ -346,17 +402,46 @@ pub fn plan_preset(preset: &Preset, controls: &[Control], allow_raw: bool) -> Pr
 /// driver refused. Save is not called: a preset only persists when the user
 /// presses the header action.
 pub fn apply_plan(plan: &PresetPlan, writer: &ControlWriter) -> ApplyReport {
+    apply_plan_cancellable(plan, writer, &ApplyCancellation::new(), |_| {})
+}
+
+/// Writes every value of `plan`, stopping between writes when cancelled.
+///
+/// `progress` receives the report after every write, so the UI can show the
+/// applied, skipped and failed counters while the operation runs. A
+/// cancelled operation stops before its next write, marks the report
+/// `cancelled`, and never claims the remaining values were applied.
+pub fn apply_plan_cancellable(
+    plan: &PresetPlan,
+    writer: &ControlWriter,
+    cancellation: &ApplyCancellation,
+    mut progress: impl FnMut(&ApplyReport),
+) -> ApplyReport {
     let mut report = ApplyReport {
         applied: Vec::new(),
         skipped: plan.skipped.clone(),
         failed: Vec::new(),
+        cancelled: false,
     };
 
     for apply in &plan.applies {
-        match writer.set_and_wait(&apply.name, apply.value) {
-            Ok(()) => report.applied.push(apply.name.clone()),
-            Err(error) => report.failed.push((apply.name.clone(), error)),
+        if cancellation.is_cancelled() {
+            report.cancelled = true;
+            break;
         }
+        match writer.set_and_wait(&apply.name, apply.value) {
+            Ok(()) => report.applied.push(Applied {
+                address: apply.address,
+                name: apply.name.clone(),
+                value: apply.value,
+            }),
+            Err(error) => report.failed.push(Failed {
+                address: apply.address,
+                name: apply.name.clone(),
+                error,
+            }),
+        }
+        progress(&report);
     }
 
     report

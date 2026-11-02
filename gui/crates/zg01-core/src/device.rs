@@ -81,8 +81,12 @@ where
 }
 
 /// Whether two cards are the same device.
+///
+/// The USB generation is part of the identity: a quick unplug/replug keeps
+/// the ALSA index and id but gets a new `devnum`, and the old backend must
+/// not be reused.
 fn same_card(left: &CardInfo, right: &CardInfo) -> bool {
-    left.index == right.index && left.id == right.id
+    left.index == right.index && left.id == right.id && left.generation == right.generation
 }
 
 #[cfg(test)]
@@ -94,6 +98,7 @@ mod tests {
             index: 2,
             id: "zg01".to_string(),
             driver: "zg01_usb".to_string(),
+            generation: Some("1:5".to_string()),
         }
     }
 
@@ -103,6 +108,13 @@ mod tests {
         let mut other = card();
         other.index = 3;
         assert!(!same_card(&card(), &other));
+    }
+
+    #[test]
+    fn a_quick_replug_is_a_new_card() {
+        let mut replugged = card();
+        replugged.generation = Some("1:7".to_string());
+        assert!(!same_card(&card(), &replugged));
     }
 
     #[test]

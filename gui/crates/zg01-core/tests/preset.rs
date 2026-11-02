@@ -5,14 +5,19 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use zg01_core::alsa::{ControlInfo, ControlKind, FakeAlsa, FakeError};
-use zg01_core::model::{Control, ControlValue, Unit, SAVE_ACTION};
+use zg01_core::alsa::{AlsaBackend, AlsaError, ControlInfo, ControlKind, FakeAlsa, FakeError};
+use zg01_core::model::{apply_reset, Control, ControlValue, Unit, RESET_ACTION, SAVE_ACTION};
 use zg01_core::preset::{
-    apply_plan, control_map, load_preset, plan_preset, Preset, PresetError, PresetParam, SkipReason,
+    apply_plan, apply_plan_cancellable, control_map, load_preset, plan_preset, ApplyCancellation,
+    Preset, PresetError, PresetParam, SkipReason,
 };
 use zg01_core::writer::ControlWriter;
+
+mod common;
 
 /// Addresses of a few controls of the generated map.
 const MIC_EQ_HIGH_SWITCH: u16 = 0x013;
@@ -210,11 +215,14 @@ fn apply_plan_writes_every_value_and_reports_the_skips() {
     let plan = plan_preset(&preset, &controls, false);
     let report = apply_plan(&plan, &writer);
 
-    assert_eq!(
-        report.applied,
-        vec!["EQ Band 1 Gain", "EQ Band 1 Frequency"]
-    );
+    let applied: Vec<&str> = report
+        .applied
+        .iter()
+        .map(|applied| applied.name.as_str())
+        .collect();
+    assert_eq!(applied, vec!["EQ Band 1 Gain", "EQ Band 1 Frequency"]);
     assert!(report.failed.is_empty());
+    assert!(!report.cancelled);
     assert_eq!(report.skipped, plan.skipped);
     assert_eq!(
         backend.writes(),
@@ -246,8 +254,201 @@ fn apply_plan_reports_the_failures() {
     let report = apply_plan(&plan, &writer);
     assert!(report.applied.is_empty());
     assert_eq!(report.failed.len(), 1);
-    assert_eq!(report.failed[0].0, "Gate");
-    assert!(!report.failed[0].1.is_empty());
+    assert_eq!(report.failed[0].name, "Gate");
+    assert!(!report.failed[0].error.is_empty());
+}
+
+/// A backend that blocks the first write until the test releases it.
+struct GatedBackend {
+    state: Mutex<Vec<(String, i64)>>,
+    started: Mutex<Option<Sender<()>>>,
+    release: Mutex<Receiver<()>>,
+}
+
+impl GatedBackend {
+    fn writes(&self) -> Vec<(String, i64)> {
+        self.state.lock().unwrap().clone()
+    }
+}
+
+impl AlsaBackend for GatedBackend {
+    fn list_controls(&self) -> Result<Vec<ControlInfo>, AlsaError> {
+        Ok(vec![])
+    }
+
+    fn read(&self, _name: &str) -> Result<i64, AlsaError> {
+        Ok(0)
+    }
+
+    fn write(&self, name: &str, value: i64) -> Result<(), AlsaError> {
+        let started = self.started.lock().unwrap().take();
+        if let Some(started) = started {
+            let _ = started.send(());
+            let release = self.release.lock().unwrap();
+            let _ = release.recv_timeout(Duration::from_secs(5));
+        }
+        self.state.lock().unwrap().push((name.to_string(), value));
+        Ok(())
+    }
+}
+
+/// A gate that holds the first preset write until the test lets it go.
+fn gated_backend() -> (Arc<GatedBackend>, Receiver<()>, Sender<()>) {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = Arc::new(GatedBackend {
+        state: Mutex::new(Vec::new()),
+        started: Mutex::new(Some(started_tx)),
+        release: Mutex::new(release_rx),
+    });
+    (backend, started_rx, release_tx)
+}
+
+fn three_apply_plan() -> zg01_core::preset::PresetPlan {
+    let controls = vec![
+        control("Gate", 0, 100, true),
+        control("Gate Threshold", 0, 100, true),
+        control("EQ Band 1 Gain", -180, 180, true),
+    ];
+    plan_preset(
+        &preset(vec![
+            param(0x003, 1, 10),  // Gate
+            param(0x004, 1, 20),  // Gate Threshold
+            param(0x128, 2, 150), // EQ Band 1 Gain
+        ]),
+        &controls,
+        false,
+    )
+}
+
+#[test]
+fn cancelling_an_apply_stops_before_the_next_write() {
+    let (backend, started, release) = gated_backend();
+    let (writer, _outcomes) = ControlWriter::spawn(backend.clone());
+    let plan = three_apply_plan();
+    let cancellation = ApplyCancellation::new();
+    let apply_cancel = cancellation.clone();
+    let apply_writer = writer.clone();
+    let apply = std::thread::spawn(move || {
+        apply_plan_cancellable(&plan, &apply_writer, &apply_cancel, |_| {})
+    });
+
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the first write");
+    cancellation.cancel();
+    let _ = release.send(());
+
+    let report = apply.join().expect("the apply thread");
+    assert!(report.cancelled, "the report must not claim completion");
+    assert_eq!(report.applied.len(), 1, "only the in-flight write landed");
+    assert_eq!(
+        backend.writes().len(),
+        1,
+        "cancelling stops every further preset write"
+    );
+}
+
+/// A Reset during an apply cancels the remaining preset writes; the Reset
+/// action is the last write on the device and is not followed by a preset
+/// value that would silently undo it.
+#[test]
+fn a_reset_during_an_apply_is_the_last_write() {
+    let (backend, started, release) = gated_backend();
+    let (writer, _outcomes) = ControlWriter::spawn(backend.clone());
+    let plan = three_apply_plan();
+    let cancellation = ApplyCancellation::new();
+    let apply_cancel = cancellation.clone();
+    let apply_writer = writer.clone();
+    let apply = std::thread::spawn(move || {
+        apply_plan_cancellable(&plan, &apply_writer, &apply_cancel, |_| {})
+    });
+
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the first write");
+    cancellation.cancel();
+    let _ = release.send(());
+    let report = apply.join().expect("the apply thread");
+    assert!(report.cancelled);
+
+    let mut state = common::state_with(&["Gate", "Gate Threshold", "EQ Band 1 Gain"]);
+    apply_reset(&mut state, &writer).expect("the reset reaches the device");
+
+    let writes = backend.writes();
+    let reset_at = writes
+        .iter()
+        .position(|(name, _)| name == RESET_ACTION)
+        .expect("the reset write");
+    assert_eq!(
+        reset_at,
+        writes.len() - 1,
+        "no preset write may follow the reset: {writes:?}"
+    );
+}
+
+/// A disconnect also stops the remaining writes: the app drops the card
+/// when the write reports `ENODEV`, and no write may touch the next card.
+#[test]
+fn a_disconnect_during_an_apply_stops_further_writes() {
+    let (backend, started, release) = gated_backend();
+    let (writer, _outcomes) = ControlWriter::spawn(backend.clone());
+    let plan = three_apply_plan();
+    let cancellation = ApplyCancellation::new();
+    let apply_cancel = cancellation.clone();
+    let apply_writer = writer.clone();
+    let apply = std::thread::spawn(move || {
+        apply_plan_cancellable(&plan, &apply_writer, &apply_cancel, |_| {})
+    });
+
+    started
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the first write");
+    // This is what the application does on DeviceEvent::Disconnected.
+    cancellation.cancel();
+    let _ = release.send(());
+    drop(writer);
+
+    let report = apply.join().expect("the apply thread");
+    assert!(report.cancelled);
+    assert_eq!(backend.writes().len(), 1);
+}
+
+/// Applying a preset and then saving is ordered: Save reaches the device
+/// after every preset value.
+#[test]
+fn a_save_after_a_preset_is_written_last() {
+    let backend = Arc::new(FakeAlsa::new(vec![
+        info("EQ Band 1 Gain", -180, 180, true),
+        info("EQ Band 1 Frequency", 20, 1000, true),
+        info(SAVE_ACTION, 0, 1, true),
+    ]));
+    let (writer, _outcomes) = ControlWriter::spawn(backend.clone());
+    let controls = the_controls();
+    let preset = preset(vec![
+        param(EQ_BAND_1_GAIN, 2, 150),
+        param(EQ_BAND_1_FREQUENCY, 2, 100),
+    ]);
+    let plan = plan_preset(&preset, &controls, false);
+
+    apply_plan(&plan, &writer);
+    writer
+        .flush_set_and_wait(SAVE_ACTION, 1)
+        .expect("the save succeeds");
+
+    let writes = backend.writes();
+    assert_eq!(
+        writes.last(),
+        Some(&(SAVE_ACTION.to_string(), 1)),
+        "Save must land after the preset: {writes:?}"
+    );
+    assert_eq!(
+        writes
+            .iter()
+            .filter(|(name, _)| name == SAVE_ACTION)
+            .count(),
+        1
+    );
 }
 
 #[test]

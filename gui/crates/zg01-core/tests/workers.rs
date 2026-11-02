@@ -1,6 +1,7 @@
 //! Tests for the background workers: the control writer, the meter poller
 //! and the device watcher.
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,6 +9,7 @@ use std::time::Duration;
 use zg01_core::alsa::{AlsaBackend, AlsaError, CardInfo, ControlInfo};
 use zg01_core::device::{spawn_watcher, DeviceEvent};
 use zg01_core::meters::{poll_meters, METER_CONTROLS};
+use zg01_core::model::SAVE_ACTION;
 use zg01_core::writer::{ControlWriter, WriteOutcome};
 
 /// What a backend answers to a read.
@@ -75,6 +77,47 @@ impl AlsaBackend for FailingBackend {
 
     fn write(&self, name: &str, _value: i64) -> Result<(), AlsaError> {
         Err(AlsaError::ReadOnly(name.to_string()))
+    }
+}
+
+/// A backend whose `Gate` write fails but whose action writes succeed.
+#[derive(Default)]
+struct GateFailingBackend {
+    writes: Mutex<Vec<(String, i64)>>,
+}
+
+impl AlsaBackend for GateFailingBackend {
+    fn list_controls(&self) -> Result<Vec<ControlInfo>, AlsaError> {
+        Ok(vec![])
+    }
+
+    fn read(&self, _name: &str) -> Result<i64, AlsaError> {
+        Ok(0)
+    }
+
+    fn write(&self, name: &str, value: i64) -> Result<(), AlsaError> {
+        self.writes.lock().unwrap().push((name.to_string(), value));
+        if name == "Gate" {
+            return Err(AlsaError::ReadOnly(name.to_string()));
+        }
+        Ok(())
+    }
+}
+
+/// A backend whose card has gone away.
+struct LostBackend;
+
+impl AlsaBackend for LostBackend {
+    fn list_controls(&self) -> Result<Vec<ControlInfo>, AlsaError> {
+        Ok(vec![])
+    }
+
+    fn read(&self, _name: &str) -> Result<i64, AlsaError> {
+        Err(AlsaError::Alsa(alsa::Error::new("read", 19)))
+    }
+
+    fn write(&self, _name: &str, _value: i64) -> Result<(), AlsaError> {
+        Err(AlsaError::Alsa(alsa::Error::new("write", 5)))
     }
 }
 
@@ -249,6 +292,74 @@ fn flush_and_wait_reports_a_failed_write() {
     );
 }
 
+/// Save is a barrier followed by the action: a fader queued just before it
+/// must land first, not after the persisted settings were captured.
+#[test]
+fn flush_set_and_wait_writes_a_pending_fader_before_the_save_action() {
+    let backend = Arc::new(RecordingBackend::default());
+    let (writer, _rx) = ControlWriter::spawn(backend.clone());
+    writer.set("Gate", 42);
+
+    writer
+        .flush_set_and_wait(SAVE_ACTION, 1)
+        .expect("the save succeeds");
+
+    assert_eq!(
+        backend.writes(),
+        vec![("Gate".into(), 42), (SAVE_ACTION.into(), 1)],
+        "the pending Gate write must reach the device before Save"
+    );
+}
+
+/// A failed flush keeps Save off the device: saving would persist a value
+/// the user did not ask for.
+#[test]
+fn flush_set_and_wait_does_not_save_after_a_failed_flush() {
+    let backend = Arc::new(GateFailingBackend::default());
+    let (writer, _rx) = ControlWriter::spawn(backend.clone());
+    writer.set("Gate", 7);
+
+    let error = writer
+        .flush_set_and_wait(SAVE_ACTION, 1)
+        .expect_err("the pending write fails");
+    assert!(
+        error.contains("Gate"),
+        "the error names the control: {error}"
+    );
+    assert!(
+        backend
+            .writes
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(name, _)| name != SAVE_ACTION),
+        "Save must not be written after a failed flush"
+    );
+}
+
+/// A write that reports `ENODEV` is a disconnect, not a control failure.
+#[test]
+fn a_liveness_failure_is_reported_as_a_lost_device() {
+    let (writer, rx) = ControlWriter::spawn(Arc::new(LostBackend));
+    let error = writer.set_and_wait("Gate", 1).unwrap_err();
+    assert!(!error.is_empty());
+
+    match rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+        WriteOutcome::DeviceLost { name, .. } => assert_eq!(name, "Gate"),
+        other => panic!("expected a lost device, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_meter_read_that_loses_the_card_marks_the_snapshot() {
+    let snapshot = poll_meters(&LostBackend);
+    assert!(
+        snapshot.lost,
+        "a liveness failure is not just a missing meter"
+    );
+    assert_eq!(snapshot.values, [None; 4]);
+}
+
 #[test]
 fn the_meter_controls_are_the_four_decoded_ones() {
     assert_eq!(
@@ -291,6 +402,7 @@ fn card() -> CardInfo {
         index: 2,
         id: "zg01".to_string(),
         driver: "zg01_usb".to_string(),
+        generation: Some("1:5".to_string()),
     }
 }
 
@@ -328,6 +440,42 @@ fn the_watcher_emits_only_transitions() {
         rx.recv_timeout(Duration::from_millis(120)),
         Err(RecvTimeoutError::Timeout)
     ));
+}
+
+/// A quick unplug and replug between two polls keeps the ALSA index but
+/// changes the USB device number: the watcher must not miss it.
+#[test]
+fn the_watcher_reports_a_quick_replug_with_the_same_index() {
+    let replugged = Arc::new(AtomicBool::new(false));
+    let polls = Arc::new(AtomicUsize::new(0));
+    let watched_replug = replugged.clone();
+    let watched_polls = polls.clone();
+    let rx = spawn_watcher(
+        move || {
+            let poll = watched_polls.fetch_add(1, Ordering::Relaxed);
+            // Stay on the first device long enough for the first event,
+            // then present the new one behind the same ALSA index.
+            if poll >= 2 {
+                watched_replug.store(true, Ordering::Relaxed);
+            }
+            let mut card = card();
+            if watched_replug.load(Ordering::Relaxed) {
+                card.generation = Some("1:7".to_string());
+            }
+            Some(card)
+        },
+        Duration::from_millis(20),
+    );
+
+    let first = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(first, DeviceEvent::Connected(card()));
+
+    let second = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(second, DeviceEvent::Disconnected);
+    let third = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let mut new_card = card();
+    new_card.generation = Some("1:7".to_string());
+    assert_eq!(third, DeviceEvent::Connected(new_card));
 }
 
 #[test]

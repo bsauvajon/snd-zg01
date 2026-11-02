@@ -122,6 +122,7 @@ pub fn card() -> CardInfo {
         index: 2,
         id: "zg01".to_string(),
         driver: "zg01_usb".to_string(),
+        generation: None,
     }
 }
 

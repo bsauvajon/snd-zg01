@@ -10,11 +10,32 @@
 mod common;
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use common::{control, state_with};
-use zg01_core::alsa::{FakeAlsa, FakeError};
-use zg01_core::model::{apply_reset, ControlValue, RESET_ACTION};
+use zg01_core::alsa::{AlsaBackend, AlsaError, ControlInfo, FakeAlsa, FakeError};
+use zg01_core::model::{apply_reset, spawn_reset, ControlValue, RESET_ACTION};
 use zg01_core::writer::ControlWriter;
+
+/// A device that takes its time to answer, like a busy USB card.
+struct SlowBackend {
+    delay: Duration,
+}
+
+impl AlsaBackend for SlowBackend {
+    fn list_controls(&self) -> Result<Vec<ControlInfo>, AlsaError> {
+        Ok(vec![])
+    }
+
+    fn read(&self, _name: &str) -> Result<i64, AlsaError> {
+        Ok(0)
+    }
+
+    fn write(&self, _name: &str, _value: i64) -> Result<(), AlsaError> {
+        std::thread::sleep(self.delay);
+        Ok(())
+    }
+}
 
 /// A writer on a fake device that publishes `names`.
 ///
@@ -107,6 +128,30 @@ fn a_pending_write_is_flushed_before_the_reset() {
         "a fader queued before the reset must land first, otherwise the \
          reset would silently discard it"
     );
+}
+
+/// The GUI must never wait for the card in its update loop: starting a
+/// reset against a slow device returns at once, and the completion arrives
+/// on the receiver.
+#[test]
+fn starting_a_reset_does_not_wait_for_a_slow_device() {
+    let backend = Arc::new(SlowBackend {
+        delay: Duration::from_millis(400),
+    });
+    let (writer, _outcomes) = ControlWriter::spawn(backend);
+
+    let started = Instant::now();
+    let completion = spawn_reset(writer);
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "spawn_reset blocked the caller for {:?}",
+        started.elapsed()
+    );
+
+    assert!(completion
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the reset answers")
+        .is_ok());
 }
 
 #[test]
