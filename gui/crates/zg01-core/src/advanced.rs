@@ -45,6 +45,12 @@ pub struct AdvancedRow {
     pub raw: bool,
     /// The console section the control belongs to, derived from its name.
     pub group: String,
+    /// The lowest value the control accepts.
+    pub min: i64,
+    /// The highest value the control accepts.
+    pub max: i64,
+    /// The preset address of the control, when the generated map has one.
+    pub address: Option<u16>,
 }
 
 /// The whole Avancé screen.
@@ -79,6 +85,9 @@ impl AdvancedModel {
                 writable: control.is_writable(),
                 raw: raw.contains(control.name()),
                 group: group_of(control.name()),
+                min: control.info.min,
+                max: control.info.max,
+                address: address_of(control.name()),
             })
             .collect();
 
@@ -160,6 +169,14 @@ fn claimed_controls<'a>(
     }
 
     claimed
+}
+
+/// The preset address of a control, when the generated map has one.
+fn address_of(name: &str) -> Option<u16> {
+    control_map()
+        .iter()
+        .find(|entry| entry.control_name == name)
+        .map(|entry| entry.address)
 }
 
 /// The control names the generated map marks as raw.

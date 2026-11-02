@@ -24,9 +24,9 @@ use zg01_core::meters::{spawn_poller, MeterSnapshot, METER_INTERVAL};
 use zg01_core::mic::MicModel;
 use zg01_core::mixage::{MeterId, MixageModel};
 use zg01_core::model::{
-    apply_reset, AppState, Control, ControlValue, DeviceState, Unit, RESET_ACTION, SAVE_ACTION,
+    spawn_reset, AppState, Control, ControlValue, DeviceState, Unit, RESET_ACTION, SAVE_ACTION,
 };
-use zg01_core::preset::{apply_plan, ApplyReport};
+use zg01_core::preset::{apply_plan_cancellable, ApplyCancellation, ApplyReport};
 use zg01_core::units::Conv;
 use zg01_core::writer::{ControlWriter, WriteOutcome};
 
@@ -156,6 +156,28 @@ pub(crate) struct App {
     root: adw::ApplicationWindow,
     /// Serialises the asynchronous reloads with the presence events.
     reloads: ReloadTracker,
+    /// The preset application in flight, when there is one.
+    preset: Option<PresetOperation>,
+    /// The id of the next operation (save, reset, preset).
+    next_operation: u64,
+    /// The save in flight, when there is one.
+    save: Option<u64>,
+    /// The reset in flight, when there is one.
+    reset: Option<u64>,
+    /// A Save requested while a preset was running.
+    pending_save: bool,
+    /// A Reset requested while a preset was running.
+    pending_reset: bool,
+    /// The last preset applied in this session, offered again on reconnect.
+    last_preset: Option<PresetChoice>,
+}
+
+/// One preset application in flight.
+struct PresetOperation {
+    /// The id that stamps its progress and completion messages.
+    id: u64,
+    /// Stops the worker before its next write.
+    cancel: ApplyCancellation,
 }
 
 /// What the application reacts to.
@@ -169,8 +191,37 @@ pub(crate) enum Msg {
     Save,
     /// The Reset action was clicked.
     Reset,
+    /// The preset chooser was requested by the keyboard shortcut.
+    OpenPreset,
+    /// Reapply the last preset after a reconnect.
+    ReapplyPreset,
+    /// Quit the application.
+    Quit,
     /// A save finished.
-    SaveFinished(Result<(), String>),
+    SaveFinished {
+        /// The save operation it belongs to.
+        id: u64,
+        /// Whether the action reached the device.
+        result: Result<(), String>,
+    },
+    /// A reset finished.
+    ResetFinished {
+        /// The reset operation it belongs to.
+        id: u64,
+        /// Whether the action reached the device.
+        result: Result<(), String>,
+    },
+    /// A preset application made progress.
+    PresetProgress {
+        /// The preset operation it belongs to.
+        id: u64,
+        /// How many values have been processed.
+        done: usize,
+        /// How many values the plan applies.
+        total: usize,
+        /// How many parameters the plan skips.
+        skipped: usize,
+    },
     /// The device watcher saw a transition.
     Device(DeviceEvent),
     /// Reading a card finished.
@@ -199,6 +250,8 @@ pub(crate) enum Msg {
     PresetChosen(PresetChoice),
     /// Applying a preset finished.
     PresetApplied {
+        /// The preset operation it belongs to.
+        id: u64,
         /// The block and name of the preset, for the report.
         label: String,
         /// What landed and what did not.
@@ -255,6 +308,11 @@ impl ReloadTracker {
         self.in_flight = false;
         self.retry_scheduled = false;
         self.failures = 0;
+    }
+
+    /// Whether a reload is already running.
+    fn in_flight(&self) -> bool {
+        self.in_flight
     }
 
     /// Starts a reload and returns its generation.
@@ -390,39 +448,16 @@ impl SimpleComponent for App {
 
         let shell = Shell::build(&root, sender.clone());
 
-        let (state, backend) = match load_device(&layout) {
-            Ok(loaded) => {
-                tracing::info!(
-                    "reading card hw:{}: {} controls",
-                    loaded.card.index,
-                    loaded.controls.len()
-                );
-                let state =
-                    AppState::new(DeviceState::Connected(loaded.card), loaded.controls, layout);
-                (state, Some(loaded.backend))
-            }
-            Err(err) => {
-                tracing::warn!("no ZG01 card available: {err}");
-                (
-                    AppState::new(DeviceState::Disconnected, Vec::new(), layout),
-                    None,
-                )
-            }
-        };
-
-        if let Some(card) = state.device.card() {
-            shell.show_connected(card);
-        } else {
-            shell.show_disconnected();
-        }
-        shell.set_save_enabled(state.can_save());
-        shell.set_unknown(state.device.is_connected() && !state.can_save());
+        // Startup reads the card on a worker: the GTK loop must not wait
+        // for a USB control read (or for a card that is not there yet).
+        shell.show_loading();
+        shell.set_save_enabled(false);
 
         spawn_device_watcher(sender.clone());
 
         let mut model = App {
-            state,
-            backend,
+            state: AppState::new(DeviceState::Disconnected, Vec::new(), layout),
+            backend: None,
             page: Page::Mixage,
             mixage: None,
             mic: None,
@@ -434,16 +469,16 @@ impl SimpleComponent for App {
             shell,
             root: root.clone(),
             reloads: ReloadTracker::default(),
+            preset: None,
+            next_operation: 0,
+            save: None,
+            reset: None,
+            pending_save: false,
+            pending_reset: false,
+            last_preset: None,
         };
 
-        if model.state.device.is_connected() {
-            model.install_mixage(sender.clone());
-            model.install_micro(sender.clone());
-            model.install_advanced(sender.clone());
-            model.start_writer(&sender);
-            model.start_meters(&sender);
-            model.shell.set_page(Page::Mixage);
-        }
+        model.start_reload(sender);
 
         let widgets = view_output!();
 
@@ -464,15 +499,22 @@ impl SimpleComponent for App {
                     .present_about(&self.root, self.state.device.card().map(|card| card.index));
             }
             Msg::Save => self.save(sender),
-            Msg::Reset => self.reset(),
-            Msg::SaveFinished(Ok(())) => {
-                self.shell.toast(&t("Settings saved to the ZG01"));
+            Msg::Reset => self.reset(sender),
+            Msg::OpenPreset => self.open_preset(sender),
+            Msg::ReapplyPreset => {
+                if let Some(choice) = self.last_preset.clone() {
+                    self.apply_preset(choice, sender);
+                }
             }
-            Msg::SaveFinished(Err(err)) => {
-                tracing::warn!("the save action failed: {err}");
-                self.shell
-                    .toast(&tf("Save failed: {error}", &[("{error}", &err)]));
-            }
+            Msg::Quit => relm4::main_application().quit(),
+            Msg::SaveFinished { id, result } => self.save_finished(id, result),
+            Msg::ResetFinished { id, result } => self.reset_finished(id, result),
+            Msg::PresetProgress {
+                id,
+                done,
+                total,
+                skipped,
+            } => self.preset_progress(id, done, total, skipped),
             Msg::Device(DeviceEvent::Disconnected) => self.disconnect(),
             Msg::Device(DeviceEvent::Connected(card)) => self.connect(card, sender),
             Msg::ReloadFinished { generation, result } => {
@@ -483,51 +525,99 @@ impl SimpleComponent for App {
                 MixageEvent::OpenMic => self.open_mic(),
                 MixageEvent::Write { name, value } => self.write_control(&name, value),
                 MixageEvent::LoadPreset => self.open_preset(sender),
+                MixageEvent::CancelPreset => self.cancel_preset(),
             },
             Msg::Mic(MicEvent::Write { name, value }) => self.write_control(&name, value),
             Msg::Advanced(AdvancedEvent::Write { name, value }) => self.write_control(&name, value),
-            Msg::WriteOutcome(outcome) => self.write_outcome(outcome),
-            Msg::Meters(snapshot) => self.update_meters(snapshot),
+            Msg::WriteOutcome(outcome) => self.write_outcome(outcome, sender),
+            Msg::Meters(snapshot) => self.update_meters(snapshot, sender),
             Msg::PresetChosen(choice) => self.apply_preset(choice, sender),
-            Msg::PresetApplied { label, report } => self.preset_applied(&label, &report),
+            Msg::PresetApplied { id, label, report } => {
+                self.preset_applied(id, &label, &report, sender);
+            }
         }
     }
 }
 
 impl App {
     /// Writes the Save action to the device, off the GTK thread.
-    fn save(&self, sender: ComponentSender<Self>) {
+    ///
+    /// Save goes through the `ControlWriter`: the worker first flushes the
+    /// coalesced fader and preset values, then writes `Save to ZG01` in the
+    /// same serialized command. That is what keeps a Save from persisting
+    /// a value that is still queued behind it. A Save requested while a
+    /// preset is running is queued until the preset finishes.
+    fn save(&mut self, sender: ComponentSender<Self>) {
+        if self.preset.is_some() {
+            self.pending_save = true;
+            self.shell
+                .toast(&t("Save queued until the preset finishes"));
+            return;
+        }
         if !self.state.can_save() {
             self.shell
                 .toast(&t("Cannot save: unknown values or no card"));
             return;
         }
-        let Some(backend) = self.backend.clone() else {
+        let Some(writer) = self.writer.clone() else {
             self.shell.toast(&t("No ZG01 connected"));
             return;
         };
 
+        let id = self.next_operation_id();
+        self.save = Some(id);
         let sender = sender.clone();
         let spawned = std::thread::Builder::new()
             .name("zg01-save".to_string())
             .spawn(move || {
-                let result = backend.write(SAVE_ACTION, 1).map_err(|err| err.to_string());
-                sender.input(Msg::SaveFinished(result));
+                let result = writer.flush_set_and_wait(SAVE_ACTION, 1);
+                sender.input(Msg::SaveFinished { id, result });
             });
         if let Err(err) = spawned {
             tracing::warn!("could not start the save thread: {err}");
+            self.save = None;
             self.shell.toast(&t("Could not start the save"));
+        }
+    }
+
+    /// Handles the completion of a Save.
+    fn save_finished(&mut self, id: u64, result: Result<(), String>) {
+        if self.save != Some(id) {
+            return;
+        }
+        self.save = None;
+        match result {
+            Ok(()) => self.shell.toast(&t("Settings saved to the ZG01")),
+            Err(err) => {
+                tracing::warn!("the save action failed: {err}");
+                self.shell
+                    .toast(&tf("Save failed: {error}", &[("{error}", &err)]));
+            }
         }
     }
 
     /// Writes the Reset action and forgets every displayed value.
     ///
-    /// `apply_reset` flushes the coalesced writes, writes and awaits the
-    /// action, then marks every writable value unknown: the driver reloads
-    /// its persisted settings without refreshing the cache. A failed
-    /// action is reported and the values stay unknown rather than guessing
-    /// that the reset did not happen.
-    fn reset(&mut self) {
+    /// The flush and the awaited action run on a worker: a busy USB card
+    /// must not freeze the window for up to ten seconds. A Reset requested
+    /// while a preset is running cancels the preset and runs afterwards,
+    /// so no preset write can follow the reset and silently undo it.
+    fn reset(&mut self, sender: ComponentSender<Self>) {
+        if self.preset.is_some() {
+            if let Some(operation) = &self.preset {
+                operation.cancel.cancel();
+            }
+            self.pending_reset = true;
+            // A Save queued behind the same preset would persist the
+            // values the Reset is about to discard.
+            self.pending_save = false;
+            self.shell
+                .toast(&t("Reset queued until the preset finishes"));
+            return;
+        }
+        if self.reset.is_some() {
+            return;
+        }
         let Some(writer) = self.writer.clone() else {
             self.shell.toast(&t("No ZG01 connected"));
             return;
@@ -535,7 +625,47 @@ impl App {
         // Every write issued before the reset is superseded by it; its
         // outcome must not mark a value known afterwards.
         self.writes.reset();
-        match apply_reset(&mut self.state, &writer) {
+        let id = self.next_operation_id();
+        self.reset = Some(id);
+        self.pending_save = false;
+        self.shell.set_busy(true, &t("Resetting the ZG01…"));
+        self.set_screens_sensitive(false);
+
+        let completion = spawn_reset(writer);
+        let sender = sender.clone();
+        let spawned = std::thread::Builder::new()
+            .name("zg01-reset-events".to_string())
+            .spawn(move || {
+                let result = completion
+                    .recv()
+                    .unwrap_or_else(|_| Err("the reset thread did not answer".to_string()));
+                sender.input(Msg::ResetFinished { id, result });
+            });
+        if let Err(err) = spawned {
+            tracing::warn!("could not start the reset event thread: {err}");
+            self.reset = None;
+            self.shell.set_busy(false, "");
+            self.set_screens_sensitive(self.state.device.is_connected());
+            self.shell.toast(&t("Could not start the reset"));
+        }
+    }
+
+    /// Handles the completion of a Reset.
+    ///
+    /// Whatever the outcome, every writable value becomes unknown: the
+    /// driver reloaded its persisted settings without refreshing the cache,
+    /// and a failed action must not leave the GUI claiming to know them.
+    fn reset_finished(&mut self, id: u64, result: Result<(), String>) {
+        if self.reset != Some(id) {
+            return;
+        }
+        self.reset = None;
+        self.state.mark_all_unknown();
+        self.refresh_controls();
+        self.shell.set_busy(false, "");
+        self.set_screens_sensitive(self.state.device.is_connected());
+        self.sync_shell_state();
+        match result {
             Ok(()) => self
                 .shell
                 .toast(&t("ZG01 reset — the displayed values are unknown")),
@@ -545,8 +675,43 @@ impl App {
                     .toast(&tf("Reset failed: {error}", &[("{error}", &err)]));
             }
         }
-        self.refresh_controls();
-        self.sync_shell_state();
+    }
+
+    /// Shows or hides the network of controls while an operation runs.
+    ///
+    /// The Mixage preset bar stays usable so its Cancel action can stop a
+    /// running preset; only the fader and meter panel is disabled.
+    fn set_screens_sensitive(&self, sensitive: bool) {
+        if let Some(screen) = &self.mixage {
+            screen.set_controls_sensitive(sensitive);
+        }
+        if let Some(screen) = &self.mic {
+            screen.widget().set_sensitive(sensitive);
+        }
+        if let Some(screen) = &self.advanced {
+            screen.widget().set_sensitive(sensitive);
+        }
+    }
+
+    /// The id of the next operation.
+    fn next_operation_id(&mut self) -> u64 {
+        self.next_operation = self.next_operation.wrapping_add(1);
+        self.next_operation
+    }
+
+    /// Forgets every operation that belongs to the card that just left.
+    fn invalidate_operations(&mut self) {
+        if let Some(operation) = self.preset.take() {
+            operation.cancel.cancel();
+        }
+        if let Some(screen) = &self.mixage {
+            screen.set_preset_running(false);
+        }
+        self.save = None;
+        self.reset = None;
+        self.pending_save = false;
+        self.pending_reset = false;
+        self.shell.set_busy(false, "");
     }
 
     /// Builds the Mixage screen from the current controls and installs it.
@@ -672,6 +837,15 @@ impl App {
             self.shell.toast(&t("No ZG01 connected"));
             return;
         }
+        if self.preset.is_some() {
+            self.shell.toast(&t("A preset is already being applied"));
+            return;
+        }
+        if self.reset.is_some() {
+            self.shell
+                .toast(&t("A reset is in progress; wait for it to finish"));
+            return;
+        }
         let controls = self.state.controls.clone();
         let sender = sender.clone();
         present_preset_dialog(&self.root, controls, move |choice| {
@@ -685,6 +859,15 @@ impl App {
     /// so its outcome may mark the value known. The report comes back as a
     /// message; the values stay unsaved until the header Save action.
     fn apply_preset(&mut self, choice: PresetChoice, sender: ComponentSender<Self>) {
+        if self.preset.is_some() {
+            self.shell.toast(&t("A preset is already being applied"));
+            return;
+        }
+        if self.reset.is_some() {
+            self.shell
+                .toast(&t("A reset is in progress; wait for it to finish"));
+            return;
+        }
         let Some(writer) = self.writer.clone() else {
             self.shell.toast(&t("No ZG01 connected"));
             return;
@@ -693,35 +876,126 @@ impl App {
             self.writes.issue(&apply.name);
         }
 
+        let id = self.next_operation_id();
+        let cancellation = ApplyCancellation::new();
+        self.preset = Some(PresetOperation {
+            id,
+            cancel: cancellation.clone(),
+        });
+        self.last_preset = Some(choice.clone());
+
         let label = preset_label(&choice.block, &choice.name);
         let plan = choice.plan;
+        let total = plan.applies.len();
+        let skipped = plan.skipped.len();
+        if let Some(screen) = &self.mixage {
+            screen.set_preset_running(true);
+            screen.set_preset_progress(0, total, skipped);
+        }
+        self.set_screens_sensitive(false);
+
         let sender = sender.clone();
         let spawned = std::thread::Builder::new()
             .name("zg01-preset".to_string())
             .spawn(move || {
-                let report = apply_plan(&plan, &writer);
-                sender.input(Msg::PresetApplied { label, report });
+                let report = apply_plan_cancellable(&plan, &writer, &cancellation, |report| {
+                    sender.input(Msg::PresetProgress {
+                        id,
+                        done: report.applied.len() + report.failed.len(),
+                        total,
+                        skipped: report.skipped.len(),
+                    });
+                });
+                sender.input(Msg::PresetApplied { id, label, report });
             });
         if let Err(err) = spawned {
             tracing::warn!("could not start the preset thread: {err}");
+            self.preset = None;
+            self.set_screens_sensitive(self.state.device.is_connected());
+            if let Some(screen) = &self.mixage {
+                screen.set_preset_running(false);
+            }
             self.shell.toast(&t("Could not load the preset"));
         }
     }
 
-    /// Names the applied preset in the bar and shows the apply report.
-    fn preset_applied(&self, label: &str, report: &ApplyReport) {
+    /// Updates the progress row of the preset bar.
+    fn preset_progress(&self, id: u64, done: usize, total: usize, skipped: usize) {
+        if self.preset.as_ref().map(|operation| operation.id) != Some(id) {
+            return;
+        }
+        if let Some(screen) = &self.mixage {
+            screen.set_preset_progress(done, total, skipped);
+        }
+    }
+
+    /// Asks the running preset to stop before its next write.
+    fn cancel_preset(&self) {
+        if let Some(operation) = &self.preset {
+            operation.cancel.cancel();
+            self.shell.toast(&t("Cancelling the preset…"));
+        }
+    }
+
+    /// Handles the completion of a preset application.
+    fn preset_applied(
+        &mut self,
+        id: u64,
+        label: &str,
+        report: &ApplyReport,
+        sender: ComponentSender<Self>,
+    ) {
+        if self.preset.as_ref().map(|operation| operation.id) != Some(id) {
+            // A disconnect, a reset or a newer operation made this stale.
+            return;
+        }
+        self.preset = None;
+
         tracing::info!(
-            "preset {label:?}: {} applied, {} skipped, {} failed",
+            "preset {label:?}: {} applied, {} skipped, {} failed, cancelled: {}",
             report.applied.len(),
             report.skipped.len(),
-            report.failed.len()
+            report.failed.len(),
+            report.cancelled
         );
-        if !report.applied.is_empty() {
+        // The report is the completion of the writes: mark the applied
+        // values known here as well, so a Save queued behind the preset can
+        // run at once even if an outcome pump message is still in flight.
+        for applied in &report.applied {
+            self.state.mark_known(&applied.name, applied.value);
+            if let Some(screen) = &self.mixage {
+                screen.set_control(&applied.name, ControlValue::Known(applied.value));
+            }
+            if let Some(screen) = &self.mic {
+                screen.set_control(&applied.name, ControlValue::Known(applied.value));
+            }
+            if let Some(screen) = &self.advanced {
+                screen.set_control(&applied.name, ControlValue::Known(applied.value));
+            }
+        }
+        if !report.cancelled && !report.applied.is_empty() {
             if let Some(screen) = &self.mixage {
                 screen.set_preset_name(label);
             }
         }
+        if let Some(screen) = &self.mixage {
+            screen.set_preset_running(false);
+        }
+        self.set_screens_sensitive(self.state.device.is_connected());
+        self.sync_shell_state();
         present_preset_report(&self.root, label, report);
+
+        if report.cancelled {
+            self.shell.toast(&t("Preset cancelled"));
+        }
+
+        if self.pending_reset {
+            self.pending_reset = false;
+            self.reset(sender);
+        } else if self.pending_save {
+            self.pending_save = false;
+            self.save(sender);
+        }
     }
 
     /// Queues one control write on the coalescing writer.
@@ -781,15 +1055,27 @@ impl App {
     }
 
     /// Handles the outcome of a control write.
-    fn write_outcome(&mut self, outcome: WriteOutcome) {
+    fn write_outcome(&mut self, outcome: WriteOutcome, sender: ComponentSender<Self>) {
         match outcome {
-            // `apply_reset` handles the action outcome: success and failure
-            // were already reported, and the action is not a value.
+            // A liveness failure is not a control error: the card is gone
+            // (or was replaced by one with the same ALSA index).
+            WriteOutcome::DeviceLost { name, error } => {
+                tracing::warn!("the card went away while writing {name:?}: {error}");
+                self.device_lost(&sender);
+            }
+            // The action outcomes are reported by their own completion
+            // messages: success and failure were already handled there.
             WriteOutcome::Ok { name, .. } if name == RESET_ACTION => {
                 tracing::debug!("the reset action is on the device");
             }
             WriteOutcome::Err { name, error } if name == RESET_ACTION => {
                 tracing::debug!("the reset action failed: {error}");
+            }
+            WriteOutcome::Ok { name, .. } if name == SAVE_ACTION => {
+                tracing::debug!("the save action is on the device");
+            }
+            WriteOutcome::Err { name, error } if name == SAVE_ACTION => {
+                tracing::debug!("the save action failed: {error}");
             }
             WriteOutcome::Ok { name, value } => {
                 if !self.writes.accepts(&name) {
@@ -822,18 +1108,33 @@ impl App {
     }
 
     /// Installs the meter readings on the screens.
-    fn update_meters(&self, snapshot: MeterSnapshot) {
+    fn update_meters(&mut self, snapshot: MeterSnapshot, sender: ComponentSender<Self>) {
+        if snapshot.lost {
+            self.device_lost(&sender);
+            return;
+        }
         for id in [
             MeterId::MicIn,
             MeterId::MicOut,
             MeterId::PcIn,
             MeterId::StreamMix,
         ] {
+            let value = snapshot
+                .value(id.index())
+                .map(ControlValue::Known)
+                .unwrap_or(ControlValue::Unknown);
+            if let Some(control) = self.state.control_mut(id.control()) {
+                control.value = value;
+            }
             if let Some(screen) = &self.mixage {
                 screen.set_meter(id, snapshot.value(id.index()));
             }
             if let Some(screen) = &self.mic {
                 screen.set_meter(id, snapshot.value(id.index()));
+            }
+            // Avancé lists the meter controls too: keep their readout live.
+            if let Some(screen) = &self.advanced {
+                screen.set_control(id.control(), value);
             }
         }
     }
@@ -846,6 +1147,7 @@ impl App {
     /// install the card afterwards.
     fn disconnect(&mut self) {
         self.reloads.invalidate();
+        self.invalidate_operations();
         if !self.state.device.is_connected() {
             return;
         }
@@ -858,25 +1160,45 @@ impl App {
         self.stop_writer();
         self.stop_meters();
         // The values stay visible, but nothing can be changed until the
-        // card is back and its controls have been read again.
+        // card is back and its controls have been read again. Unlike a
+        // running preset, there is no Cancel action to keep usable.
+        self.set_screens_sensitive(false);
         if let Some(screen) = &self.mixage {
             screen.widget().set_sensitive(false);
         }
-        if let Some(screen) = &self.mic {
-            screen.widget().set_sensitive(false);
-        }
-        if let Some(screen) = &self.advanced {
-            screen.widget().set_sensitive(false);
-        }
+        self.shell.set_reapply(false, "");
         self.shell.show_device_lost();
         self.sync_shell_state();
         self.shell.toast(&t("ZG01 disconnected"));
     }
 
+    /// Drops the card that stopped answering and reads it again.
+    ///
+    /// A read or a write that returns `ENODEV`/`EIO` is the only signal a
+    /// quick same-index replug leaves: the watcher may see the same card
+    /// twice. The old backend is dropped before the reload so no stale
+    /// handle is reused.
+    fn device_lost(&mut self, sender: &ComponentSender<Self>) {
+        if !self.state.device.is_connected() {
+            return;
+        }
+        tracing::warn!("the ZG01 stopped answering; dropping the backend and reloading");
+        self.disconnect();
+        self.shell.toast(&t("ZG01 connection lost — reconnecting"));
+        self.start_reload(sender.clone());
+    }
+
     /// Reads a card that just appeared, off the GTK thread.
     fn connect(&mut self, card: CardInfo, sender: ComponentSender<Self>) {
-        if self.state.device.card().map(|current| current.index) == Some(card.index) {
+        if self.state.device.card() == Some(&card) {
             return;
+        }
+        // The startup reload already reads the card the watcher reports.
+        if self.reloads.in_flight() {
+            return;
+        }
+        if self.state.device.is_connected() {
+            self.disconnect();
         }
         self.start_reload(sender);
     }
@@ -932,7 +1254,18 @@ impl App {
                     tracing::debug!("the ZG01 retry failed: {err}");
                 }
                 if find_card(None).is_err() {
-                    self.disconnect();
+                    if self.state.device.is_connected() {
+                        self.disconnect();
+                    } else if self.state.controls.is_empty() {
+                        self.shell.show_disconnected();
+                        self.sync_shell_state();
+                    } else {
+                        // The card stopped answering after a session:
+                        // keep its last values visible under the reconnect
+                        // banner until it comes back.
+                        self.shell.show_device_lost();
+                        self.sync_shell_state();
+                    }
                     return;
                 }
 
@@ -975,7 +1308,14 @@ impl App {
 
     /// Installs the state of a card that was read and is still present.
     fn reloaded(&mut self, loaded: Loaded, sender: ComponentSender<Self>) {
+        // A completion from the card that just left cannot own an operation.
+        self.invalidate_operations();
         let layout = self.state.layout.clone();
+        tracing::info!(
+            "reading card hw:{}: {} controls",
+            loaded.card.index,
+            loaded.controls.len()
+        );
         self.state = AppState::new(DeviceState::Connected(loaded.card), loaded.controls, layout);
         self.backend = Some(loaded.backend);
         // The values were just read; an outcome from before the reload
@@ -992,6 +1332,14 @@ impl App {
         self.start_writer(&sender);
         self.start_meters(&sender);
         self.shell.set_page(self.page);
+        self.shell.set_reapply(
+            self.last_preset.is_some(),
+            self.last_preset
+                .as_ref()
+                .map(|choice| preset_label(&choice.block, &choice.name))
+                .as_deref()
+                .unwrap_or(""),
+        );
         self.shell.toast(&t("ZG01 connected"));
     }
 }

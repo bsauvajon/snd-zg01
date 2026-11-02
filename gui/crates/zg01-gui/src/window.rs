@@ -37,6 +37,10 @@ pub(crate) struct Shell {
     unknown_banner: adw::Banner,
     /// The banner shown when the card disappears while the app runs.
     device_banner: adw::Banner,
+    /// The banner shown while startup reads or a reset runs.
+    busy_banner: adw::Banner,
+    /// The banner offering to reapply the last preset after a reconnect.
+    reapply_banner: adw::Banner,
     /// The navigation list.
     sidebar: gtk::ListBox,
     /// The content stack: one page per screen, plus the connection view.
@@ -52,6 +56,8 @@ impl Shell {
         let stack = build_stack();
         let unknown_banner = build_unknown_banner();
         let device_banner = build_device_banner();
+        let busy_banner = build_busy_banner();
+        let reapply_banner = build_reapply_banner(&sender);
 
         let main = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         main.set_vexpand(true);
@@ -62,7 +68,9 @@ impl Shell {
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
+        toolbar.add_top_bar(&busy_banner);
         toolbar.add_top_bar(&unknown_banner);
+        toolbar.add_top_bar(&reapply_banner);
         toolbar.add_top_bar(&device_banner);
         toolbar.set_content(Some(&main));
         toolbar.add_bottom_bar(&footer);
@@ -71,6 +79,7 @@ impl Shell {
         toast_overlay.set_child(Some(&toolbar));
 
         window.set_content(Some(&toast_overlay));
+        install_shortcuts(window, &sender);
 
         Shell {
             toast_overlay,
@@ -81,6 +90,8 @@ impl Shell {
             reset_button,
             unknown_banner,
             device_banner,
+            busy_banner,
+            reapply_banner,
             sidebar,
             stack,
         }
@@ -100,6 +111,7 @@ impl Shell {
         self.reset_button.set_sensitive(true);
         self.unknown_banner.set_revealed(false);
         self.device_banner.set_revealed(false);
+        self.busy_banner.set_revealed(false);
     }
 
     /// Shows the connection view and the disconnected header.
@@ -110,7 +122,46 @@ impl Shell {
         self.reset_button.set_sensitive(false);
         self.unknown_banner.set_revealed(false);
         self.device_banner.set_revealed(false);
+        self.busy_banner.set_revealed(false);
+        self.reapply_banner.set_revealed(false);
         self.stack.set_visible_child_name("connection");
+    }
+
+    /// Shows the loading page while the startup read runs.
+    pub fn show_loading(&self) {
+        self.status_dot.remove_css_class("offline");
+        self.status_name.set_text(&t("ZG01"));
+        self.window_title
+            .set_subtitle(&t("Reading the ZG01 controls…"));
+        self.reset_button.set_sensitive(false);
+        self.save_button.set_sensitive(false);
+        self.unknown_banner.set_revealed(false);
+        self.device_banner.set_revealed(false);
+        self.reapply_banner.set_revealed(false);
+        self.stack.set_visible_child_name("loading");
+    }
+
+    /// Shows a banner while a blocking operation runs off the GTK thread.
+    pub fn set_busy(&self, busy: bool, message: &str) {
+        if busy {
+            self.busy_banner.set_title(message);
+            self.busy_banner.set_revealed(true);
+            self.save_button.set_sensitive(false);
+            self.reset_button.set_sensitive(false);
+        } else {
+            self.busy_banner.set_revealed(false);
+        }
+    }
+
+    /// Offers to reapply the last preset after a reconnect.
+    pub fn set_reapply(&self, visible: bool, preset: &str) {
+        if visible {
+            self.reapply_banner
+                .set_title(&tf("Last preset: {preset}", &[("{preset}", preset)]));
+            self.reapply_banner.set_revealed(true);
+        } else {
+            self.reapply_banner.set_revealed(false);
+        }
     }
 
     /// Shows the card lost while the app is running.
@@ -206,12 +257,12 @@ impl Shell {
         dialog.set_application_name("ZG01 Control");
         dialog.set_application_icon("audio-card-symbolic");
         dialog.set_version(env!("CARGO_PKG_VERSION"));
-        dialog.set_developer_name("Bernard Sauvajon");
-        dialog.set_developers(&["Bernard Sauvajon"]);
+        dialog.set_developer_name("Brice Sauvajon");
+        dialog.set_developers(&["Brice Sauvajon"]);
         dialog.set_license_type(gtk::License::Gpl20);
         dialog.set_website("https://github.com/bsauvajon/snd-zg01");
         dialog.set_issue_url("https://github.com/bsauvajon/snd-zg01/issues");
-        dialog.set_copyright("© 2026 Bernard Sauvajon");
+        dialog.set_copyright("© 2026 Brice Sauvajon");
 
         let card = card_index
             .map(|index| format!("hw:{index}"))
@@ -318,6 +369,53 @@ fn build_device_banner() -> adw::Banner {
     banner
 }
 
+/// The banner shown while a blocking operation runs on a worker.
+fn build_busy_banner() -> adw::Banner {
+    let banner = adw::Banner::new(&t("Reading the ZG01 controls…"));
+    banner.set_revealed(false);
+    banner.set_tooltip_text(Some(&t(
+        "The window stays responsive while the card is read or reset.",
+    )));
+    banner
+}
+
+/// The banner that offers the last preset after a reconnect.
+fn build_reapply_banner(sender: &ComponentSender<App>) -> adw::Banner {
+    let banner = adw::Banner::new(&t("Reapply the last preset"));
+    banner.set_revealed(false);
+    banner.set_button_label(Some(&t("Reapply")));
+    let sender = sender.clone();
+    banner.connect_button_clicked(move |_| sender.input(Msg::ReapplyPreset));
+    banner
+}
+
+/// Installs the keyboard shortcuts of the window.
+fn install_shortcuts(window: &adw::ApplicationWindow, sender: &ComponentSender<App>) {
+    let controller = gtk::ShortcutController::new();
+    controller.set_scope(gtk::ShortcutScope::Global);
+    add_shortcut(&controller, "CTRL+O", sender.clone(), || Msg::OpenPreset);
+    add_shortcut(&controller, "CTRL+S", sender.clone(), || Msg::Save);
+    add_shortcut(&controller, "CTRL+Q", sender.clone(), || Msg::Quit);
+    window.add_controller(controller);
+}
+
+/// Adds one global shortcut that sends the message built by `message`.
+fn add_shortcut(
+    controller: &gtk::ShortcutController,
+    accelerator: &str,
+    sender: ComponentSender<App>,
+    message: fn() -> Msg,
+) {
+    let Some(trigger) = gtk::ShortcutTrigger::parse_string(accelerator) else {
+        return;
+    };
+    let action = gtk::CallbackAction::new(move |_, _| {
+        sender.input(message());
+        gtk::glib::Propagation::Proceed
+    });
+    controller.add_shortcut(gtk::Shortcut::new(Some(trigger), Some(action)));
+}
+
 /// Builds the sidebar and returns its container and list.
 fn build_sidebar(sender: &ComponentSender<App>) -> (gtk::Box, gtk::ListBox) {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -380,8 +478,38 @@ fn build_stack() -> gtk::Stack {
         stack.add_named(&placeholder_page(page), Some(page.stack_name()));
     }
     stack.add_named(&connection_page(), Some("connection"));
+    stack.add_named(&loading_page(), Some("loading"));
 
     stack
+}
+
+/// The page shown while startup reads the card on a worker.
+fn loading_page() -> gtk::Box {
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    root.set_margin_top(36);
+    root.set_margin_bottom(36);
+    root.set_margin_start(36);
+    root.set_margin_end(36);
+    root.set_valign(gtk::Align::Center);
+    root.set_halign(gtk::Align::Center);
+
+    let spinner = gtk::Spinner::new();
+    spinner.set_size_request(48, 48);
+    spinner.start();
+    root.append(&spinner);
+
+    let title = gtk::Label::new(Some(&t("Reading the ZG01 controls…")));
+    title.add_css_class("connection-title");
+    root.append(&title);
+
+    let hint = gtk::Label::new(Some(&t(
+        "The window stays responsive while the card is read.",
+    )));
+    hint.add_css_class("connection-hint");
+    hint.set_wrap(true);
+    root.append(&hint);
+
+    root
 }
 
 /// Builds the footer with the cache badge.

@@ -93,16 +93,6 @@ impl FaderInner {
         *self.value.borrow()
     }
 
-    /// The increment of one key press or scroll notch.
-    ///
-    /// The increment always stays on the control's step grid: writing a
-    /// value between two steps is not something the driver accepts. Shift
-    /// makes a pointer drag finer; it cannot make a key press finer than
-    /// the grid.
-    fn step(&self) -> i64 {
-        self.spec.step.max(1)
-    }
-
     /// Installs `value`, redraws, and reports the change when `emit` is set.
     fn set_value(
         &self,
@@ -128,17 +118,19 @@ impl FaderInner {
     }
 
     /// Moves the value by `notches` increments.
+    ///
+    /// A value the GUI no longer knows is not a reason to refuse the
+    /// keyboard: the first key press starts from a defined end of the
+    /// range (the bottom for an increase, the top for a decrease), which
+    /// makes that one value known again.
     fn adjust(&self, area: &gtk::DrawingArea, label: &gtk::Label, notches: i64) {
-        let Some(current) = self.value().known() else {
-            return;
-        };
-        let delta = notches.saturating_mul(self.step());
-        let target = current
-            .saturating_add(delta)
-            .clamp(self.spec.min, self.spec.max);
-        // A device correction can leave the value off the published grid;
-        // a key press puts it back on the nearest step.
-        let value = snap_to_step(target, self.spec.min, self.spec.max, self.spec.step);
+        let value = adjusted_value(
+            self.value().known(),
+            notches,
+            self.spec.min,
+            self.spec.max,
+            self.spec.step,
+        );
         self.set_value(area, label, ControlValue::Known(value), true);
     }
 
@@ -402,6 +394,22 @@ fn refresh(area: &gtk::DrawingArea, label: &gtk::Label, spec: &FaderSpec, value:
     area.update_property(&properties);
 }
 
+/// The value one key press or scroll notch produces.
+///
+/// A known value moves by `notches`, clamped and snapped to the grid. An
+/// unknown value starts at the bottom of the range for an increase and at
+/// the top for a decrease, so the keyboard can recover it after a reset.
+fn adjusted_value(current: Option<i64>, notches: i64, min: i64, max: i64, step: i64) -> i64 {
+    let Some(current) = current else {
+        return if notches > 0 { min } else { max };
+    };
+    let delta = notches.saturating_mul(step.max(1));
+    let target = current.saturating_add(delta).clamp(min, max);
+    // A device correction can leave the value off the published grid; a
+    // key press puts it back on the nearest step.
+    snap_to_step(target, min, max, step)
+}
+
 /// The neutral value: the bottom of the track, or 0 dB for a gain.
 fn default_value(spec: &FaderSpec) -> i64 {
     fraction_to_value(
@@ -540,7 +548,7 @@ fn draw_ticks(context: &gtk4::cairo::Context, centre: f64, top: f64, bottom: f64
 
 #[cfg(test)]
 mod tests {
-    use super::{default_value, fraction_from_y, track_bounds, FaderSpec};
+    use super::{adjusted_value, default_value, fraction_from_y, track_bounds, FaderSpec};
     use zg01_core::model::{ControlValue, Unit};
 
     fn spec() -> FaderSpec {
@@ -611,6 +619,23 @@ mod tests {
             10,
             "the grid starts on the minimum"
         );
+    }
+
+    #[test]
+    fn the_keyboard_recovers_an_unknown_value() {
+        assert_eq!(
+            adjusted_value(None, 1, 0, 127, 1),
+            0,
+            "an increase starts from the bottom"
+        );
+        assert_eq!(
+            adjusted_value(None, -1, 0, 127, 1),
+            127,
+            "a decrease starts from the top"
+        );
+        assert_eq!(adjusted_value(Some(10), 1, 0, 127, 1), 11);
+        assert_eq!(adjusted_value(Some(10), -1, 0, 127, 1), 9);
+        assert_eq!(adjusted_value(Some(126), 10, 0, 127, 1), 127);
     }
 
     #[test]

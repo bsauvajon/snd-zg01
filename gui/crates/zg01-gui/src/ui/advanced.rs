@@ -47,6 +47,10 @@ const VALUE_WIDTH: i32 = 104;
 const UNIT_WIDTH: i32 = 54;
 /// The width of the type column.
 const TYPE_WIDTH: i32 = 96;
+/// The width of the range column.
+const RANGE_WIDTH: i32 = 108;
+/// The width of the address column.
+const ADDRESS_WIDTH: i32 = 64;
 
 /// The widest range a scale can still step through usefully.
 ///
@@ -541,8 +545,10 @@ fn build_header() -> gtk::Box {
         ("Control", t("Control"), NAME_WIDTH),
         ("Editor", t("Editor"), EDITOR_WIDTH),
         ("Value", t("Value"), VALUE_WIDTH),
+        ("Range", t("Range"), RANGE_WIDTH),
         ("Unit", t("Unit"), UNIT_WIDTH),
         ("Type", t("Type"), TYPE_WIDTH),
+        ("Address", t("Address"), ADDRESS_WIDTH),
     ] {
         let column = gtk::Label::new(Some(&label));
         column.add_css_class("advanced-column");
@@ -606,6 +612,12 @@ fn build_row(row: &AdvancedRow, editor: gtk::Widget, value_label: &gtk::Label) -
     line.append(&editor);
     line.append(value_label);
 
+    let range = gtk::Label::new(Some(&format!("{} … {}", row.min, row.max)));
+    range.add_css_class("advanced-range");
+    range.set_xalign(1.0);
+    range.set_width_request(RANGE_WIDTH);
+    line.append(&range);
+
     let unit = gtk::Label::new(Some(&unit_label(row.unit)));
     unit.add_css_class("advanced-unit");
     unit.set_xalign(0.0);
@@ -617,6 +629,16 @@ fn build_row(row: &AdvancedRow, editor: gtk::Widget, value_label: &gtk::Label) -
     kind.set_xalign(0.0);
     kind.set_width_request(TYPE_WIDTH);
     line.append(&kind);
+
+    let address = gtk::Label::new(Some(
+        &row.address
+            .map(|address| format!("0x{address:03x}"))
+            .unwrap_or_else(|| UNKNOWN_TEXT.to_string()),
+    ));
+    address.add_css_class("advanced-address");
+    address.set_xalign(0.0);
+    address.set_width_request(ADDRESS_WIDTH);
+    line.append(&address);
 
     list_row.set_child(Some(&line));
 

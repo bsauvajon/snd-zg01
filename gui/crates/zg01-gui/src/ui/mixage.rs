@@ -23,7 +23,7 @@ use gtk4::{self as gtk, Orientation};
 use zg01_core::model::{AppState, ControlValue, Unit};
 
 use super::mixage_model::{MeterId, MixageModel, StreamOutputModel, StripId, StripModel};
-use crate::i18n::t;
+use crate::i18n::{t, tf};
 use crate::widgets::{Fader, FaderSpec, Meter, MeterSpec};
 
 /// The full scale of the meter controls, in device steps.
@@ -43,6 +43,8 @@ pub(crate) enum MixageEvent {
     },
     /// The user asked to load a `.zgpreset` file.
     LoadPreset,
+    /// The user asked to stop the running preset application.
+    CancelPreset,
 }
 
 /// One card meter and the reading slot it uses.
@@ -115,10 +117,22 @@ struct StreamOutputWidgets {
 /// The Mixage screen.
 pub(crate) struct MixageScreen {
     root: gtk::Box,
+    /// The fader/meter panel, disabled while an operation runs.
+    controls: gtk::Box,
     strips: Vec<StripWidgets>,
     output: StreamOutputWidgets,
     /// The preset bar label naming the last applied preset.
     preset_name: gtk::Label,
+    /// The progress row of a running preset application.
+    preset_progress: gtk::ProgressBar,
+    /// The applied/skipped counters beside the progress bar.
+    preset_status: gtk::Label,
+    /// The cancel action of a running preset application.
+    preset_cancel: gtk::Button,
+    /// The load action, insensitive while a preset runs.
+    preset_load: gtk::Button,
+    /// Whether the card is connected when the screen is built.
+    connected: bool,
 }
 
 impl MixageScreen {
@@ -165,14 +179,21 @@ impl MixageScreen {
         panel.append(&node);
         root.append(&panel);
 
-        let (preset_bar, preset_name) = build_preset_bar(state, &on_event);
+        let (preset_bar, preset_name, preset_progress, preset_status, preset_cancel, preset_load) =
+            build_preset_bar(state, &on_event);
         root.append(&preset_bar);
 
         MixageScreen {
             root,
+            controls: panel,
             strips,
             output,
             preset_name,
+            preset_progress,
+            preset_status,
+            preset_cancel,
+            preset_load,
+            connected: state.device.is_connected(),
         }
     }
 
@@ -184,6 +205,38 @@ impl MixageScreen {
     /// Names the preset that was just applied in the preset bar.
     pub(crate) fn set_preset_name(&self, name: &str) {
         self.preset_name.set_text(name);
+    }
+
+    /// Enables or disables the faders and meters, keeping the preset bar
+    /// (including its Cancel action) usable.
+    pub(crate) fn set_controls_sensitive(&self, sensitive: bool) {
+        self.controls.set_sensitive(sensitive);
+    }
+
+    /// Shows or hides the progress row and the cancel action.
+    pub(crate) fn set_preset_running(&self, running: bool) {
+        self.preset_progress.set_visible(running);
+        self.preset_status.set_visible(running);
+        self.preset_cancel.set_visible(running);
+        self.preset_load.set_sensitive(!running && self.connected);
+    }
+
+    /// Installs the applied/skipped counters of a running application.
+    pub(crate) fn set_preset_progress(&self, done: usize, total: usize, skipped: usize) {
+        let fraction = if total == 0 {
+            0.0
+        } else {
+            done as f64 / total as f64
+        };
+        self.preset_progress.set_fraction(fraction.clamp(0.0, 1.0));
+        self.preset_status.set_text(&tf(
+            "{done} of {total} applied, {skipped} skipped",
+            &[
+                ("{done}", &done.to_string()),
+                ("{total}", &total.to_string()),
+                ("{skipped}", &skipped.to_string()),
+            ],
+        ));
     }
 
     /// Installs one meter reading, in 0–127 device steps.
@@ -463,11 +516,20 @@ fn build_toggle(
     )
 }
 
-/// The preset bar: the load action and the last applied preset.
+/// The preset bar: the load action, the running progress and the last
+/// applied preset.
+#[allow(clippy::type_complexity)]
 fn build_preset_bar(
     state: &AppState,
     on_event: &Rc<dyn Fn(MixageEvent)>,
-) -> (gtk::Box, gtk::Label) {
+) -> (
+    gtk::Box,
+    gtk::Label,
+    gtk::ProgressBar,
+    gtk::Label,
+    gtk::Button,
+    gtk::Button,
+) {
     let bar = gtk::Box::new(Orientation::Horizontal, 12);
     bar.add_css_class("panel");
     bar.add_css_class("preset-bar");
@@ -481,6 +543,25 @@ fn build_preset_bar(
     name.set_xalign(0.0);
     name.set_hexpand(true);
     bar.append(&name);
+
+    let progress = gtk::ProgressBar::new();
+    progress.set_valign(gtk::Align::Center);
+    progress.set_width_request(160);
+    progress.set_visible(false);
+    bar.append(&progress);
+
+    let status = gtk::Label::new(None);
+    status.add_css_class("preset-progress");
+    status.set_visible(false);
+    bar.append(&status);
+
+    let cancel = gtk::Button::with_label(&t("Cancel"));
+    cancel.add_css_class("destructive-action");
+    cancel.set_visible(false);
+    cancel.set_tooltip_text(Some(&t("Stop applying the preset")));
+    let emit = on_event.clone();
+    cancel.connect_clicked(move |_| emit(MixageEvent::CancelPreset));
+    bar.append(&cancel);
 
     let recent = gtk::Button::with_label(&t("Recent"));
     recent.set_sensitive(false);
@@ -499,7 +580,7 @@ fn build_preset_bar(
     load.connect_clicked(move |_| emit(MixageEvent::LoadPreset));
     bar.append(&load);
 
-    (bar, name)
+    (bar, name, progress, status, cancel, load)
 }
 
 /// A muted fallback for a strip or a block with no usable control.
