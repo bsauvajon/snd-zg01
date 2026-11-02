@@ -15,7 +15,8 @@ use libadwaita::prelude::*;
 
 use zg01_core::model::Control;
 use zg01_core::preset::{
-    control_map_entry, load_preset, plan_preset, ApplyReport, Preset, PresetPlan, Skip, SkipReason,
+    control_map_entry, load_preset, plan_preset, ApplyReport, Preset, PresetError, PresetPlan,
+    Skip, SkipReason,
 };
 
 use crate::i18n::{t, tf};
@@ -83,7 +84,7 @@ pub(crate) fn present_preset_dialog(
                 Ok(preset) => {
                     show_preview(&parent, preset, Rc::clone(&controls), Rc::clone(&on_apply))
                 }
-                Err(error) => show_error(&parent, &error.to_string()),
+                Err(error) => show_error(&parent, &preset_error_text(&error)),
             }
         },
     );
@@ -215,24 +216,41 @@ fn skip_row(skip: &Skip) -> gtk::ListBoxRow {
 }
 
 /// The one-line summary of a plan.
+///
+/// The counts travel in one translated message with placeholders, so the
+/// two values are not assembled from separately translated fragments.
 fn summary_text(plan: &PresetPlan) -> String {
-    let applied = match plan.applies.len() {
-        0 => t("No parameter applied"),
-        1 => t("1 parameter applied"),
-        count => tf(
-            "{count} parameters applied",
-            &[("{count}", &count.to_string())],
-        ),
-    };
-    let skipped = match plan.skipped.len() {
-        0 => t("none skipped"),
-        1 => t("1 skipped"),
-        count => tf("{count} skipped", &[("{count}", &count.to_string())]),
-    };
     tf(
-        "{applied}, {skipped}.",
-        &[("{applied}", &applied), ("{skipped}", &skipped)],
+        "{applied} applied, {skipped} skipped.",
+        &[
+            ("{applied}", &plan.applies.len().to_string()),
+            ("{skipped}", &plan.skipped.len().to_string()),
+        ],
     )
+}
+
+/// The UI message of a preset read failure.
+///
+/// The error enum lives in `zg01-core`, whose messages are developer-facing
+/// English. The dialog maps each variant to a gettext key so a French user
+/// sees the reason in French; the wrapped I/O detail stays as the
+/// operating-system text.
+fn preset_error_text(error: &PresetError) -> String {
+    match error {
+        PresetError::BackupNotSupported => {
+            t(".zg01 backups are not supported; load a .zgpreset file instead")
+        }
+        PresetError::Malformed => t("The file is not a valid .zgpreset file"),
+        PresetError::Io(source) => tf(
+            "The preset could not be read: {error}",
+            &[("{error}", &source.to_string())],
+        ),
+        PresetError::InvalidPath => t("The preset path contains a NUL byte"),
+        PresetError::Parser(code) => tf(
+            "The preset parser failed with code {code}",
+            &[("{code}", &code.to_string())],
+        ),
+    }
 }
 
 /// The description of a skipped parameter.
@@ -332,4 +350,26 @@ pub(crate) fn present_preset_report(
     dialog.set_default_response(Some("close"));
     dialog.set_close_response("close");
     dialog.present(Some(parent));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preset_error_text;
+    use zg01_core::preset::PresetError;
+
+    #[test]
+    fn preset_errors_have_translatable_ui_messages() {
+        assert_eq!(
+            preset_error_text(&PresetError::BackupNotSupported),
+            ".zg01 backups are not supported; load a .zgpreset file instead"
+        );
+        assert_eq!(
+            preset_error_text(&PresetError::Malformed),
+            "The file is not a valid .zgpreset file"
+        );
+        assert_eq!(
+            preset_error_text(&PresetError::InvalidPath),
+            "The preset path contains a NUL byte"
+        );
+    }
 }

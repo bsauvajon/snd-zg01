@@ -3,13 +3,21 @@
 `fr.po` is the shipped French catalogue. The source strings are English in
 `crates/zg01-gui/src`; `POTFILES` lists the files that carry a message.
 
-`xgettext` does not understand Rust, so the catalogue is maintained directly
-instead of regenerated blindly. When a user-facing string changes:
+GNU `xgettext` has no Rust parser. The build uses its C++ parser with
+`--keyword=t:1`, `tf:1`, `tn:1,2` and `tnf:1,2`, so every `t("...")` call is
+extracted. The `unterminated character constant` messages on stderr come from
+Rust lifetimes (`'static`) and are harmless; the extraction still succeeds.
+
+Workflow when a user-facing string changes:
 
 1. Update the `t()` / `tf()` / `tn()` / `tnf()` call in the source.
-2. Update the matching `msgid` in `fr.po`, keeping its named placeholders
-   (`{error}`, `{name}`, `{count}`, …) exactly as written.
-3. Run `make -C gui check-po` (`msgfmt --check`) and `make -C gui locale`
+2. Run `make -C gui update-po`. This runs `xgettext` over `POTFILES` into
+   `po/zg01-control.pot`, merges the template into `po/fr.po` with
+   `msgmerge`, and runs `msgfmt --check`.
+3. Fill the new `msgstr` entries in `fr.po`, keeping named placeholders
+   (`{error}`, `{name}`, `{count}`, …) exactly as written. Remove a fuzzy
+   match if `msgmerge` guessed one.
+4. Run `make -C gui check-po` and `make -C gui locale`
    (`msgfmt --check --statistics`).
 
 The UI never assembles a sentence from translated fragments: a message with a

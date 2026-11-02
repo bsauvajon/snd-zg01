@@ -31,10 +31,12 @@ sinks without moving the mix into userspace.
 
 ### Arch Linux, CachyOS, Omarchy
 
-Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst`,
-`zgctl-git-*.pkg.tar.zst` and `zg01-control-git-*.pkg.tar.zst`) are attached
-to each [GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest);
-install the downloaded files with `sudo pacman -U <file>`.
+Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst` and
+`zgctl-git-*.pkg.tar.zst`) are attached to each driver/tools
+[GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest);
+install the downloaded files with `sudo pacman -U <file>`. The GUI has its
+own `gui-vX.Y.Z` release train: `zg01-control-git-*.pkg.tar.zst` is attached
+to those releases, not necessarily to the latest driver release.
 
 To build it yourself instead, install the build tools, DKMS, and the headers
 for the running kernel:
@@ -74,9 +76,13 @@ sudo apt install snd-zg01-dkms snd-zg01-tools
 ```
 
 `snd-zg01-tools` is optional and ships `zgctl`; `snd-zg01-gui` is the
-optional GTK4 GUI. Install only `snd-zg01-dkms` for the driver alone.
+optional GTK4 GUI. Install only `snd-zg01-dkms` for the driver alone. The
+APT repository is refreshed by driver `v*` releases; a GUI-only `gui-v*`
+release publishes its `.deb` as a release asset instead.
 
-Or download the `.deb` from the latest release and install it manually:
+Or download the `.deb` from the latest driver release and install it
+manually. `snd-zg01-gui` follows the separate `gui-vX.Y.Z` train, so take its
+`.deb` from the GUI release that matches the version you want:
 
 ```bash
 sudo dpkg -i snd-zg01-dkms_*.deb snd-zg01-tools_*_amd64.deb \
@@ -189,9 +195,9 @@ amixer -c zg01 cget 'name=Meter Stream Mix'
 ```
 
 The GUI polls these four controls at 20 Hz on a worker thread and draws
-them beside the PipeWire levels, so the card and Linux levels stay
-distinct. GAME has no card meter in v1: its strip uses PipeWire `Game
-Out` in v1.1. HDMI is not registered until its field is decoded. See
+the card meters. The Linux-side PipeWire bars are a v1.1 item and are not
+shown in v1. GAME has no card meter in v1 either: its strip uses PipeWire
+`Game Out` in v1.1. HDMI is not registered until its field is decoded. See
 `docs/METER_PROTOCOL.md` and the acceptance record in `docs/METER_TEST.md`.
 
 ## GUI (ZG01 Control)
@@ -282,8 +288,12 @@ The source strings are English; French ships in v1. The catalogue is
 to use it. A source-tree run finds the catalogue built by
 `make -C gui locale`; `ZG01_LOCALEDIR` overrides the lookup directory.
 
-Screenshots are not committed yet; they will be added with the first GUI
-release. The hardware acceptance checklist is in `docs/GUI_TEST.md`.
+Screenshot of the Mixage screen, captured from the real application on a
+ZG01 card:
+
+![ZG01 Control, Mixage screen](gui/data/screenshots/io.github.bsauvajon.Zg01Control-mixage.png)
+
+The hardware acceptance checklist is in `docs/GUI_TEST.md`.
 
 ## Presets
 

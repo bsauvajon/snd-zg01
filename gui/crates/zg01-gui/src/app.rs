@@ -88,20 +88,23 @@ impl Page {
     }
 
     /// The title shown in the sidebar and the page.
-    pub fn title(self) -> &'static str {
+    ///
+    /// The literal is wrapped here rather than at the call sites so
+    /// `xgettext` sees every page name.
+    pub fn title(self) -> String {
         match self {
-            Page::Mixage => "Mixage",
-            Page::Micro => "Micro",
-            Page::Advanced => "Advanced",
+            Page::Mixage => t("Mixage"),
+            Page::Micro => t("Micro"),
+            Page::Advanced => t("Advanced"),
         }
     }
 
     /// What the screen shows, until its own task fills it in.
-    pub fn description(self) -> &'static str {
+    pub fn description(self) -> String {
         match self {
-            Page::Mixage => "The three stream sends, the stream output and the meters.",
-            Page::Micro => "The microphone chain: GATE, COMP, EQ and LIMITER.",
-            Page::Advanced => "Every ALSA control the curated screens do not cover.",
+            Page::Mixage => t("The three stream sends, the stream output and the meters."),
+            Page::Micro => t("The microphone chain: GATE, COMP, EQ and LIMITER."),
+            Page::Advanced => t("Every ALSA control the curated screens do not cover."),
         }
     }
 

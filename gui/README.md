@@ -26,7 +26,8 @@ gui/
 - libadwaita 1.9 development files (`libadwaita-1-dev`)
 - libasound development files (`libasound2-dev`) for `zg01-core`
 - `pkg-config`
-- GNU `gettext` (`msgfmt`) for the shipped French catalogue
+- GNU `gettext` (`msgfmt`, `xgettext`, `msgmerge`) for the shipped French
+  catalogue
 
 On Debian/Ubuntu:
 
@@ -94,8 +95,10 @@ package recipes use.
 
 User-facing strings are English in the source and translated through gettext.
 `po/fr.po` is the shipped French catalogue; `po/POTFILES` lists the files
-that carry messages. Run `make -C gui check-po` after editing a catalogue and
-`make -C gui locale` before running from the source tree with
+that carry messages. `make -C gui update-po` runs `xgettext` over those files
+into `po/zg01-control.pot`, merges it into `fr.po` with `msgmerge`, and runs
+`msgfmt --check`; fill new `msgstr` entries, then run `make -C gui check-po`
+and `make -C gui locale` before running from the source tree with
 `LANG=fr_FR.UTF-8`. `ZG01_LOCALEDIR` points the binary at another catalogue
 directory (`<dir>/fr/LC_MESSAGES/zg01-control.mo`).
 

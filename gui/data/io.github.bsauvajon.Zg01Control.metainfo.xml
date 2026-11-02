@@ -37,6 +37,14 @@
     </p>
   </description>
 
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/bsauvajon/snd-zg01/main/gui/data/screenshots/io.github.bsauvajon.Zg01Control-mixage.png</image>
+      <caption>Mixage screen: stream sends, stream output, meters and preset bar</caption>
+      <caption xml:lang="fr">Écran Mixage : départs stream, sortie stream, mètres et barre de presets</caption>
+    </screenshot>
+  </screenshots>
+
   <launchable type="desktop-id">io.github.bsauvajon.Zg01Control.desktop</launchable>
   <url type="homepage">https://github.com/bsauvajon/snd-zg01</url>
   <url type="bugtracker">https://github.com/bsauvajon/snd-zg01/issues</url>

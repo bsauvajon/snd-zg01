@@ -93,8 +93,10 @@ The GUI ships on independent `gui-vX.Y.Z` tags; driver releases keep using
 `vX.Y.Z`.  A GUI tag builds only the GUI artifacts:
 
 1. Bump `version` in `gui/Cargo.toml` and `gui/Cargo.lock`.
-2. Regenerate or update `gui/po/fr.po` when a source string changed;
-   `make -C gui check-po` must pass.
+2. Refresh the catalogue when a source string changed:
+   `make -C gui update-po` (xgettext into `gui/po/zg01-control.pot`, msgmerge
+   into `gui/po/fr.po`) then fill any new `msgstr`; `make -C gui check-po`
+   must pass.
 3. Tag: `git tag -a gui-v0.1.0 -m "ZG01 Control 0.1.0"` and push the tag.
 4. `.github/workflows/release-gui.yml` builds `zg01-control-git` and
    `snd-zg01-gui`, creates a draft release and uploads only those artifacts.

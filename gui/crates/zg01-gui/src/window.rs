@@ -344,7 +344,7 @@ fn build_sidebar(sender: &ComponentSender<App>) -> (gtk::Box, gtk::ListBox) {
 
         let icon = gtk::Image::from_icon_name(page.icon());
         icon.set_pixel_size(16);
-        let label = gtk::Label::new(Some(&t(page.title())));
+        let label = gtk::Label::new(Some(&page.title()));
         label.set_xalign(0.0);
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         content.set_margin_top(8);
@@ -415,12 +415,12 @@ fn placeholder_page(page: Page) -> gtk::Box {
     root.set_margin_start(24);
     root.set_margin_end(24);
 
-    let title = gtk::Label::new(Some(&t(page.title())));
+    let title = gtk::Label::new(Some(&page.title()));
     title.add_css_class("page-title");
     title.set_xalign(0.0);
     root.append(&title);
 
-    let subtitle = gtk::Label::new(Some(&t(page.description())));
+    let subtitle = gtk::Label::new(Some(&page.description()));
     subtitle.add_css_class("page-subtitle");
     subtitle.set_xalign(0.0);
     subtitle.set_wrap(true);
@@ -432,7 +432,7 @@ fn placeholder_page(page: Page) -> gtk::Box {
 
     let status = adw::StatusPage::new();
     status.set_icon_name(Some(page.icon()));
-    status.set_title(&t(page.title()));
+    status.set_title(&page.title());
     status.set_description(Some(&t("Screen in preparation.")));
     status.set_vexpand(true);
     panel.append(&status);

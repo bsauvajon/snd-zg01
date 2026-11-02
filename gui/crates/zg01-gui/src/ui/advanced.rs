@@ -33,10 +33,6 @@ use crate::i18n::{t, tnf};
 /// What the editor shows while the device value is unknown.
 const UNKNOWN_TEXT: &str = "—";
 
-/// The tooltip of a raw row's warning icon.
-const RAW_TOOLTIP: &str =
-    "Raw parameter: the meaning of this control is not decoded. Check the value before writing it.";
-
 /// The width of the warning-icon column.
 const BADGE_WIDTH: i32 = 18;
 /// The width of the section column.
@@ -540,15 +536,15 @@ fn build_header() -> gtk::Box {
     spacer.set_width_request(BADGE_WIDTH);
     header.append(&spacer);
 
-    for (key, width) in [
-        ("Section", GROUP_WIDTH),
-        ("Control", NAME_WIDTH),
-        ("Editor", EDITOR_WIDTH),
-        ("Value", VALUE_WIDTH),
-        ("Unit", UNIT_WIDTH),
-        ("Type", TYPE_WIDTH),
+    for (key, label, width) in [
+        ("Section", t("Section"), GROUP_WIDTH),
+        ("Control", t("Control"), NAME_WIDTH),
+        ("Editor", t("Editor"), EDITOR_WIDTH),
+        ("Value", t("Value"), VALUE_WIDTH),
+        ("Unit", t("Unit"), UNIT_WIDTH),
+        ("Type", t("Type"), TYPE_WIDTH),
     ] {
-        let column = gtk::Label::new(Some(&t(key)));
+        let column = gtk::Label::new(Some(&label));
         column.add_css_class("advanced-column");
         column.set_xalign(0.0);
         column.set_width_request(width);
@@ -582,7 +578,9 @@ fn build_row(row: &AdvancedRow, editor: gtk::Widget, value_label: &gtk::Label) -
     if row.raw {
         let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
         icon.add_css_class("raw-badge");
-        icon.set_tooltip_text(Some(&t(RAW_TOOLTIP)));
+        icon.set_tooltip_text(Some(&t(
+            "Raw parameter: the meaning of this control is not decoded. Check the value before writing it.",
+        )));
         badge.append(&icon);
     }
     line.append(&badge);

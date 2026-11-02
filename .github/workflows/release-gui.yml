@@ -1,10 +1,12 @@
 name: Release GUI
 
 on:
+  # Tag pushes only: every job derives the release name and the version from
+  # GITHUB_REF_NAME, so a manual run on a branch would create a release for
+  # that branch. Re-run the tagged workflow from the Actions UI instead.
   push:
     tags:
       - 'gui-v*'
-  workflow_dispatch: {}
 
 permissions:
   contents: write

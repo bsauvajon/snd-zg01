@@ -1,7 +1,10 @@
 CARGO ?= cargo
+XGETTEXT ?= xgettext
+MSGMERGE ?= msgmerge
 PREFIX ?= /usr/local
 DESTDIR ?=
 DOMAIN ?= zg01-control
+POT = po/$(DOMAIN).pot
 
 BINDIR = $(DESTDIR)$(PREFIX)/bin
 APPSDIR = $(DESTDIR)$(PREFIX)/share/applications
@@ -9,7 +12,7 @@ METAINFODIR = $(DESTDIR)$(PREFIX)/share/metainfo
 ICONDIR = $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps
 LOCALEDIR = $(DESTDIR)$(PREFIX)/share/locale
 
-.PHONY: build test check-po install uninstall locale clean
+.PHONY: build test check-po pot update-po install uninstall locale clean
 
 build:
 	$(CARGO) build --workspace --release
@@ -20,6 +23,26 @@ locale:
 
 check-po:
 	msgfmt --check -o /dev/null po/fr.po
+
+# GNU xgettext has no Rust parser. It extracts the `t("...")` / `tf("...")`
+# / `tn*("...", "...")` calls with the C++ parser; the "unterminated
+# character constant" warnings come from Rust lifetimes ('static) and are
+# harmless. POTFILES lists every source file that carries a message.
+pot:
+	$(XGETTEXT) --language=C++ --from-code=UTF-8 --foreign-user \
+		--copyright-holder="Bernard Sauvajon" \
+		--package-name="ZG01 Control" \
+		--msgid-bugs-address="https://github.com/bsauvajon/snd-zg01/issues" \
+		--add-comments=TRANSLATORS: \
+		--keyword=t:1 --keyword=tf:1 --keyword=tn:1,2 --keyword=tnf:1,2 \
+		-o $(POT) -f po/POTFILES
+
+# Merge the extracted template into the French catalogue. New msgids land as
+# untranslated entries for the translator to fill; existing translations and
+# their placeholders are kept.
+update-po: pot
+	$(MSGMERGE) --update --backup=none po/fr.po $(POT)
+	$(MAKE) check-po
 
 test: check-po
 	$(CARGO) test --workspace
