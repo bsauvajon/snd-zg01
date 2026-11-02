@@ -340,12 +340,17 @@ fn flush_set_and_wait_does_not_save_after_a_failed_flush() {
 /// A write that reports `ENODEV` is a disconnect, not a control failure.
 #[test]
 fn a_liveness_failure_is_reported_as_a_lost_device() {
-    let (writer, rx) = ControlWriter::spawn(Arc::new(LostBackend));
+    let (writer, rx) = ControlWriter::spawn_with_generation(Arc::new(LostBackend), 7);
     let error = writer.set_and_wait("Gate", 1).unwrap_err();
     assert!(!error.is_empty());
 
     match rx.recv_timeout(Duration::from_secs(2)).unwrap() {
-        WriteOutcome::DeviceLost { name, .. } => assert_eq!(name, "Gate"),
+        WriteOutcome::DeviceLost {
+            generation, name, ..
+        } => {
+            assert_eq!(name, "Gate");
+            assert_eq!(generation, 7, "the outcome names its backend");
+        }
         other => panic!("expected a lost device, got {other:?}"),
     }
 }

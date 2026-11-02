@@ -42,6 +42,11 @@ pub struct MeterSnapshot {
     /// The GUI drops the backend and re-reads the card when this is set;
     /// an `-ENODATA` meter is not a disconnect.
     pub lost: bool,
+    /// The generation of the backend that produced the snapshot.
+    ///
+    /// A snapshot from an already replaced backend must not tear down the
+    /// new card when its delayed liveness error arrives.
+    pub generation: u64,
 }
 
 impl MeterSnapshot {
@@ -57,6 +62,11 @@ impl MeterSnapshot {
 /// reported as [`None`]; any other failure is logged and reported the
 /// same way, so one broken meter never hides the others.
 pub fn poll_meters(backend: &dyn AlsaBackend) -> MeterSnapshot {
+    poll_meters_with_generation(backend, 0)
+}
+
+/// Reads the four meters once for one backend generation.
+pub fn poll_meters_with_generation(backend: &dyn AlsaBackend, generation: u64) -> MeterSnapshot {
     let mut values = [None; 4];
     let mut lost = false;
     for (slot, name) in values.iter_mut().zip(METER_CONTROLS) {
@@ -76,6 +86,7 @@ pub fn poll_meters(backend: &dyn AlsaBackend) -> MeterSnapshot {
         values,
         at: Instant::now(),
         lost,
+        generation,
     }
 }
 
@@ -84,11 +95,23 @@ pub fn poll_meters(backend: &dyn AlsaBackend) -> MeterSnapshot {
 /// The readings are sent at `interval`; the sender stops when the
 /// receiver is dropped.
 pub fn spawn_poller(backend: Arc<dyn AlsaBackend>, interval: Duration) -> Receiver<MeterSnapshot> {
+    spawn_poller_with_generation(backend, interval, 0)
+}
+
+/// Reads the meters in a worker for one backend generation.
+pub fn spawn_poller_with_generation(
+    backend: Arc<dyn AlsaBackend>,
+    interval: Duration,
+    generation: u64,
+) -> Receiver<MeterSnapshot> {
     let (snapshots, receiver) = mpsc::channel::<MeterSnapshot>();
     std::thread::Builder::new()
         .name("zg01-meters".to_string())
         .spawn(move || {
-            while snapshots.send(poll_meters(&*backend)).is_ok() {
+            while snapshots
+                .send(poll_meters_with_generation(&*backend, generation))
+                .is_ok()
+            {
                 std::thread::sleep(interval);
             }
         })
@@ -113,6 +136,7 @@ mod tests {
             values: [Some(1), None, Some(3), None],
             at: std::time::Instant::now(),
             lost: false,
+            generation: 0,
         };
         assert_eq!(snapshot.value(0), Some(1));
         assert_eq!(snapshot.value(1), None);

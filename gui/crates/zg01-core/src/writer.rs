@@ -48,8 +48,12 @@ pub enum WriteOutcome {
     ///
     /// The GUI must drop the backend and re-read the card, not just revert
     /// the widget: a quick unplug/replug with the same ALSA index would
-    /// otherwise keep using the old handle.
+    /// otherwise keep using the old handle. `generation` identifies the
+    /// backend that emitted the event, so a stale event cannot tear down a
+    /// card that was already reloaded.
     DeviceLost {
+        /// The generation of the backend that saw the failure.
+        generation: u64,
         /// The name of the control.
         name: String,
         /// What the driver answered.
@@ -110,11 +114,23 @@ impl ControlWriter {
     /// The returned receiver reports the outcome of every write the thread
     /// performs.
     pub fn spawn(backend: Arc<dyn AlsaBackend>) -> (ControlWriter, Receiver<WriteOutcome>) {
+        Self::spawn_with_generation(backend, 0)
+    }
+
+    /// Starts the writer thread for one backend generation.
+    ///
+    /// The generation is copied into every [`WriteOutcome::DeviceLost`], so
+    /// the GUI can tell a failure of the card it just replaced from one of
+    /// the current card.
+    pub fn spawn_with_generation(
+        backend: Arc<dyn AlsaBackend>,
+        generation: u64,
+    ) -> (ControlWriter, Receiver<WriteOutcome>) {
         let (commands, inbox) = mpsc::channel::<Command>();
         let (outcomes, receiver) = mpsc::channel::<WriteOutcome>();
         std::thread::Builder::new()
             .name("zg01-writer".to_string())
-            .spawn(move || run(backend, inbox, outcomes))
+            .spawn(move || run(backend, inbox, outcomes, generation))
             .expect("could not start the writer thread");
         (ControlWriter { commands }, receiver)
     }
@@ -205,7 +221,12 @@ impl ControlWriter {
 }
 
 /// The body of the writer thread.
-fn run(backend: Arc<dyn AlsaBackend>, inbox: Receiver<Command>, outcomes: Sender<WriteOutcome>) {
+fn run(
+    backend: Arc<dyn AlsaBackend>,
+    inbox: Receiver<Command>,
+    outcomes: Sender<WriteOutcome>,
+    generation: u64,
+) {
     let mut pending: HashMap<String, i64> = HashMap::new();
     // When the pending values have to be written. `None` means the writer
     // is idle.
@@ -215,7 +236,7 @@ fn run(backend: Arc<dyn AlsaBackend>, inbox: Receiver<Command>, outcomes: Sender
         let now = Instant::now();
         if let Some(at) = deadline {
             if now >= at {
-                let _ = flush(&*backend, &mut pending, &outcomes);
+                let _ = flush(&*backend, &mut pending, &outcomes, generation);
                 deadline = None;
                 continue;
             }
@@ -236,21 +257,21 @@ fn run(backend: Arc<dyn AlsaBackend>, inbox: Receiver<Command>, outcomes: Sender
                 // The value asked for wins over the queued one.
                 pending.remove(&name);
                 let result = backend.write(&name, value);
-                report(&outcomes, &name, value, &result);
+                report(&outcomes, &name, value, &result, generation);
                 let _ = reply.send(result.map_err(|err| err.to_string()));
             }
             Ok(Command::Flush { reply }) => {
-                let result = flush(&*backend, &mut pending, &outcomes);
+                let result = flush(&*backend, &mut pending, &outcomes, generation);
                 deadline = None;
                 let _ = reply.send(result);
             }
             Ok(Command::FlushSetAndWait { name, value, reply }) => {
                 // The barrier must succeed before the action is written:
                 // saving after a failed flush would persist a stale value.
-                match flush(&*backend, &mut pending, &outcomes) {
+                match flush(&*backend, &mut pending, &outcomes, generation) {
                     Ok(()) => {
                         let result = backend.write(&name, value);
-                        report(&outcomes, &name, value, &result);
+                        report(&outcomes, &name, value, &result, generation);
                         let _ = reply.send(result.map_err(|err| err.to_string()));
                     }
                     Err(error) => {
@@ -261,12 +282,12 @@ fn run(backend: Arc<dyn AlsaBackend>, inbox: Receiver<Command>, outcomes: Sender
                 deadline = None;
             }
             Err(RecvTimeoutError::Timeout) => {
-                let _ = flush(&*backend, &mut pending, &outcomes);
+                let _ = flush(&*backend, &mut pending, &outcomes, generation);
                 deadline = None;
             }
             Err(RecvTimeoutError::Disconnected) => {
                 // Nobody talks to the writer any more: write what is left.
-                let _ = flush(&*backend, &mut pending, &outcomes);
+                let _ = flush(&*backend, &mut pending, &outcomes, generation);
                 break;
             }
         }
@@ -279,6 +300,7 @@ fn report(
     name: &str,
     value: i64,
     result: &Result<(), crate::alsa::AlsaError>,
+    generation: u64,
 ) {
     let outcome = match result {
         Ok(()) => WriteOutcome::Ok {
@@ -286,6 +308,7 @@ fn report(
             value,
         },
         Err(err) if err.is_liveness() => WriteOutcome::DeviceLost {
+            generation,
             name: name.to_string(),
             error: err.to_string(),
         },
@@ -307,6 +330,7 @@ fn flush(
     backend: &dyn AlsaBackend,
     pending: &mut HashMap<String, i64>,
     outcomes: &Sender<WriteOutcome>,
+    generation: u64,
 ) -> Result<(), String> {
     if pending.is_empty() {
         return Ok(());
@@ -318,7 +342,7 @@ fn flush(
         if let Err(err) = &result {
             failures.push(err.to_string());
         }
-        report(outcomes, &name, value, &result);
+        report(outcomes, &name, value, &result, generation);
     }
     if failures.is_empty() {
         Ok(())

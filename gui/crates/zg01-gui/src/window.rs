@@ -18,6 +18,26 @@ use crate::i18n::{t, tf};
 /// Width of the sidebar, in logical pixels.
 const SIDEBAR_WIDTH: i32 = 200;
 
+/// The shell facts that decide which actions are usable.
+///
+/// Keeping this free of GTK widgets lets the sensitivity rules be tested
+/// without a display: a completed Reset must re-enable Reset while the card
+/// is still connected, and a disconnect must keep it disabled.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ShellState {
+    /// Whether a card is available.
+    connected: bool,
+    /// Whether a blocking operation currently owns the card.
+    busy: bool,
+}
+
+impl ShellState {
+    /// Whether the Reset action can be used.
+    fn reset_enabled(self) -> bool {
+        self.connected && !self.busy
+    }
+}
+
 /// The widgets the shell is made of.
 pub(crate) struct Shell {
     /// The overlay the toasts are shown in.
@@ -45,6 +65,8 @@ pub(crate) struct Shell {
     sidebar: gtk::ListBox,
     /// The content stack: one page per screen, plus the connection view.
     stack: gtk::Stack,
+    /// The connected/busy facts behind the action sensitivity.
+    state: std::cell::RefCell<ShellState>,
 }
 
 impl Shell {
@@ -94,6 +116,7 @@ impl Shell {
             reapply_banner,
             sidebar,
             stack,
+            state: std::cell::RefCell::new(ShellState::default()),
         }
     }
 
@@ -108,7 +131,12 @@ impl Shell {
                 ("{driver}", &card.driver),
             ],
         ));
-        self.reset_button.set_sensitive(true);
+        {
+            let mut state = self.state.borrow_mut();
+            state.connected = true;
+            state.busy = false;
+        }
+        self.refresh_reset();
         self.unknown_banner.set_revealed(false);
         self.device_banner.set_revealed(false);
         self.busy_banner.set_revealed(false);
@@ -119,7 +147,12 @@ impl Shell {
         self.status_dot.add_css_class("offline");
         self.status_name.set_text(&t("Disconnected"));
         self.window_title.set_subtitle(&t("No ZG01 card detected"));
-        self.reset_button.set_sensitive(false);
+        {
+            let mut state = self.state.borrow_mut();
+            state.connected = false;
+            state.busy = false;
+        }
+        self.refresh_reset();
         self.unknown_banner.set_revealed(false);
         self.device_banner.set_revealed(false);
         self.busy_banner.set_revealed(false);
@@ -133,7 +166,12 @@ impl Shell {
         self.status_name.set_text(&t("ZG01"));
         self.window_title
             .set_subtitle(&t("Reading the ZG01 controls…"));
-        self.reset_button.set_sensitive(false);
+        {
+            let mut state = self.state.borrow_mut();
+            state.connected = false;
+            state.busy = true;
+        }
+        self.refresh_reset();
         self.save_button.set_sensitive(false);
         self.unknown_banner.set_revealed(false);
         self.device_banner.set_revealed(false);
@@ -143,14 +181,21 @@ impl Shell {
 
     /// Shows a banner while a blocking operation runs off the GTK thread.
     pub fn set_busy(&self, busy: bool, message: &str) {
+        self.state.borrow_mut().busy = busy;
         if busy {
             self.busy_banner.set_title(message);
             self.busy_banner.set_revealed(true);
             self.save_button.set_sensitive(false);
-            self.reset_button.set_sensitive(false);
         } else {
             self.busy_banner.set_revealed(false);
         }
+        self.refresh_reset();
+    }
+
+    /// Matches the Reset action to the connected/busy state.
+    fn refresh_reset(&self) {
+        let state = *self.state.borrow();
+        self.reset_button.set_sensitive(state.reset_enabled());
     }
 
     /// Offers to reapply the last preset after a reconnect.
@@ -710,7 +755,41 @@ fn bcd_byte(byte: u16) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::format_bcd;
+    use super::{format_bcd, ShellState};
+
+    #[test]
+    fn a_completed_reset_reenables_reset_on_a_connected_card() {
+        let mut state = ShellState {
+            connected: true,
+            busy: false,
+        };
+        assert!(state.reset_enabled());
+
+        // `reset()` shows the busy banner.
+        state.busy = true;
+        assert!(!state.reset_enabled(), "Reset is disabled while it runs");
+
+        // `reset_finished()` hides the banner; the card is still there.
+        state.busy = false;
+        assert!(
+            state.reset_enabled(),
+            "a completed Reset must be repeatable without a reconnect"
+        );
+    }
+
+    #[test]
+    fn a_disconnected_or_busy_card_keeps_reset_disabled() {
+        let disconnected = ShellState {
+            connected: false,
+            busy: false,
+        };
+        let busy = ShellState {
+            connected: true,
+            busy: true,
+        };
+        assert!(!disconnected.reset_enabled());
+        assert!(!busy.reset_enabled());
+    }
 
     #[test]
     fn formats_a_bcd_usb_version() {

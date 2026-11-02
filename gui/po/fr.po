@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: zg01-control 0.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/bsauvajon/snd-zg01/issues\n"
-"POT-Creation-Date: 2026-11-02 02:28+0100\n"
+"POT-Creation-Date: 2026-11-02 08:13+0100\n"
 "PO-Revision-Date: 2026-11-02 00:00+0100\n"
 "Last-Translator: ZG01 Control contributors\n"
 "Language-Team: French\n"
@@ -41,140 +41,136 @@ msgstr "La chaîne micro : GATE, COMP, EQ et LIMITEUR."
 msgid "Every ALSA control the curated screens do not cover."
 msgstr "Tous les contrôles ALSA que les écrans curatés ne couvrent pas."
 
-#: crates/zg01-gui/src/app.rs:554
+#: crates/zg01-gui/src/app.rs:557
 msgid "Save queued until the preset finishes"
 msgstr "Sauvegarde en attente de la fin du preset"
 
-#: crates/zg01-gui/src/app.rs:559
+#: crates/zg01-gui/src/app.rs:562
 msgid "Cannot save: unknown values or no card"
 msgstr "Sauvegarde impossible : valeurs inconnues ou carte absente"
 
-#: crates/zg01-gui/src/app.rs:563 crates/zg01-gui/src/app.rs:622
-#: crates/zg01-gui/src/app.rs:837 crates/zg01-gui/src/app.rs:872
-#: crates/zg01-gui/src/app.rs:1004
+#: crates/zg01-gui/src/app.rs:566 crates/zg01-gui/src/app.rs:625
+#: crates/zg01-gui/src/app.rs:845 crates/zg01-gui/src/app.rs:880
+#: crates/zg01-gui/src/app.rs:1012
 msgid "No ZG01 connected"
 msgstr "Aucun ZG01 connecté"
 
-#: crates/zg01-gui/src/app.rs:579
+#: crates/zg01-gui/src/app.rs:582
 msgid "Could not start the save"
 msgstr "Impossible de lancer la sauvegarde"
 
-#: crates/zg01-gui/src/app.rs:590
+#: crates/zg01-gui/src/app.rs:593
 msgid "Settings saved to the ZG01"
 msgstr "Réglages sauvegardés sur le ZG01"
 
-#: crates/zg01-gui/src/app.rs:594
+#: crates/zg01-gui/src/app.rs:597
 msgid "Save failed: {error}"
 msgstr "Échec de la sauvegarde : {error}"
 
-#: crates/zg01-gui/src/app.rs:615
+#: crates/zg01-gui/src/app.rs:618
 msgid "Reset queued until the preset finishes"
 msgstr "Réinitialisation en attente de la fin du preset"
 
-#: crates/zg01-gui/src/app.rs:631
+#: crates/zg01-gui/src/app.rs:634
 msgid "Resetting the ZG01…"
 msgstr "Réinitialisation du ZG01…"
 
-#: crates/zg01-gui/src/app.rs:649
-msgid "Could not start the reset"
-msgstr "Impossible de lancer la réinitialisation"
-
-#: crates/zg01-gui/src/app.rs:671
+#: crates/zg01-gui/src/app.rs:678
 msgid "ZG01 reset — the displayed values are unknown"
 msgstr "ZG01 réinitialisé — les valeurs affichées sont inconnues"
 
-#: crates/zg01-gui/src/app.rs:675
+#: crates/zg01-gui/src/app.rs:682
 msgid "Reset failed: {error}"
 msgstr "Réinitialisation impossible : {error}"
 
-#: crates/zg01-gui/src/app.rs:841 crates/zg01-gui/src/app.rs:863
+#: crates/zg01-gui/src/app.rs:849 crates/zg01-gui/src/app.rs:871
 msgid "A preset is already being applied"
 msgstr "Un preset est déjà en cours d’application"
 
-#: crates/zg01-gui/src/app.rs:846 crates/zg01-gui/src/app.rs:868
+#: crates/zg01-gui/src/app.rs:854 crates/zg01-gui/src/app.rs:876
 msgid "A reset is in progress; wait for it to finish"
 msgstr "Une réinitialisation est en cours ; attendez sa fin"
 
-#: crates/zg01-gui/src/app.rs:918
+#: crates/zg01-gui/src/app.rs:926
 msgid "Could not load the preset"
 msgstr "Impossible de charger le preset"
 
-#: crates/zg01-gui/src/app.rs:936
+#: crates/zg01-gui/src/app.rs:944
 msgid "Cancelling the preset…"
 msgstr "Annulation du preset…"
 
-#: crates/zg01-gui/src/app.rs:989 crates/zg01-gui/src/ui/preset_dialog.rs:453
+#: crates/zg01-gui/src/app.rs:997 crates/zg01-gui/src/ui/preset_dialog.rs:453
 msgid "Preset cancelled"
 msgstr "Preset annulé"
 
-#: crates/zg01-gui/src/app.rs:1102
+#: crates/zg01-gui/src/app.rs:1117
 msgid "Could not write {name}: {error}"
 msgstr "Écriture de {name} impossible : {error}"
 
-#: crates/zg01-gui/src/app.rs:1172
+#: crates/zg01-gui/src/app.rs:1195
 msgid "ZG01 disconnected"
 msgstr "ZG01 déconnecté"
 
-#: crates/zg01-gui/src/app.rs:1187
+#: crates/zg01-gui/src/app.rs:1210
 msgid "ZG01 connection lost — reconnecting"
 msgstr "Connexion au ZG01 perdue — reconnexion en cours"
 
-#: crates/zg01-gui/src/app.rs:1275
+#: crates/zg01-gui/src/app.rs:1298
 msgid "ZG01 detected, but its controls cannot be read"
 msgstr "ZG01 détecté, mais ses contrôles sont illisibles"
 
-#: crates/zg01-gui/src/app.rs:1343
+#: crates/zg01-gui/src/app.rs:1369
 msgid "ZG01 connected"
 msgstr "ZG01 connecté"
 
-#: crates/zg01-gui/src/app.rs:1350
+#: crates/zg01-gui/src/app.rs:1390
 msgid "Unnamed preset"
 msgstr "Preset sans nom"
 
-#: crates/zg01-gui/src/window.rs:103 crates/zg01-gui/src/window.rs:133
-#: crates/zg01-gui/src/window.rs:307
+#: crates/zg01-gui/src/window.rs:126 crates/zg01-gui/src/window.rs:166
+#: crates/zg01-gui/src/window.rs:352
 msgid "ZG01"
 msgstr "ZG01"
 
-#: crates/zg01-gui/src/window.rs:105
+#: crates/zg01-gui/src/window.rs:128
 msgid "Yamaha ZG01 · card {card} · {driver}"
 msgstr "Yamaha ZG01 · carte {card} · {driver}"
 
-#: crates/zg01-gui/src/window.rs:120 crates/zg01-gui/src/window.rs:173
-#: crates/zg01-gui/src/window.rs:314
+#: crates/zg01-gui/src/window.rs:148 crates/zg01-gui/src/window.rs:218
+#: crates/zg01-gui/src/window.rs:359
 msgid "Disconnected"
 msgstr "Déconnecté"
 
-#: crates/zg01-gui/src/window.rs:121
+#: crates/zg01-gui/src/window.rs:149
 msgid "No ZG01 card detected"
 msgstr "Aucune carte ZG01 détectée"
 
-#: crates/zg01-gui/src/window.rs:135 crates/zg01-gui/src/window.rs:374
-#: crates/zg01-gui/src/window.rs:501
+#: crates/zg01-gui/src/window.rs:168 crates/zg01-gui/src/window.rs:419
+#: crates/zg01-gui/src/window.rs:546
 msgid "Reading the ZG01 controls…"
 msgstr "Lecture des contrôles du ZG01…"
 
-#: crates/zg01-gui/src/window.rs:160
+#: crates/zg01-gui/src/window.rs:205
 msgid "Last preset: {preset}"
 msgstr "Dernier preset : {preset}"
 
-#: crates/zg01-gui/src/window.rs:175 crates/zg01-gui/src/window.rs:364
+#: crates/zg01-gui/src/window.rs:220 crates/zg01-gui/src/window.rs:409
 msgid "ZG01 disconnected — reconnect the card"
 msgstr "ZG01 déconnecté — rebranchez la carte"
 
-#: crates/zg01-gui/src/window.rs:243
+#: crates/zg01-gui/src/window.rs:288
 msgid "Save the settings to the ZG01"
 msgstr "Sauvegarder les réglages sur le ZG01"
 
-#: crates/zg01-gui/src/window.rs:245
+#: crates/zg01-gui/src/window.rs:290
 msgid "Save unavailable: unknown values or no card"
 msgstr "Sauvegarde indisponible : valeurs inconnues ou carte absente"
 
-#: crates/zg01-gui/src/window.rs:269
+#: crates/zg01-gui/src/window.rs:314
 msgid "not detected"
 msgstr "non détectée"
 
-#: crates/zg01-gui/src/window.rs:271
+#: crates/zg01-gui/src/window.rs:316
 msgid ""
 "Driver: {driver}\n"
 "Firmware: {firmware}\n"
@@ -184,7 +180,7 @@ msgstr ""
 "Micrologiciel : {firmware}\n"
 "Carte ALSA : {card}"
 
-#: crates/zg01-gui/src/window.rs:279
+#: crates/zg01-gui/src/window.rs:324
 msgid ""
 "Unofficial Yamaha ZG01 remote control.\n"
 "\n"
@@ -198,38 +194,38 @@ msgstr ""
 "\n"
 "Non affiliée à Yamaha. ZG01 est une marque de Yamaha."
 
-#: crates/zg01-gui/src/window.rs:306
+#: crates/zg01-gui/src/window.rs:351
 msgid "Connection status to the ZG01"
 msgstr "État de la connexion au ZG01"
 
-#: crates/zg01-gui/src/window.rs:314 crates/zg01-gui/src/window.rs:425
+#: crates/zg01-gui/src/window.rs:359 crates/zg01-gui/src/window.rs:470
 msgid "ZG01 Control"
 msgstr "ZG01 Control"
 
-#: crates/zg01-gui/src/window.rs:317
+#: crates/zg01-gui/src/window.rs:362
 msgid "Reset"
 msgstr "Réinitialiser"
 
-#: crates/zg01-gui/src/window.rs:321
+#: crates/zg01-gui/src/window.rs:366
 msgid ""
 "Reloads the persisted ZG01 settings; the displayed values become unknown"
 msgstr ""
 "Recharge les réglages persistés du ZG01 ; les valeurs affichées deviennent "
 "inconnues"
 
-#: crates/zg01-gui/src/window.rs:327
+#: crates/zg01-gui/src/window.rs:372
 msgid "Save"
 msgstr "Sauvegarder"
 
-#: crates/zg01-gui/src/window.rs:335
+#: crates/zg01-gui/src/window.rs:380
 msgid "About"
 msgstr "À propos"
 
-#: crates/zg01-gui/src/window.rs:354
+#: crates/zg01-gui/src/window.rs:399
 msgid "Unknown state — load a preset"
 msgstr "État inconnu — chargez un preset"
 
-#: crates/zg01-gui/src/window.rs:357
+#: crates/zg01-gui/src/window.rs:402
 msgid ""
 "The ZG01 reloaded its persisted settings: the displayed values no longer "
 "describe it."
@@ -237,34 +233,34 @@ msgstr ""
 "Le ZG01 a rechargé ses réglages persistés : les valeurs affichées ne le "
 "décrivent plus."
 
-#: crates/zg01-gui/src/window.rs:367
+#: crates/zg01-gui/src/window.rs:412
 msgid "The last values stay displayed; reconnection is automatic."
 msgstr ""
 "Les dernières valeurs restent affichées ; la reconnexion est automatique."
 
-#: crates/zg01-gui/src/window.rs:377
+#: crates/zg01-gui/src/window.rs:422
 msgid "The window stays responsive while the card is read or reset."
 msgstr ""
 "La fenêtre reste réactive pendant la lecture ou la réinitialisation de la "
 "carte."
 
-#: crates/zg01-gui/src/window.rs:384
+#: crates/zg01-gui/src/window.rs:429
 msgid "Reapply the last preset"
 msgstr "Réappliquer le dernier preset"
 
-#: crates/zg01-gui/src/window.rs:386
+#: crates/zg01-gui/src/window.rs:431
 msgid "Reapply"
 msgstr "Réappliquer"
 
-#: crates/zg01-gui/src/window.rs:506
+#: crates/zg01-gui/src/window.rs:551
 msgid "The window stays responsive while the card is read."
 msgstr "La fenêtre reste réactive pendant la lecture de la carte."
 
-#: crates/zg01-gui/src/window.rs:520
+#: crates/zg01-gui/src/window.rs:565
 msgid "Driver values (cache)"
 msgstr "Valeurs du driver (cache)"
 
-#: crates/zg01-gui/src/window.rs:523
+#: crates/zg01-gui/src/window.rs:568
 msgid ""
 "The displayed values come from the driver cache. They are not re-read from "
 "the device on every display."
@@ -272,44 +268,44 @@ msgstr ""
 "Les valeurs affichées proviennent du cache du pilote. Elles ne sont pas "
 "relues depuis l'appareil à chaque affichage."
 
-#: crates/zg01-gui/src/window.rs:564
+#: crates/zg01-gui/src/window.rs:609
 msgid "Screen in preparation."
 msgstr "Écran en préparation."
 
-#: crates/zg01-gui/src/window.rs:586
+#: crates/zg01-gui/src/window.rs:631
 msgid "ZG01 not found"
 msgstr "ZG01 introuvable"
 
-#: crates/zg01-gui/src/window.rs:591
+#: crates/zg01-gui/src/window.rs:636
 msgid "Plug the card into USB and check that the driver module is loaded."
 msgstr ""
 "Branchez la carte en USB et vérifiez que le module du pilote est chargé."
 
-#: crates/zg01-gui/src/window.rs:603
+#: crates/zg01-gui/src/window.rs:648
 msgid "Check the USB connection"
 msgstr "Vérifier la connexion USB"
 
-#: crates/zg01-gui/src/window.rs:607
+#: crates/zg01-gui/src/window.rs:652
 msgid "Load the driver module"
 msgstr "Charger le module du pilote"
 
-#: crates/zg01-gui/src/window.rs:611
+#: crates/zg01-gui/src/window.rs:656
 msgid "Read the kernel log"
 msgstr "Lire le journal du noyau"
 
-#: crates/zg01-gui/src/window.rs:617
+#: crates/zg01-gui/src/window.rs:662
 msgid "Reconnection is automatic as soon as the card appears."
 msgstr "La reconnexion est automatique dès que la carte apparaît."
 
-#: crates/zg01-gui/src/window.rs:675
+#: crates/zg01-gui/src/window.rs:720
 msgid "unknown (module without a version)"
 msgstr "inconnue (module sans version)"
 
-#: crates/zg01-gui/src/window.rs:681
+#: crates/zg01-gui/src/window.rs:726
 msgid "unavailable"
 msgstr "indisponible"
 
-#: crates/zg01-gui/src/window.rs:684 crates/zg01-gui/src/window.rs:693
+#: crates/zg01-gui/src/window.rs:729 crates/zg01-gui/src/window.rs:738
 msgid "unreadable"
 msgstr "illisible"
 
@@ -736,3 +732,6 @@ msgstr "inconnu"
 #: crates/zg01-gui/src/widgets/meter.rs:309
 msgid "Meter {name}"
 msgstr "Mètre {name}"
+
+#~ msgid "Could not start the reset"
+#~ msgstr "Impossible de lancer la réinitialisation"

@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::RecvTimeoutError;
+use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,7 +20,7 @@ use zg01_core::alsa::{
 };
 use zg01_core::device::{spawn_watcher, DeviceEvent};
 use zg01_core::layout::{load_layout_str, Layout, LAYOUT_TOML};
-use zg01_core::meters::{spawn_poller, MeterSnapshot, METER_INTERVAL};
+use zg01_core::meters::{spawn_poller_with_generation, MeterSnapshot, METER_INTERVAL};
 use zg01_core::mic::MicModel;
 use zg01_core::mixage::{MeterId, MixageModel};
 use zg01_core::model::{
@@ -170,6 +170,8 @@ pub(crate) struct App {
     pending_reset: bool,
     /// The last preset applied in this session, offered again on reconnect.
     last_preset: Option<PresetChoice>,
+    /// The generation of the backend the screens describe.
+    device_generation: u64,
 }
 
 /// One preset application in flight.
@@ -476,6 +478,7 @@ impl SimpleComponent for App {
             pending_save: false,
             pending_reset: false,
             last_preset: None,
+            device_generation: 0,
         };
 
         model.start_reload(sender);
@@ -631,23 +634,27 @@ impl App {
         self.shell.set_busy(true, &t("Resetting the ZG01…"));
         self.set_screens_sensitive(false);
 
+        // Poll the worker from the GTK loop instead of starting a second
+        // thread: there is no forwarding-thread spawn that could fail after
+        // the Reset was already sent to the device.
         let completion = spawn_reset(writer);
-        let sender = sender.clone();
-        let spawned = std::thread::Builder::new()
-            .name("zg01-reset-events".to_string())
-            .spawn(move || {
-                let result = completion
-                    .recv()
-                    .unwrap_or_else(|_| Err("the reset thread did not answer".to_string()));
-                sender.input(Msg::ResetFinished { id, result });
-            });
-        if let Err(err) = spawned {
-            tracing::warn!("could not start the reset event thread: {err}");
-            self.reset = None;
-            self.shell.set_busy(false, "");
-            self.set_screens_sensitive(self.state.device.is_connected());
-            self.shell.toast(&t("Could not start the reset"));
-        }
+        gtk4::glib::timeout_add_local(
+            std::time::Duration::from_millis(25),
+            move || match completion.try_recv() {
+                Ok(result) => {
+                    sender.input(Msg::ResetFinished { id, result });
+                    gtk4::glib::ControlFlow::Break
+                }
+                Err(TryRecvError::Empty) => gtk4::glib::ControlFlow::Continue,
+                Err(TryRecvError::Disconnected) => {
+                    sender.input(Msg::ResetFinished {
+                        id,
+                        result: Err("the reset thread did not answer".to_string()),
+                    });
+                    gtk4::glib::ControlFlow::Break
+                }
+            },
+        );
     }
 
     /// Handles the completion of a Reset.
@@ -757,7 +764,8 @@ impl App {
         let Some(backend) = self.backend.clone() else {
             return;
         };
-        let (writer, outcomes) = ControlWriter::spawn(backend);
+        let (writer, outcomes) =
+            ControlWriter::spawn_with_generation(backend, self.device_generation);
         self.writer = Some(writer);
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -795,7 +803,7 @@ impl App {
         };
         let stop = Arc::new(AtomicBool::new(false));
         self.meters_stop = Some(stop.clone());
-        let events = spawn_poller(backend, METER_INTERVAL);
+        let events = spawn_poller_with_generation(backend, METER_INTERVAL, self.device_generation);
         let sender = sender.clone();
         let spawned = std::thread::Builder::new()
             .name("zg01-meter-events".to_string())
@@ -1056,10 +1064,17 @@ impl App {
 
     /// Handles the outcome of a control write.
     fn write_outcome(&mut self, outcome: WriteOutcome, sender: ComponentSender<Self>) {
+        if !outcome_is_current(&outcome, self.device_generation) {
+            tracing::debug!(
+                "ignoring a stale lost-device outcome (current generation is {})",
+                self.device_generation
+            );
+            return;
+        }
         match outcome {
             // A liveness failure is not a control error: the card is gone
             // (or was replaced by one with the same ALSA index).
-            WriteOutcome::DeviceLost { name, error } => {
+            WriteOutcome::DeviceLost { name, error, .. } => {
                 tracing::warn!("the card went away while writing {name:?}: {error}");
                 self.device_lost(&sender);
             }
@@ -1109,6 +1124,14 @@ impl App {
 
     /// Installs the meter readings on the screens.
     fn update_meters(&mut self, snapshot: MeterSnapshot, sender: ComponentSender<Self>) {
+        if snapshot.generation != self.device_generation {
+            tracing::debug!(
+                "ignoring a meter snapshot from generation {} (current is {})",
+                snapshot.generation,
+                self.device_generation
+            );
+            return;
+        }
         if snapshot.lost {
             self.device_lost(&sender);
             return;
@@ -1316,6 +1339,9 @@ impl App {
             loaded.card.index,
             loaded.controls.len()
         );
+        // From here on, only outcomes tagged with this generation describe
+        // the card the screens show.
+        self.device_generation = self.reloads.generation;
         self.state = AppState::new(DeviceState::Connected(loaded.card), loaded.controls, layout);
         self.backend = Some(loaded.backend);
         // The values were just read; an outcome from before the reload
@@ -1341,6 +1367,20 @@ impl App {
                 .unwrap_or(""),
         );
         self.shell.toast(&t("ZG01 connected"));
+    }
+}
+
+/// Whether a write outcome describes the card the screens currently show.
+///
+/// Only a liveness event carries a generation; a normal value outcome keeps
+/// its existing epoch check. A delayed `DeviceLost` from the backend that
+/// was just replaced must be ignored, not tear down the new card.
+fn outcome_is_current(outcome: &WriteOutcome, generation: u64) -> bool {
+    match outcome {
+        WriteOutcome::DeviceLost {
+            generation: event, ..
+        } => *event == generation,
+        _ => true,
     }
 }
 
@@ -1445,13 +1485,14 @@ fn unit_for(layout: &Layout, name: &str, kind: ControlKind) -> Unit {
 #[cfg(test)]
 mod tests {
     use super::{
-        preset_label, read_controls, retry_delay, unit_for, Page, ReloadCompletion, ReloadTracker,
-        WriteEpoch, RETRY_FIRST, RETRY_MAX,
+        outcome_is_current, preset_label, read_controls, retry_delay, unit_for, Page,
+        ReloadCompletion, ReloadTracker, WriteEpoch, RETRY_FIRST, RETRY_MAX,
     };
     use std::time::Duration;
     use zg01_core::alsa::{ControlInfo, ControlKind, FakeAlsa};
     use zg01_core::layout::{load_layout_str, LAYOUT_TOML};
     use zg01_core::model::{ControlValue, Unit};
+    use zg01_core::writer::WriteOutcome;
 
     fn info(name: &str, kind: ControlKind, writable: bool) -> ControlInfo {
         ControlInfo {
@@ -1610,6 +1651,29 @@ mod tests {
         assert!(
             !reloads.retry_due(retry_generation),
             "a retry scheduled before the disconnect must not run"
+        );
+    }
+
+    #[test]
+    fn a_lost_device_event_from_the_old_backend_is_ignored_after_a_reload() {
+        let old = WriteOutcome::DeviceLost {
+            generation: 1,
+            name: "Gate".to_string(),
+            error: "ENODEV".to_string(),
+        };
+        let current = WriteOutcome::DeviceLost {
+            generation: 2,
+            name: "Gate".to_string(),
+            error: "ENODEV".to_string(),
+        };
+
+        assert!(
+            !outcome_is_current(&old, 2),
+            "a delayed failure from the replaced backend must not disconnect the new card"
+        );
+        assert!(
+            outcome_is_current(&current, 2),
+            "the current backend's failure still forces a reload"
         );
     }
 
