@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: zg01-control 0.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/bsauvajon/snd-zg01/issues\n"
-"POT-Creation-Date: 2026-11-02 02:23+0100\n"
+"POT-Creation-Date: 2026-11-02 02:28+0100\n"
 "PO-Revision-Date: 2026-11-02 00:00+0100\n"
 "Last-Translator: ZG01 Control contributors\n"
 "Language-Team: French\n"
@@ -49,9 +49,9 @@ msgstr "Sauvegarde en attente de la fin du preset"
 msgid "Cannot save: unknown values or no card"
 msgstr "Sauvegarde impossible : valeurs inconnues ou carte absente"
 
-#: crates/zg01-gui/src/app.rs:563 crates/zg01-gui/src/app.rs:619
-#: crates/zg01-gui/src/app.rs:834 crates/zg01-gui/src/app.rs:869
-#: crates/zg01-gui/src/app.rs:1001
+#: crates/zg01-gui/src/app.rs:563 crates/zg01-gui/src/app.rs:622
+#: crates/zg01-gui/src/app.rs:837 crates/zg01-gui/src/app.rs:872
+#: crates/zg01-gui/src/app.rs:1004
 msgid "No ZG01 connected"
 msgstr "Aucun ZG01 connecté"
 
@@ -67,67 +67,67 @@ msgstr "Réglages sauvegardés sur le ZG01"
 msgid "Save failed: {error}"
 msgstr "Échec de la sauvegarde : {error}"
 
-#: crates/zg01-gui/src/app.rs:612
+#: crates/zg01-gui/src/app.rs:615
 msgid "Reset queued until the preset finishes"
 msgstr "Réinitialisation en attente de la fin du preset"
 
-#: crates/zg01-gui/src/app.rs:628
+#: crates/zg01-gui/src/app.rs:631
 msgid "Resetting the ZG01…"
 msgstr "Réinitialisation du ZG01…"
 
-#: crates/zg01-gui/src/app.rs:646
+#: crates/zg01-gui/src/app.rs:649
 msgid "Could not start the reset"
 msgstr "Impossible de lancer la réinitialisation"
 
-#: crates/zg01-gui/src/app.rs:668
+#: crates/zg01-gui/src/app.rs:671
 msgid "ZG01 reset — the displayed values are unknown"
 msgstr "ZG01 réinitialisé — les valeurs affichées sont inconnues"
 
-#: crates/zg01-gui/src/app.rs:672
+#: crates/zg01-gui/src/app.rs:675
 msgid "Reset failed: {error}"
 msgstr "Réinitialisation impossible : {error}"
 
-#: crates/zg01-gui/src/app.rs:838 crates/zg01-gui/src/app.rs:860
+#: crates/zg01-gui/src/app.rs:841 crates/zg01-gui/src/app.rs:863
 msgid "A preset is already being applied"
 msgstr "Un preset est déjà en cours d’application"
 
-#: crates/zg01-gui/src/app.rs:843 crates/zg01-gui/src/app.rs:865
+#: crates/zg01-gui/src/app.rs:846 crates/zg01-gui/src/app.rs:868
 msgid "A reset is in progress; wait for it to finish"
 msgstr "Une réinitialisation est en cours ; attendez sa fin"
 
-#: crates/zg01-gui/src/app.rs:915
+#: crates/zg01-gui/src/app.rs:918
 msgid "Could not load the preset"
 msgstr "Impossible de charger le preset"
 
-#: crates/zg01-gui/src/app.rs:933
+#: crates/zg01-gui/src/app.rs:936
 msgid "Cancelling the preset…"
 msgstr "Annulation du preset…"
 
-#: crates/zg01-gui/src/app.rs:986 crates/zg01-gui/src/ui/preset_dialog.rs:453
+#: crates/zg01-gui/src/app.rs:989 crates/zg01-gui/src/ui/preset_dialog.rs:453
 msgid "Preset cancelled"
 msgstr "Preset annulé"
 
-#: crates/zg01-gui/src/app.rs:1099
+#: crates/zg01-gui/src/app.rs:1102
 msgid "Could not write {name}: {error}"
 msgstr "Écriture de {name} impossible : {error}"
 
-#: crates/zg01-gui/src/app.rs:1169
+#: crates/zg01-gui/src/app.rs:1172
 msgid "ZG01 disconnected"
 msgstr "ZG01 déconnecté"
 
-#: crates/zg01-gui/src/app.rs:1184
+#: crates/zg01-gui/src/app.rs:1187
 msgid "ZG01 connection lost — reconnecting"
 msgstr "Connexion au ZG01 perdue — reconnexion en cours"
 
-#: crates/zg01-gui/src/app.rs:1272
+#: crates/zg01-gui/src/app.rs:1275
 msgid "ZG01 detected, but its controls cannot be read"
 msgstr "ZG01 détecté, mais ses contrôles sont illisibles"
 
-#: crates/zg01-gui/src/app.rs:1335
+#: crates/zg01-gui/src/app.rs:1343
 msgid "ZG01 connected"
 msgstr "ZG01 connecté"
 
-#: crates/zg01-gui/src/app.rs:1342
+#: crates/zg01-gui/src/app.rs:1350
 msgid "Unnamed preset"
 msgstr "Preset sans nom"
 
@@ -244,7 +244,9 @@ msgstr ""
 
 #: crates/zg01-gui/src/window.rs:377
 msgid "The window stays responsive while the card is read or reset."
-msgstr "La fenêtre reste réactive pendant la lecture ou la réinitialisation de la carte."
+msgstr ""
+"La fenêtre reste réactive pendant la lecture ou la réinitialisation de la "
+"carte."
 
 #: crates/zg01-gui/src/window.rs:384
 msgid "Reapply the last preset"

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ZG01 Control\n"
 "Report-Msgid-Bugs-To: https://github.com/bsauvajon/snd-zg01/issues\n"
-"POT-Creation-Date: 2026-11-02 02:23+0100\n"
+"POT-Creation-Date: 2026-11-02 02:28+0100\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -51,9 +51,9 @@ msgstr ""
 msgid "Cannot save: unknown values or no card"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:563 crates/zg01-gui/src/app.rs:619
-#: crates/zg01-gui/src/app.rs:834 crates/zg01-gui/src/app.rs:869
-#: crates/zg01-gui/src/app.rs:1001
+#: crates/zg01-gui/src/app.rs:563 crates/zg01-gui/src/app.rs:622
+#: crates/zg01-gui/src/app.rs:837 crates/zg01-gui/src/app.rs:872
+#: crates/zg01-gui/src/app.rs:1004
 msgid "No ZG01 connected"
 msgstr ""
 
@@ -69,67 +69,67 @@ msgstr ""
 msgid "Save failed: {error}"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:612
+#: crates/zg01-gui/src/app.rs:615
 msgid "Reset queued until the preset finishes"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:628
+#: crates/zg01-gui/src/app.rs:631
 msgid "Resetting the ZG01…"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:646
+#: crates/zg01-gui/src/app.rs:649
 msgid "Could not start the reset"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:668
+#: crates/zg01-gui/src/app.rs:671
 msgid "ZG01 reset — the displayed values are unknown"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:672
+#: crates/zg01-gui/src/app.rs:675
 msgid "Reset failed: {error}"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:838 crates/zg01-gui/src/app.rs:860
+#: crates/zg01-gui/src/app.rs:841 crates/zg01-gui/src/app.rs:863
 msgid "A preset is already being applied"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:843 crates/zg01-gui/src/app.rs:865
+#: crates/zg01-gui/src/app.rs:846 crates/zg01-gui/src/app.rs:868
 msgid "A reset is in progress; wait for it to finish"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:915
+#: crates/zg01-gui/src/app.rs:918
 msgid "Could not load the preset"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:933
+#: crates/zg01-gui/src/app.rs:936
 msgid "Cancelling the preset…"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:986 crates/zg01-gui/src/ui/preset_dialog.rs:453
+#: crates/zg01-gui/src/app.rs:989 crates/zg01-gui/src/ui/preset_dialog.rs:453
 msgid "Preset cancelled"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:1099
+#: crates/zg01-gui/src/app.rs:1102
 msgid "Could not write {name}: {error}"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:1169
+#: crates/zg01-gui/src/app.rs:1172
 msgid "ZG01 disconnected"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:1184
+#: crates/zg01-gui/src/app.rs:1187
 msgid "ZG01 connection lost — reconnecting"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:1272
+#: crates/zg01-gui/src/app.rs:1275
 msgid "ZG01 detected, but its controls cannot be read"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:1335
+#: crates/zg01-gui/src/app.rs:1343
 msgid "ZG01 connected"
 msgstr ""
 
-#: crates/zg01-gui/src/app.rs:1342
+#: crates/zg01-gui/src/app.rs:1350
 msgid "Unnamed preset"
 msgstr ""
 
