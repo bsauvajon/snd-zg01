@@ -1,0 +1,172 @@
+# GUI hardware acceptance
+
+Manual checklist for `zg01-control` on a real Yamaha ZG01. Run it before a
+GUI release; it complements `cargo test` and the packaging job, which cannot
+open a card.
+
+Record the machine, distribution, kernel, driver commit, GUI commit and
+`/proc/asound/cards` in the release notes. A failed step is a release
+blocker unless the report says why it is environmental.
+
+## Prerequisites
+
+- The `snd-zg01` module is loaded and `/proc/asound/cards` shows the ZG01.
+- PipeWire or PulseAudio is running if the test needs playback/capture.
+- The GUI is installed (`snd-zg01-gui` or `zg01-control-git`) or built with
+  `make -C gui build`.
+- The user is a normal desktop user. Do **not** run the GUI as root and do
+  not install a setuid helper; it must talk to ALSA as the logged-in user.
+- Close ZG Controller and any other application that writes the same
+  controls.
+
+## 1. Launch and landing screen
+
+1. Start `zg01-control` from the application menu and from a terminal.
+2. Wait for the window.
+
+Expected:
+
+- The window opens on **Mixage**, 1100x680 by default.
+- The header shows `ZG01`, the card index and the driver name.
+- The sidebar shows **Mixage**, **Micro** and **Avancé**.
+- The footer says `Valeurs du driver (cache)` / `Driver values (cache)`.
+- No toast, no stack trace on stderr; `journalctl --user -b` has no panic.
+
+## 2. Live meters
+
+1. Play audio to the ZG01 and speak into the microphone.
+2. Watch MIC IN, MIC OUT and the stream meter.
+
+Expected:
+
+- The card meters move at about 20 Hz while audio flows.
+- A silent input falls back to the bottom; it does not stay frozen.
+- A meter whose control is missing or unreadable is drawn dashed, never as a
+  solid zero.
+- `GAME` has no card meter in v1. Do not report this as a failure; it is the
+  documented v1.1 item.
+
+## 3. Fader writes
+
+1. Move a Mixage send fader with the pointer.
+2. Drag with Shift held, scroll the wheel, and use the arrow keys.
+3. Press `Page Up`, `Page Down`, `Home` and `End`.
+4. Double-click the fader.
+5. Check the same value from a terminal:
+   `amixer -c zg01 cget 'name=Streaming Mic Level Steps'`.
+
+Expected:
+
+- The value under the fader follows the pointer and the keyboard.
+- Arrow keys move one device step; `Page Up`/`Page Down` move ten; `Home` and
+  `End` go to the control bounds.
+- Shift makes pointer drags finer.
+- Double-click returns to the neutral value (bottom for a send, 0 dB for a
+  gain).
+- `amixer` reports the same value once the write lands.
+- No other control changes because of the drag.
+
+## 4. Micro screen
+
+1. Click the MIC strip (or select **Micro** in the sidebar).
+2. Toggle GATE, COMP and LIMIT; move their faders.
+3. Open the **Avancé** expander and change one threshold.
+4. Change an EQ band gain, frequency and Q; toggle the low/high shape.
+
+Expected:
+
+- The chain reads `GATE › COMP › EQ › LIMIT`.
+- Each switch and fader writes its own control; no cross-talk.
+- The expander shows the block's out-gain and threshold controls.
+- A control the driver does not publish is hidden; the screen never shows a
+  widget bound to a missing control.
+- Returning to Mixage keeps the values and does not reload the card.
+
+## 5. Preset apply
+
+1. Click **Charger** / **Load** in the Mixage preset bar.
+2. Choose a `.zgpreset` file.
+3. Review the preview: block, name, applied count, skipped rows and reasons.
+4. Apply it, first without and then with **Inclure les paramètres bruts**.
+
+Expected:
+
+- The chooser filters `*.zgpreset`; a `.zg01` backup is rejected with a clear
+  message, not parsed.
+- The preview counts match the file; skips name the address, control and
+  reason.
+- Applying changes only the listed controls; the report says what was
+  applied, skipped and failed.
+- The preset bar names the applied preset.
+- Nothing is persisted until Save; the report reminds the user.
+
+## 6. Save and Reset
+
+1. Change a control, then click **Sauvegarder** / **Save**.
+2. Wait for the toast, then close and reopen the GUI.
+3. Change a control again and click **Réinitialiser** / **Reset**.
+4. Observe the banner and the Save button.
+
+Expected:
+
+- Save writes `Save to ZG01` and the toast confirms it.
+- Reopening shows the saved value from the driver cache.
+- Reset reloads the persisted settings and marks the displayed values
+  unknown: the unknown banner appears, values are dashed, and Save is
+  disabled.
+- Writing one control or loading a preset clears the unknown state for that
+  value; the banner disappears once Save is possible again.
+- A failed Save or Reset shows an error toast and does not claim success.
+
+## 7. Disconnect and reconnect
+
+1. While the GUI is open, unplug the ZG01.
+2. Wait five seconds, then plug it back in.
+
+Expected:
+
+- The header shows `Déconnecté` / `Disconnected`; the reconnect banner
+  appears and the controls become insensitive.
+- The last values stay visible; the app does not panic or quit.
+- Reconnect is automatic; the header returns to `ZG01`, the controls are
+  read again and the reconnect banner disappears.
+- A write started just before the unplug never lands on the next card and
+  never overwrites a value read after reconnect.
+
+## 8. No root and no hidden fallback
+
+1. Run the GUI as the logged-in user with no `sudo`.
+2. Check `ps -o user,pid,cmd -C zg01-control`.
+3. Look for any helper that opens `/dev/snd` as root.
+
+Expected:
+
+- The process runs as the desktop user.
+- No setuid binary, no polkit action and no root daemon is required.
+- If the user cannot open the card, the connection view explains the USB and
+  module checks instead of falling back to a privileged path.
+
+## 9. Clean shutdown
+
+1. Close the window while meters are running.
+2. Reopen it immediately.
+
+Expected:
+
+- The process exits within a second; no thread keeps it alive.
+- Reopening reads the card again and shows current values.
+- `journalctl --user -b` has no panic or use-after-free warning.
+
+## Report template
+
+```
+Date:
+Distribution / desktop:
+Kernel:
+Driver commit:
+GUI commit:
+Card index / driver:
+Steps passed: 1 2 3 4 5 6 7 8 9
+Failures and evidence (screenshots, journal lines):
+Notes:
+```

@@ -13,6 +13,7 @@ use relm4::prelude::*;
 use zg01_core::alsa::CardInfo;
 
 use crate::app::{App, Msg, Page};
+use crate::i18n::{t, tf};
 
 /// Width of the sidebar, in logical pixels.
 const SIDEBAR_WIDTH: i32 = 200;
@@ -88,10 +89,13 @@ impl Shell {
     /// Shows the connected card in the header.
     pub fn show_connected(&self, card: &CardInfo) {
         self.status_dot.remove_css_class("offline");
-        self.status_name.set_text("ZG01");
-        self.window_title.set_subtitle(&format!(
-            "Yamaha ZG01 · carte {} · {}",
-            card.index, card.driver
+        self.status_name.set_text(&t("ZG01"));
+        self.window_title.set_subtitle(&tf(
+            "Yamaha ZG01 · card {card} · {driver}",
+            &[
+                ("{card}", &card.index.to_string()),
+                ("{driver}", &card.driver),
+            ],
         ));
         self.reset_button.set_sensitive(true);
         self.unknown_banner.set_revealed(false);
@@ -101,8 +105,8 @@ impl Shell {
     /// Shows the connection view and the disconnected header.
     pub fn show_disconnected(&self) {
         self.status_dot.add_css_class("offline");
-        self.status_name.set_text("Déconnecté");
-        self.window_title.set_subtitle("Aucune carte ZG01 détectée");
+        self.status_name.set_text(&t("Disconnected"));
+        self.window_title.set_subtitle(&t("No ZG01 card detected"));
         self.reset_button.set_sensitive(false);
         self.unknown_banner.set_revealed(false);
         self.device_banner.set_revealed(false);
@@ -115,9 +119,9 @@ impl Shell {
     /// values stay visible; a banner explains that the card is gone.
     pub fn show_device_lost(&self) {
         self.status_dot.add_css_class("offline");
-        self.status_name.set_text("Déconnecté");
+        self.status_name.set_text(&t("Disconnected"));
         self.window_title
-            .set_subtitle("ZG01 déconnecté — rebranchez la carte");
+            .set_subtitle(&t("ZG01 disconnected — reconnect the card"));
         self.reset_button.set_sensitive(false);
     }
 
@@ -184,10 +188,10 @@ impl Shell {
     /// Enables or disables the Save action and explains why.
     pub fn set_save_enabled(&self, enabled: bool) {
         self.save_button.set_sensitive(enabled);
-        self.save_button.set_tooltip_text(Some(if enabled {
-            "Sauvegarder les réglages sur le ZG01"
+        self.save_button.set_tooltip_text(Some(&if enabled {
+            t("Save the settings to the ZG01")
         } else {
-            "Sauvegarde indisponible : valeurs inconnues ou carte absente"
+            t("Save unavailable: unknown values or no card")
         }));
     }
 
@@ -211,14 +215,18 @@ impl Shell {
 
         let card = card_index
             .map(|index| format!("hw:{index}"))
-            .unwrap_or_else(|| "non détectée".to_string());
-        let versions = format!(
-            "Pilote : {}\nMicrologiciel : {}\nCarte ALSA : {card}",
-            driver_version(),
-            firmware_version(card_index)
+            .unwrap_or_else(|| t("not detected"));
+        let versions = tf(
+            "Driver: {driver}\nFirmware: {firmware}\nALSA card: {card}",
+            &[
+                ("{driver}", &driver_version()),
+                ("{firmware}", &firmware_version(card_index)),
+                ("{card}", &card),
+            ],
         );
-        dialog.set_comments(&format!(
-            "Télécommande non officielle du Yamaha ZG01.\n\n{versions}\n\nNon affiliée à Yamaha. ZG01 est une marque de Yamaha."
+        dialog.set_comments(&tf(
+            "Unofficial Yamaha ZG01 remote control.\n\n{versions}\n\nNot affiliated with Yamaha. ZG01 is a trademark of Yamaha.",
+            &[("{versions}", &versions)],
         ));
         dialog.set_debug_info(&format!(
             "ZG01 Control {}\n{}",
@@ -244,28 +252,28 @@ fn build_header(
 
     let status_dot = gtk::Label::new(Some("●"));
     status_dot.add_css_class("status-dot");
-    status_dot.set_tooltip_text(Some("État de la connexion au ZG01"));
-    let status_name = gtk::Label::new(Some("ZG01"));
+    status_dot.set_tooltip_text(Some(&t("Connection status to the ZG01")));
+    let status_name = gtk::Label::new(Some(&t("ZG01")));
     status_name.add_css_class("device-name");
     let status = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     status.append(&status_dot);
     status.append(&status_name);
     header.pack_start(&status);
 
-    let window_title = adw::WindowTitle::new("ZG01 Control", "Déconnecté");
+    let window_title = adw::WindowTitle::new(&t("ZG01 Control"), &t("Disconnected"));
     header.set_title_widget(Some(&window_title));
 
-    let reset_button = gtk::Button::with_label("Réinitialiser");
+    let reset_button = gtk::Button::with_label(&t("Reset"));
     reset_button.add_css_class("flat");
     reset_button.set_sensitive(false);
-    reset_button.set_tooltip_text(Some(
-        "Recharge les réglages persistés du ZG01 ; les valeurs affichées deviennent inconnues",
-    ));
+    reset_button.set_tooltip_text(Some(&t(
+        "Reloads the persisted ZG01 settings; the displayed values become unknown",
+    )));
     let reset_sender = sender.clone();
     reset_button.connect_clicked(move |_| reset_sender.input(Msg::Reset));
     header.pack_end(&reset_button);
 
-    let save_button = gtk::Button::with_label("Sauvegarder");
+    let save_button = gtk::Button::with_label(&t("Save"));
     save_button.add_css_class("suggested-action");
     save_button.set_sensitive(false);
     let save_sender = sender.clone();
@@ -273,7 +281,7 @@ fn build_header(
     header.pack_end(&save_button);
 
     let about_button = gtk::Button::from_icon_name("help-about-symbolic");
-    about_button.set_tooltip_text(Some("À propos"));
+    about_button.set_tooltip_text(Some(&t("About")));
     about_button.add_css_class("flat");
     let about_sender = sender.clone();
     about_button.connect_clicked(move |_| about_sender.input(Msg::About));
@@ -292,21 +300,21 @@ fn build_header(
 /// The banner shown when the displayed values no longer describe the
 /// device.
 fn build_unknown_banner() -> adw::Banner {
-    let banner = adw::Banner::new("État inconnu — chargez un preset");
+    let banner = adw::Banner::new(&t("Unknown state — load a preset"));
     banner.set_revealed(false);
-    banner.set_tooltip_text(Some(
-        "Le ZG01 a rechargé ses réglages persistés : les valeurs affichées ne le décrivent plus.",
-    ));
+    banner.set_tooltip_text(Some(&t(
+        "The ZG01 reloaded its persisted settings: the displayed values no longer describe it.",
+    )));
     banner
 }
 
 /// The banner shown when the card disappears while the app is running.
 fn build_device_banner() -> adw::Banner {
-    let banner = adw::Banner::new("ZG01 déconnecté — rebranchez la carte");
+    let banner = adw::Banner::new(&t("ZG01 disconnected — reconnect the card"));
     banner.set_revealed(false);
-    banner.set_tooltip_text(Some(
-        "Les dernières valeurs restent affichées ; la reconnexion est automatique.",
-    ));
+    banner.set_tooltip_text(Some(&t(
+        "The last values stay displayed; reconnection is automatic.",
+    )));
     banner
 }
 
@@ -316,7 +324,7 @@ fn build_sidebar(sender: &ComponentSender<App>) -> (gtk::Box, gtk::ListBox) {
     container.add_css_class("sidebar");
     container.set_width_request(SIDEBAR_WIDTH);
 
-    let brand = gtk::Label::new(Some("ZG01 Control"));
+    let brand = gtk::Label::new(Some(&t("ZG01 Control")));
     brand.add_css_class("sidebar-brand");
     brand.set_xalign(0.0);
     brand.set_margin_top(18);
@@ -336,7 +344,7 @@ fn build_sidebar(sender: &ComponentSender<App>) -> (gtk::Box, gtk::ListBox) {
 
         let icon = gtk::Image::from_icon_name(page.icon());
         icon.set_pixel_size(16);
-        let label = gtk::Label::new(Some(page.title()));
+        let label = gtk::Label::new(Some(&t(page.title())));
         label.set_xalign(0.0);
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
         content.set_margin_top(8);
@@ -381,12 +389,11 @@ fn build_footer() -> gtk::Box {
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     footer.add_css_class("footer");
 
-    let badge = gtk::Label::new(Some("Valeurs du driver (cache)"));
+    let badge = gtk::Label::new(Some(&t("Driver values (cache)")));
     badge.add_css_class("cache-badge");
-    badge.set_tooltip_text(Some(
-        "Les valeurs affichées proviennent du cache du pilote. \
-         Elles ne sont pas relues depuis l'appareil à chaque affichage.",
-    ));
+    badge.set_tooltip_text(Some(&t(
+        "The displayed values come from the driver cache. They are not re-read from the device on every display.",
+    )));
     footer.append(&badge);
 
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -408,12 +415,12 @@ fn placeholder_page(page: Page) -> gtk::Box {
     root.set_margin_start(24);
     root.set_margin_end(24);
 
-    let title = gtk::Label::new(Some(page.title()));
+    let title = gtk::Label::new(Some(&t(page.title())));
     title.add_css_class("page-title");
     title.set_xalign(0.0);
     root.append(&title);
 
-    let subtitle = gtk::Label::new(Some(page.description()));
+    let subtitle = gtk::Label::new(Some(&t(page.description())));
     subtitle.add_css_class("page-subtitle");
     subtitle.set_xalign(0.0);
     subtitle.set_wrap(true);
@@ -425,8 +432,8 @@ fn placeholder_page(page: Page) -> gtk::Box {
 
     let status = adw::StatusPage::new();
     status.set_icon_name(Some(page.icon()));
-    status.set_title(page.title());
-    status.set_description(Some("Écran en préparation."));
+    status.set_title(&t(page.title()));
+    status.set_description(Some(&t("Screen in preparation.")));
     status.set_vexpand(true);
     panel.append(&status);
 
@@ -448,13 +455,13 @@ fn connection_page() -> gtk::Box {
     icon.set_pixel_size(64);
     root.append(&icon);
 
-    let title = gtk::Label::new(Some("ZG01 introuvable"));
+    let title = gtk::Label::new(Some(&t("ZG01 not found")));
     title.add_css_class("connection-title");
     root.append(&title);
 
-    let hint = gtk::Label::new(Some(
-        "Branchez la carte en USB et vérifiez que le module du pilote est chargé.",
-    ));
+    let hint = gtk::Label::new(Some(&t(
+        "Plug the card into USB and check that the driver module is loaded.",
+    )));
     hint.add_css_class("connection-hint");
     hint.set_wrap(true);
     hint.set_max_width_chars(56);
@@ -465,22 +472,22 @@ fn connection_page() -> gtk::Box {
     commands.add_css_class("panel");
     commands.set_margin_top(8);
     commands.append(&command_hint(
-        "Vérifier la connexion USB",
+        &t("Check the USB connection"),
         "lsusb | grep 0499:1513",
     ));
     commands.append(&command_hint(
-        "Charger le module du pilote",
+        &t("Load the driver module"),
         "sudo modprobe snd-zg01",
     ));
     commands.append(&command_hint(
-        "Lire le journal du noyau",
+        &t("Read the kernel log"),
         "journalctl -b -k --grep zg01",
     ));
     root.append(&commands);
 
-    let retry = gtk::Label::new(Some(
-        "La reconnexion est automatique dès que la carte apparaît.",
-    ));
+    let retry = gtk::Label::new(Some(&t(
+        "Reconnection is automatic as soon as the card appears.",
+    )));
     retry.add_css_class("connection-hint");
     retry.set_wrap(true);
     retry.set_max_width_chars(56);
@@ -537,16 +544,16 @@ fn driver_version() -> String {
             }
         }
     }
-    "inconnue (module sans version)".to_string()
+    t("unknown (module without a version)")
 }
 
 /// The firmware version of the card, as the USB `bcdDevice` field.
 fn firmware_version(card_index: Option<u32>) -> String {
     let Some(index) = card_index else {
-        return "indisponible".to_string();
+        return t("unavailable");
     };
     let Ok(device) = std::fs::canonicalize(format!("/sys/class/sound/card{index}/device")) else {
-        return "illisible".to_string();
+        return t("unreadable");
     };
     for ancestor in device.ancestors() {
         let path = ancestor.join("bcdDevice");
@@ -555,7 +562,7 @@ fn firmware_version(card_index: Option<u32>) -> String {
             return format_bcd(text).unwrap_or_else(|| text.to_string());
         }
     }
-    "illisible".to_string()
+    t("unreadable")
 }
 
 /// Formats a USB binary-coded-decimal version, e.g. `0150` as `1.50`.

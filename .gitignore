@@ -38,3 +38,4 @@ Install_ZG.exe
 /debian/debhelper-build-stamp
 /debian/snd-zg01-dkms/
 /debian/snd-zg01-tools/
+/debian/snd-zg01-gui/

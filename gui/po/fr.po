@@ -1,0 +1,572 @@
+# ZG01 Control — French translation.
+# This file is distributed under the same licence as the application,
+# GPL-2.0-or-later.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: zg01-control 0.1.0\n"
+"Report-Msgid-Bugs-To: https://github.com/bsauvajon/snd-zg01/issues\n"
+"POT-Creation-Date: 2026-11-02 00:00+0100\n"
+"PO-Revision-Date: 2026-11-02 00:00+0100\n"
+"Last-Translator: ZG01 Control contributors\n"
+"Language-Team: French\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "%"
+msgstr "%"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "1 parameter applied"
+msgstr "1 paramètre appliqué"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "1 skipped"
+msgstr "1 ignoré"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "About"
+msgstr "À propos"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Advanced"
+msgstr "Avancé"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "All groups"
+msgstr "Tous les groupes"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Applied:\n"
+msgstr "Appliqués :\n"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Apply"
+msgstr "Appliquer"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Attack"
+msgstr "Attaque"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "BAND {number}"
+msgstr "BANDE {number}"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Block: {block}"
+msgstr "Bloc : {block}"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Cancel"
+msgstr "Annuler"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "Cannot save: unknown values or no card"
+msgstr "Sauvegarde impossible : valeurs inconnues ou carte absente"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Check the USB connection"
+msgstr "Vérifier la connexion USB"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Close"
+msgstr "Fermer"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Connection status to the ZG01"
+msgstr "État de la connexion au ZG01"
+
+#: gui/crates/zg01-gui/src/widgets/fader.rs
+msgid "Control {name}"
+msgstr "Contrôle {name}"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "Could not load the preset"
+msgstr "Impossible de charger le preset"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "Could not start the save"
+msgstr "Impossible de lancer la sauvegarde"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "Could not write {name}: {error}"
+msgstr "Écriture de {name} impossible : {error}"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Decay"
+msgstr "Chute"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Disconnected"
+msgstr "Déconnecté"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Driver values (cache)"
+msgstr "Valeurs du driver (cache)"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Driver: {driver}\nFirmware: {firmware}\nALSA card: {card}"
+msgstr "Pilote : {driver}\nMicrologiciel : {firmware}\nCarte ALSA : {card}"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "EQ"
+msgstr "EQ"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Enter the register value: the range is too wide for a slider."
+msgstr "Entrez la valeur du registre : la plage est trop large pour un curseur."
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Every ALSA control that Mixage, Micro and the curated table do not cover."
+msgstr "Tous les contrôles ALSA que Mixage, Micro et la table curatée ne couvrent pas."
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "Every ALSA control the curated screens do not cover."
+msgstr "Tous les contrôles ALSA que les écrans curatés ne couvrent pas."
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Failed:\n"
+msgstr "Échecs :\n"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Filter by console section"
+msgstr "Filtrer par section de la console"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Filter controls by name"
+msgstr "Filtrer les contrôles par nom"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Frequency"
+msgstr "Fréquence"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Gain"
+msgstr "Gain"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "High shape"
+msgstr "Forme aiguë"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Hold"
+msgstr "Maintien"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Hz"
+msgstr "Hz"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Include raw parameters"
+msgstr "Inclure les paramètres bruts"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Knee"
+msgstr "Coude"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Level"
+msgstr "Niveau"
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "Load"
+msgstr "Charger"
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "Load a .zgpreset preset and apply its settings"
+msgstr "Charger un preset .zgpreset et appliquer ses réglages"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Load a ZG01 preset"
+msgstr "Charger un preset ZG01"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Load the driver module"
+msgstr "Charger le module du pilote"
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "Loading a preset requires a connected ZG01"
+msgstr "Le chargement d'un preset demande un ZG01 connecté"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Low shape"
+msgstr "Forme grave"
+
+#: gui/crates/zg01-gui/src/widgets/meter.rs
+msgid "Meter {name}"
+msgstr "Mètre {name}"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Micro"
+msgstr "Micro"
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "Mixage"
+msgstr "Mixage"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Name: {name}"
+msgstr "Nom : {name}"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "No ZG01 card detected"
+msgstr "Aucune carte ZG01 détectée"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "No ZG01 connected"
+msgstr "Aucun ZG01 connecté"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "No control matches this filter."
+msgstr "Aucun contrôle ne correspond à ce filtre."
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "No parameter applied"
+msgstr "Aucun paramètre appliqué"
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "No preset loaded"
+msgstr "Aucun preset chargé"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Nothing is saved on the ZG01: use “Save” to keep these settings."
+msgstr "Rien n'est sauvegardé sur le ZG01 : utilisez « Sauvegarder » pour conserver ces réglages."
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Open"
+msgstr "Ouvrir"
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "Open the microphone chain"
+msgstr "Ouvrir la chaîne micro"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Output gain"
+msgstr "Gain de sortie"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Plug the card into USB and check that the driver module is loaded."
+msgstr "Branchez la carte en USB et vérifiez que le module du pilote est chargé."
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "Preset"
+msgstr "Preset"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Preset applied"
+msgstr "Preset appliqué"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Preset partly applied"
+msgstr "Preset appliqué en partie"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Processing chain: GATE › COMP › EQ › LIMITER."
+msgstr "Chaîne de traitement : GATE › COMP › EQ › LIMITEUR."
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Q"
+msgstr "Q"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Range"
+msgstr "Plage"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Ratio"
+msgstr "Ratio"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Raw parameter: the meaning of this control is not decoded. Check the value before writing it."
+msgstr "Paramètre brut : la sémantique de ce contrôle n'est pas décodée. Vérifiez la valeur avant de l'écrire."
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Raw parameters have no vendor model: their address and conversion are not verified by Yamaha."
+msgstr "Les paramètres bruts n'ont pas de modèle vendeur : leur adresse et leur conversion ne sont pas vérifiées par Yamaha."
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Read the kernel log"
+msgstr "Lire le journal du noyau"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Read-only: the driver refuses writes to this control."
+msgstr "Lecture seule : le pilote refuse les écritures de ce contrôle."
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "Recent"
+msgstr "Récent"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Reconnection is automatic as soon as the card appears."
+msgstr "La reconnexion est automatique dès que la carte apparaît."
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Release"
+msgstr "Relâchement"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Reloads the persisted ZG01 settings; the displayed values become unknown"
+msgstr "Recharge les réglages persistés du ZG01 ; les valeurs affichées deviennent inconnues"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Reset"
+msgstr "Réinitialiser"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "Reset failed: {error}"
+msgstr "Réinitialisation impossible : {error}"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Save"
+msgstr "Sauvegarder"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "Save failed: {error}"
+msgstr "Échec de la sauvegarde : {error}"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Save the settings to the ZG01"
+msgstr "Sauvegarder les réglages sur le ZG01"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Save unavailable: unknown values or no card"
+msgstr "Sauvegarde indisponible : valeurs inconnues ou carte absente"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Screen in preparation."
+msgstr "Écran en préparation."
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "Search for a control"
+msgstr "Rechercher un contrôle"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "Settings saved to the ZG01"
+msgstr "Réglages sauvegardés sur le ZG01"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Skipped:\n"
+msgstr "Ignorés :\n"
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "Stream sends, stream output and meters."
+msgstr "Départs stream, sortie stream et mètres."
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "The ZG01 reloaded its persisted settings: the displayed values no longer describe it."
+msgstr "Le ZG01 a rechargé ses réglages persistés : les valeurs affichées ne le décrivent plus."
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "The displayed values come from the driver cache. They are not re-read from the device on every display."
+msgstr "Les valeurs affichées proviennent du cache du pilote. Elles ne sont pas relues depuis l'appareil à chaque affichage."
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "The file could not be chosen: {error}"
+msgstr "Le fichier n'a pas pu être choisi : {error}"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "The last values stay displayed; reconnection is automatic."
+msgstr "Les dernières valeurs restent affichées ; la reconnexion est automatique."
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "The microphone chain: GATE, COMP, EQ and LIMITER."
+msgstr "La chaîne micro : GATE, COMP, EQ et LIMITEUR."
+
+#: gui/crates/zg01-gui/src/ui/mixage.rs
+msgid "The recent preset list comes later"
+msgstr "La liste des presets récents arrive plus tard"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "The three stream sends, the stream output and the meters."
+msgstr "Les trois départs de stream, la sortie stream et les mètres."
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Threshold"
+msgstr "Seuil"
+
+#: gui/crates/zg01-gui/src/ui/mic.rs
+msgid "Unavailable"
+msgstr "Indisponible"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Unknown state — load a preset"
+msgstr "État inconnu — chargez un preset"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Unnamed"
+msgstr "Sans nom"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "Unnamed preset"
+msgstr "Preset sans nom"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Unofficial Yamaha ZG01 remote control.\n\n{versions}\n\nNot affiliated with Yamaha. ZG01 is a trademark of Yamaha."
+msgstr "Télécommande non officielle du Yamaha ZG01.\n\n{versions}\n\nNon affiliée à Yamaha. ZG01 est une marque de Yamaha."
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "Unreadable preset"
+msgstr "Preset illisible"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "Yamaha ZG01 · card {card} · {driver}"
+msgstr "Yamaha ZG01 · carte {card} · {driver}"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "ZG01"
+msgstr "ZG01"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "ZG01 Control"
+msgstr "ZG01 Control"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "ZG01 connected"
+msgstr "ZG01 connecté"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "ZG01 detected, but its controls cannot be read"
+msgstr "ZG01 détecté, mais ses contrôles sont illisibles"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "ZG01 disconnected"
+msgstr "ZG01 déconnecté"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "ZG01 disconnected — reconnect the card"
+msgstr "ZG01 déconnecté — rebranchez la carte"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "ZG01 not found"
+msgstr "ZG01 introuvable"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "ZG01 presets (*.zgpreset)"
+msgstr "Presets ZG01 (*.zgpreset)"
+
+#: gui/crates/zg01-gui/src/app.rs
+msgid "ZG01 reset — the displayed values are unknown"
+msgstr "ZG01 réinitialisé — les valeurs affichées sont inconnues"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "control missing or unknown address"
+msgstr "contrôle absent ou adresse inconnue"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "dB"
+msgstr "dB"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "frequency"
+msgstr "fréquence"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "gain"
+msgstr "gain"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "integer"
+msgstr "entier"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "none skipped"
+msgstr "aucun ignoré"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "not detected"
+msgstr "non détectée"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "on/off"
+msgstr "on/off"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "percentage"
+msgstr "pourcentage"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "raw"
+msgstr "brut"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "raw parameter (check to include)"
+msgstr "paramètre brut (cochez pour inclure)"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "read-only"
+msgstr "lecture seule"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "steps"
+msgstr "pas"
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "switch"
+msgstr "interrupteur"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "unavailable"
+msgstr "indisponible"
+
+#: gui/crates/zg01-gui/src/widgets/meter.rs
+msgid "unknown"
+msgstr "inconnu"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "unknown (module without a version)"
+msgstr "inconnue (module sans version)"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "unknown address"
+msgstr "adresse inconnue"
+
+#: gui/crates/zg01-gui/src/window.rs
+msgid "unreadable"
+msgstr "illisible"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "value out of range"
+msgstr "valeur hors plage"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "{address} · {name} — {reason}"
+msgstr "{address} · {name} — {reason}"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "{applied} applied, {skipped} skipped, {failed} failed.\n\n"
+msgstr "{applied} appliqué(s), {skipped} ignoré(s), {failed} échec(s).\n\n"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "{applied}, {skipped}."
+msgstr "{applied}, {skipped}."
+
+#: gui/crates/zg01-gui/src/ui/advanced.rs
+msgid "{count} control"
+msgid_plural "{count} controls"
+msgstr[0] "{count} contrôle"
+msgstr[1] "{count} contrôles"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "{count} parameters applied"
+msgstr "{count} paramètres appliqués"
+
+#: gui/crates/zg01-gui/src/ui/preset_dialog.rs
+msgid "{count} skipped"
+msgstr "{count} ignorés"
+
+#: gui/crates/zg01-gui/src/widgets/fader.rs
+msgid "{label}: unknown value"
+msgstr "{label} : valeur inconnue"
+
+#: gui/crates/zg01-gui/src/widgets/fader.rs
+msgid "{label}: {value}"
+msgstr "{label} : {value}"
+
+#: gui/crates/zg01-gui/src/widgets/meter.rs
+msgid "{percent} %"
+msgstr "{percent} %"
+

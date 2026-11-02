@@ -31,9 +31,9 @@ sinks without moving the mix into userspace.
 
 ### Arch Linux, CachyOS, Omarchy
 
-Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst` and
-`zgctl-git-*.pkg.tar.zst`) are attached to each
-[GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest);
+Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst`,
+`zgctl-git-*.pkg.tar.zst` and `zg01-control-git-*.pkg.tar.zst`) are attached
+to each [GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest);
 install the downloaded files with `sudo pacman -U <file>`.
 
 To build it yourself instead, install the build tools, DKMS, and the headers
@@ -73,13 +73,14 @@ sudo apt update
 sudo apt install snd-zg01-dkms snd-zg01-tools
 ```
 
-`snd-zg01-tools` is optional and ships `zgctl`; install only
-`snd-zg01-dkms` for the driver alone.
+`snd-zg01-tools` is optional and ships `zgctl`; `snd-zg01-gui` is the
+optional GTK4 GUI. Install only `snd-zg01-dkms` for the driver alone.
 
 Or download the `.deb` from the latest release and install it manually:
 
 ```bash
-sudo dpkg -i snd-zg01-dkms_*.deb snd-zg01-tools_*_amd64.deb
+sudo dpkg -i snd-zg01-dkms_*.deb snd-zg01-tools_*_amd64.deb \
+  snd-zg01-gui_*_amd64.deb
 sudo apt-get install -f   # only if dependencies are missing
 ```
 
@@ -193,6 +194,97 @@ distinct. GAME has no card meter in v1: its strip uses PipeWire `Game
 Out` in v1.1. HDMI is not registered until its field is decoded. See
 `docs/METER_PROTOCOL.md` and the acceptance record in `docs/METER_TEST.md`.
 
+## GUI (ZG01 Control)
+
+The repository also ships `zg01-control`, a GTK4/libadwaita control GUI. It
+is a separate package: installing it never pulls the DKMS build
+dependencies, and installing the driver or `zgctl` never pulls GTK. The
+source lives in `gui/`; the binary needs the driver to expose the controls.
+
+### Install and launch
+
+Arch Linux:
+
+```bash
+cd packaging/arch/zg01-control-git
+makepkg --cleanbuild
+sudo pacman -U zg01-control-git-*.pkg.tar.zst
+```
+
+Debian/Ubuntu (after adding the APT repository described above):
+
+```bash
+sudo apt install snd-zg01-gui
+```
+
+From source:
+
+```bash
+make -C gui build
+sudo make -C gui install          # PREFIX=/usr/local by default
+```
+
+Launch it from the application menu or with `zg01-control`. The application
+ID is `io.github.bsauvajon.Zg01Control`. The GUI runs as the logged-in user
+and needs no root; it opens the ALSA control device directly.
+
+### Screens
+
+- **Mixage** is the landing screen: three stream sends (MIC, VOICE, GAME),
+  the STREAM OUT switches and meter, the card meters and the preset bar.
+- **Micro** is the microphone chain: GATE, COMP, LIMIT, the four-band EQ and
+  the per-block advanced expander.
+- **Avancé** lists every ALSA control the curated screens do not claim, with
+  a search field, a section filter and a type-aware editor.
+
+**Sauvegarder** persists the current values with `Save to ZG01`.
+**Réinitialiser** reloads the persisted settings; because the driver cache is
+not refreshed, the displayed values become unknown until a control is
+written or a preset is applied. Presets are loaded from `.zgpreset` files
+through the same parser as `zgctl`; `.zg01` backups are rejected.
+
+### Keybindings
+
+The fader widgets are keyboard accessible:
+
+| Input | Action |
+|---|---|
+| Up / Right arrow | one device step up |
+| Down / Left arrow | one device step down |
+| Page Up / Page Down | ten steps |
+| Home / End | control minimum / maximum |
+| Scroll wheel | one step per notch |
+| Shift + drag | fine pointer movement |
+| Double-click | neutral value (bottom, or 0 dB for a gain) |
+
+### Cache caveat
+
+The GUI reads the values the driver last wrote, not the device state. A
+setting changed by ZG Controller on Windows, by `alsactl`, or by a device
+reset is not visible until that control is written again from Linux. The
+footer keeps a `Driver values (cache)` badge and its tooltip says so. Save is
+the only action that persists the current values on the ZG01.
+
+### Meters
+
+The card meters (MIC IN, MIC OUT, PC IN, STREAM) are read-only volatile
+controls. If the driver does not publish one, or a read fails, the bar is
+drawn dashed and the accessible value is "unknown" — never a fake zero. GAME
+has no card meter in v1: its strip uses the PipeWire `Game Out` level in
+v1.1. HDMI is deferred until its field is decoded. The Linux-side PipeWire
+bars are not part of v1.
+
+### Translations
+
+The source strings are English; French ships in v1. The catalogue is
+`gui/po/fr.po`, compiled by `make -C gui locale` and installed to
+`$(PREFIX)/share/locale/fr/LC_MESSAGES/zg01-control.mo`. Set `LANG=fr_FR.UTF-8`
+to use it. A source-tree run finds the catalogue built by
+`make -C gui locale`; `ZG01_LOCALEDIR` overrides the lookup directory.
+
+Screenshots are not committed yet; they will be added with the first GUI
+release. The hardware acceptance checklist is in `docs/GUI_TEST.md`.
+
 ## Presets
 
 `zgctl` reads Yamaha `.zgpreset` files and loads their mixer values through
@@ -265,7 +357,9 @@ install. If a pre-2026 package left broken DKMS state, remove
 - `docs/DEVICE_PARAMETER_MAP.md`: the address of every parameter the device registers
 - `docs/PRESET_FORMAT.md`: the `.zgpreset` container, components and value layout
 - `docs/FEATURE_PARITY.md`: what is left to reach ZG Controller parity
-- `packaging/arch/README.md`: Arch packaging, verification, rollback
+- `docs/GUI_TEST.md`: hardware acceptance checklist for the GUI
+- `packaging/arch/README.md`: Arch driver packaging, verification, rollback
+- `packaging/arch/zg01-control-git/README.md`: Arch GUI package
 
 ## Scope and status
 

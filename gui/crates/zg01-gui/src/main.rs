@@ -6,6 +6,7 @@
 //! and the `.zgpreset` handling are added by later tasks.
 
 mod app;
+mod i18n;
 mod ui;
 mod widgets;
 mod window;
@@ -25,6 +26,10 @@ fn main() {
     tracing::info!("starting ZG01 Control");
 
     let app = RelmApp::new(APP_ID);
+
+    // GTK has initialised the locale by now; bind the catalogue before any
+    // window is built.
+    i18n::init();
 
     // v1 is dark-only: the light token set is a follow-up.
     relm4::set_global_css(include_str!("style.css"));

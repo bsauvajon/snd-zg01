@@ -8,7 +8,10 @@ export DEB_BUILD_OPTIONS += noautodbgsym
 override_dh_auto_configure:
 override_dh_auto_build:
 	$(MAKE) tools
+	$(MAKE) -C gui build
+	$(MAKE) -C gui locale
 override_dh_auto_test:
 override_dh_auto_install:
 override_dh_auto_clean:
 	$(MAKE) -C tools clean
+	$(MAKE) -C gui clean

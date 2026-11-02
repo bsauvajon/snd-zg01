@@ -14,6 +14,8 @@ gui/
 ├── crates/
 │   ├── zg01-core/        # device, model and preset logic (library)
 │   └── zg01-gui/         # relm4 application (binary: zg01-control)
+├── data/                 # desktop entry, AppStream metadata, icon, layout
+├── po/                   # gettext catalogue (English source, French ship)
 └── Makefile
 ```
 
@@ -24,12 +26,13 @@ gui/
 - libadwaita 1.9 development files (`libadwaita-1-dev`)
 - libasound development files (`libasound2-dev`) for `zg01-core`
 - `pkg-config`
+- GNU `gettext` (`msgfmt`) for the shipped French catalogue
 
 On Debian/Ubuntu:
 
 ```sh
 sudo apt install build-essential pkg-config libgtk-4-dev libadwaita-1-dev \
-    libasound2-dev
+    libasound2-dev gettext
 ```
 
 `cargo clippy` and `cargo fmt` need the matching toolchain components
@@ -40,8 +43,15 @@ rustfmt` otherwise).
 
 ```sh
 make -C gui build   # cargo build --workspace --release
-make -C gui test    # cargo test + clippy -D warnings + fmt --check
+make -C gui test    # msgfmt --check + cargo test + clippy + fmt --check
+make -C gui locale  # compile po/fr.po into target/locale/fr/LC_MESSAGES
+make -C gui install DESTDIR=/tmp/stage PREFIX=/usr
+make -C gui uninstall DESTDIR=/tmp/stage PREFIX=/usr
 ```
+
+`install` places the binary, desktop entry, AppStream metadata, hicolor icon
+and `zg01-control.mo` under `$(DESTDIR)$(PREFIX)`. `DESTDIR` and `PREFIX` are
+independent: the default is `PREFIX=/usr/local` with no staging.
 
 The binary is produced at `gui/target/release/zg01-control`.
 
@@ -76,9 +86,22 @@ selects the GTK 4.22 / libadwaita 1.9 API surface, matching the system
 libraries. The `libadwaita` feature makes relm4 create an `adw::Application`
 and initialise libadwaita, so the window is an `adw::ApplicationWindow`.
 
+## Packaging and translations
+
+The GUI is the separate `snd-zg01-gui` (Debian) / `zg01-control-git` (Arch)
+package. The install rules are the contract the CI packaging job and both
+package recipes use.
+
+User-facing strings are English in the source and translated through gettext.
+`po/fr.po` is the shipped French catalogue; `po/POTFILES` lists the files
+that carry messages. Run `make -C gui check-po` after editing a catalogue and
+`make -C gui locale` before running from the source tree with
+`LANG=fr_FR.UTF-8`. `ZG01_LOCALEDIR` points the binary at another catalogue
+directory (`<dir>/fr/LC_MESSAGES/zg01-control.mo`).
+
 ## Status
 
-Task 0 delivers the workspace and an application skeleton only: a single
-`ZG01 Control` window (1100x680) with a placeholder label. The ALSA control
-surface, the ZG01 model screens and the `.zgpreset` handling are added by the
-follow-up tasks.
+v1 is complete: Mixage, Micro, Avancé, the preset loader, Save/Reset,
+disconnect/reconnect, the custom fader and meter widgets, the French
+translation and the packaging. The hardware acceptance checklist lives in
+`../docs/GUI_TEST.md`.

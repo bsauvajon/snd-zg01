@@ -18,6 +18,8 @@ use zg01_core::preset::{
     control_map_entry, load_preset, plan_preset, ApplyReport, Preset, PresetPlan, Skip, SkipReason,
 };
 
+use crate::i18n::{t, tf};
+
 /// What the preview hands to the application when the user applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PresetChoice {
@@ -40,11 +42,11 @@ pub(crate) fn present_preset_dialog(
     on_apply: impl Fn(PresetChoice) + 'static,
 ) {
     let dialog = gtk::FileDialog::new();
-    dialog.set_title("Charger un preset ZG01");
-    dialog.set_accept_label(Some("Ouvrir"));
+    dialog.set_title(&t("Load a ZG01 preset"));
+    dialog.set_accept_label(Some(&t("Open")));
 
     let filter = gtk::FileFilter::new();
-    filter.set_name(Some("Presets ZG01 (*.zgpreset)"));
+    filter.set_name(Some(&t("ZG01 presets (*.zgpreset)")));
     filter.add_pattern("*.zgpreset");
     let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
     filters.append(&filter);
@@ -65,7 +67,10 @@ pub(crate) fn present_preset_dialog(
                     if !error.matches(gtk::gio::IOErrorEnum::Cancelled) {
                         show_error(
                             &parent,
-                            &format!("Le fichier n'a pas pu être choisi : {error}"),
+                            &tf(
+                                "The file could not be chosen: {error}",
+                                &[("{error}", &error.to_string())],
+                            ),
                         );
                     }
                     return;
@@ -92,7 +97,7 @@ fn show_preview(
     on_apply: Rc<dyn Fn(PresetChoice)>,
 ) {
     let window = gtk::Window::builder()
-        .title("Charger un preset ZG01")
+        .title(t("Load a ZG01 preset"))
         .modal(true)
         .transient_for(parent)
         .default_width(600)
@@ -106,15 +111,15 @@ fn show_preview(
     root.set_margin_start(18);
     root.set_margin_end(18);
 
-    let block = gtk::Label::new(Some(&format!("Bloc : {}", preset.block)));
+    let block = gtk::Label::new(Some(&tf("Block: {block}", &[("{block}", &preset.block)])));
     block.add_css_class("preset-block");
     block.set_xalign(0.0);
     root.append(&block);
 
     let name_text = if preset.name.is_empty() {
-        "Sans nom".to_string()
+        t("Unnamed")
     } else {
-        format!("Nom : {}", preset.name)
+        tf("Name: {name}", &[("{name}", &preset.name)])
     };
     let name = gtk::Label::new(Some(&name_text));
     name.add_css_class("preset-preview-name");
@@ -136,17 +141,16 @@ fn show_preview(
     scrolled.set_has_frame(true);
     root.append(&scrolled);
 
-    let allow_raw = gtk::CheckButton::with_label("Inclure les paramètres bruts");
-    allow_raw.set_tooltip_text(Some(
-        "Les paramètres bruts n'ont pas de modèle vendeur : leur adresse et leur \
-         conversion ne sont pas vérifiées par Yamaha.",
-    ));
+    let allow_raw = gtk::CheckButton::with_label(&t("Include raw parameters"));
+    allow_raw.set_tooltip_text(Some(&t(
+        "Raw parameters have no vendor model: their address and conversion are not verified by Yamaha.",
+    )));
     root.append(&allow_raw);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::End);
-    let cancel = gtk::Button::with_label("Annuler");
-    let apply = gtk::Button::with_label("Appliquer");
+    let cancel = gtk::Button::with_label(&t("Cancel"));
+    let apply = gtk::Button::with_label(&t("Apply"));
     apply.add_css_class("suggested-action");
     actions.append(&cancel);
     actions.append(&apply);
@@ -213,44 +217,53 @@ fn skip_row(skip: &Skip) -> gtk::ListBoxRow {
 /// The one-line summary of a plan.
 fn summary_text(plan: &PresetPlan) -> String {
     let applied = match plan.applies.len() {
-        0 => "Aucun paramètre appliqué".to_string(),
-        1 => "1 paramètre appliqué".to_string(),
-        count => format!("{count} paramètres appliqués"),
+        0 => t("No parameter applied"),
+        1 => t("1 parameter applied"),
+        count => tf(
+            "{count} parameters applied",
+            &[("{count}", &count.to_string())],
+        ),
     };
     let skipped = match plan.skipped.len() {
-        0 => "aucun ignoré".to_string(),
-        1 => "1 ignoré".to_string(),
-        count => format!("{count} ignorés"),
+        0 => t("none skipped"),
+        1 => t("1 skipped"),
+        count => tf("{count} skipped", &[("{count}", &count.to_string())]),
     };
-    format!("{applied}, {skipped}.")
+    tf(
+        "{applied}, {skipped}.",
+        &[("{applied}", &applied), ("{skipped}", &skipped)],
+    )
 }
 
 /// The description of a skipped parameter.
 fn skip_text(skip: &Skip) -> String {
     let name = control_map_entry(skip.address)
-        .map(|entry| entry.control_name.as_str())
-        .unwrap_or("adresse inconnue");
-    format!(
-        "0x{:03x} · {name} — {}",
-        skip.address,
-        skip_reason_text(skip.reason)
+        .map(|entry| entry.control_name.clone())
+        .unwrap_or_else(|| t("unknown address"));
+    tf(
+        "{address} · {name} — {reason}",
+        &[
+            ("{address}", &format!("0x{:03x}", skip.address)),
+            ("{name}", &name),
+            ("{reason}", &skip_reason_text(skip.reason)),
+        ],
     )
 }
 
 /// The reason of a skip, in the words of the UI.
-fn skip_reason_text(reason: SkipReason) -> &'static str {
+fn skip_reason_text(reason: SkipReason) -> String {
     match reason {
-        SkipReason::Missing => "contrôle absent ou adresse inconnue",
-        SkipReason::ReadOnly => "lecture seule",
-        SkipReason::Raw => "paramètre brut (cochez pour inclure)",
-        SkipReason::OutOfRange => "valeur hors plage",
+        SkipReason::Missing => t("control missing or unknown address"),
+        SkipReason::ReadOnly => t("read-only"),
+        SkipReason::Raw => t("raw parameter (check to include)"),
+        SkipReason::OutOfRange => t("value out of range"),
     }
 }
 
 /// Shows why a preset could not be read.
 fn show_error(parent: &adw::ApplicationWindow, message: &str) {
-    let dialog = adw::AlertDialog::new(Some("Preset illisible"), Some(message));
-    dialog.add_response("close", "Fermer");
+    let dialog = adw::AlertDialog::new(Some(&t("Unreadable preset")), Some(message));
+    dialog.add_response("close", &t("Close"));
     dialog.set_default_response(Some("close"));
     dialog.set_close_response("close");
     dialog.present(Some(parent));
@@ -266,20 +279,22 @@ pub(crate) fn present_preset_report(
     report: &ApplyReport,
 ) {
     let title = if report.failed.is_empty() {
-        "Preset appliqué"
+        t("Preset applied")
     } else {
-        "Preset appliqué en partie"
+        t("Preset partly applied")
     };
 
     let mut body = format!("{label}\n\n");
-    body.push_str(&format!(
-        "{} appliqué(s), {} ignoré(s), {} échec(s).\n\n",
-        report.applied.len(),
-        report.skipped.len(),
-        report.failed.len()
+    body.push_str(&tf(
+        "{applied} applied, {skipped} skipped, {failed} failed.\n\n",
+        &[
+            ("{applied}", &report.applied.len().to_string()),
+            ("{skipped}", &report.skipped.len().to_string()),
+            ("{failed}", &report.failed.len().to_string()),
+        ],
     ));
     if !report.applied.is_empty() {
-        body.push_str("Appliqués :\n");
+        body.push_str(&t("Applied:\n"));
         for name in report.applied.iter().take(12) {
             body.push_str(&format!("• {name}\n"));
         }
@@ -289,7 +304,7 @@ pub(crate) fn present_preset_report(
         body.push('\n');
     }
     if !report.skipped.is_empty() {
-        body.push_str("Ignorés :\n");
+        body.push_str(&t("Skipped:\n"));
         for skip in report.skipped.iter().take(12) {
             body.push_str(&format!("• {}\n", skip_text(skip)));
         }
@@ -299,7 +314,7 @@ pub(crate) fn present_preset_report(
         body.push('\n');
     }
     if !report.failed.is_empty() {
-        body.push_str("Échecs :\n");
+        body.push_str(&t("Failed:\n"));
         for (name, error) in report.failed.iter().take(12) {
             body.push_str(&format!("• {name} : {error}\n"));
         }
@@ -308,12 +323,12 @@ pub(crate) fn present_preset_report(
         }
         body.push('\n');
     }
-    body.push_str(
-        "Rien n'est sauvegardé sur le ZG01 : utilisez « Sauvegarder » pour conserver ces réglages.",
-    );
+    body.push_str(&t(
+        "Nothing is saved on the ZG01: use “Save” to keep these settings.",
+    ));
 
-    let dialog = adw::AlertDialog::new(Some(title), Some(&body));
-    dialog.add_response("close", "Fermer");
+    let dialog = adw::AlertDialog::new(Some(&title), Some(&body));
+    dialog.add_response("close", &t("Close"));
     dialog.set_default_response(Some("close"));
     dialog.set_close_response("close");
     dialog.present(Some(parent));

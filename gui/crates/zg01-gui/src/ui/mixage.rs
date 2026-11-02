@@ -23,6 +23,7 @@ use gtk4::{self as gtk, Orientation};
 use zg01_core::model::{AppState, ControlValue, Unit};
 
 use super::mixage_model::{MeterId, MixageModel, StreamOutputModel, StripId, StripModel};
+use crate::i18n::t;
 use crate::widgets::{Fader, FaderSpec, Meter, MeterSpec};
 
 /// The full scale of the meter controls, in device steps.
@@ -135,12 +136,12 @@ impl MixageScreen {
         root.set_margin_start(24);
         root.set_margin_end(24);
 
-        let title = gtk::Label::new(Some("Mixage"));
+        let title = gtk::Label::new(Some(&t("Mixage")));
         title.add_css_class("page-title");
         title.set_xalign(0.0);
         root.append(&title);
 
-        let subtitle = gtk::Label::new(Some("Départs stream, sortie stream et mètres."));
+        let subtitle = gtk::Label::new(Some(&t("Stream sends, stream output and meters.")));
         subtitle.add_css_class("page-subtitle");
         subtitle.set_xalign(0.0);
         root.append(&subtitle);
@@ -340,7 +341,7 @@ fn build_strip_header(strip: &StripModel, on_event: &Rc<dyn Fn(MixageEvent)>) ->
         let button = gtk::Button::new();
         button.add_css_class("strip-title-button");
         button.set_has_frame(false);
-        button.set_tooltip_text(Some("Ouvrir la chaîne micro"));
+        button.set_tooltip_text(Some(&t("Open the microphone chain")));
         button.set_child(Some(&content));
         let emit = on_event.clone();
         button.connect_clicked(move |_| emit(MixageEvent::OpenMic));
@@ -471,28 +472,28 @@ fn build_preset_bar(
     bar.add_css_class("panel");
     bar.add_css_class("preset-bar");
 
-    let label = gtk::Label::new(Some("Preset"));
+    let label = gtk::Label::new(Some(&t("Preset")));
     label.add_css_class("tag-label");
     bar.append(&label);
 
-    let name = gtk::Label::new(Some("Aucun preset chargé"));
+    let name = gtk::Label::new(Some(&t("No preset loaded")));
     name.add_css_class("preset-name");
     name.set_xalign(0.0);
     name.set_hexpand(true);
     bar.append(&name);
 
-    let recent = gtk::Button::with_label("Récent");
+    let recent = gtk::Button::with_label(&t("Recent"));
     recent.set_sensitive(false);
-    recent.set_tooltip_text(Some("La liste des presets récents arrive plus tard"));
+    recent.set_tooltip_text(Some(&t("The recent preset list comes later")));
     bar.append(&recent);
 
-    let load = gtk::Button::with_label("Charger");
+    let load = gtk::Button::with_label(&t("Load"));
     load.add_css_class("suggested-action");
     load.set_sensitive(state.device.is_connected());
-    load.set_tooltip_text(Some(if state.device.is_connected() {
-        "Charger un preset .zgpreset et appliquer ses réglages"
+    load.set_tooltip_text(Some(&if state.device.is_connected() {
+        t("Load a .zgpreset preset and apply its settings")
     } else {
-        "Le chargement d'un preset demande un ZG01 connecté"
+        t("Loading a preset requires a connected ZG01")
     }));
     let emit = on_event.clone();
     load.connect_clicked(move |_| emit(MixageEvent::LoadPreset));
@@ -503,7 +504,7 @@ fn build_preset_bar(
 
 /// A muted fallback for a strip or a block with no usable control.
 fn unavailable_label() -> gtk::Label {
-    let label = gtk::Label::new(Some("Indisponible"));
+    let label = gtk::Label::new(Some(&t("Unavailable")));
     label.add_css_class("fader-value");
     label.add_css_class("unknown");
     label

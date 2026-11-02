@@ -30,6 +30,7 @@ use zg01_core::preset::{apply_plan, ApplyReport};
 use zg01_core::units::Conv;
 use zg01_core::writer::{ControlWriter, WriteOutcome};
 
+use crate::i18n::{t, tf};
 use crate::ui::{
     present_preset_dialog, present_preset_report, AdvancedEvent, AdvancedScreen, MicEvent,
     MicScreen, MixageEvent, MixageScreen, PresetChoice,
@@ -91,16 +92,16 @@ impl Page {
         match self {
             Page::Mixage => "Mixage",
             Page::Micro => "Micro",
-            Page::Advanced => "Avancé",
+            Page::Advanced => "Advanced",
         }
     }
 
     /// What the screen shows, until its own task fills it in.
     pub fn description(self) -> &'static str {
         match self {
-            Page::Mixage => "Les trois départs de stream, la sortie stream et les mètres.",
-            Page::Micro => "La chaîne micro : GATE, COMP, EQ et LIMITEUR.",
-            Page::Advanced => "Tous les contrôles ALSA que les écrans curatés ne couvrent pas.",
+            Page::Mixage => "The three stream sends, the stream output and the meters.",
+            Page::Micro => "The microphone chain: GATE, COMP, EQ and LIMITER.",
+            Page::Advanced => "Every ALSA control the curated screens do not cover.",
         }
     }
 
@@ -462,11 +463,12 @@ impl SimpleComponent for App {
             Msg::Save => self.save(sender),
             Msg::Reset => self.reset(),
             Msg::SaveFinished(Ok(())) => {
-                self.shell.toast("Réglages sauvegardés sur le ZG01");
+                self.shell.toast(&t("Settings saved to the ZG01"));
             }
             Msg::SaveFinished(Err(err)) => {
                 tracing::warn!("the save action failed: {err}");
-                self.shell.toast(&format!("Échec de la sauvegarde : {err}"));
+                self.shell
+                    .toast(&tf("Save failed: {error}", &[("{error}", &err)]));
             }
             Msg::Device(DeviceEvent::Disconnected) => self.disconnect(),
             Msg::Device(DeviceEvent::Connected(card)) => self.connect(card, sender),
@@ -494,11 +496,11 @@ impl App {
     fn save(&self, sender: ComponentSender<Self>) {
         if !self.state.can_save() {
             self.shell
-                .toast("Sauvegarde impossible : valeurs inconnues ou carte absente");
+                .toast(&t("Cannot save: unknown values or no card"));
             return;
         }
         let Some(backend) = self.backend.clone() else {
-            self.shell.toast("Aucun ZG01 connecté");
+            self.shell.toast(&t("No ZG01 connected"));
             return;
         };
 
@@ -511,7 +513,7 @@ impl App {
             });
         if let Err(err) = spawned {
             tracing::warn!("could not start the save thread: {err}");
-            self.shell.toast("Impossible de lancer la sauvegarde");
+            self.shell.toast(&t("Could not start the save"));
         }
     }
 
@@ -524,7 +526,7 @@ impl App {
     /// that the reset did not happen.
     fn reset(&mut self) {
         let Some(writer) = self.writer.clone() else {
-            self.shell.toast("Aucun ZG01 connecté");
+            self.shell.toast(&t("No ZG01 connected"));
             return;
         };
         // Every write issued before the reset is superseded by it; its
@@ -533,11 +535,11 @@ impl App {
         match apply_reset(&mut self.state, &writer) {
             Ok(()) => self
                 .shell
-                .toast("ZG01 réinitialisé — les valeurs affichées sont inconnues"),
+                .toast(&t("ZG01 reset — the displayed values are unknown")),
             Err(err) => {
                 tracing::warn!("the reset action failed: {err}");
                 self.shell
-                    .toast(&format!("Réinitialisation impossible : {err}"));
+                    .toast(&tf("Reset failed: {error}", &[("{error}", &err)]));
             }
         }
         self.refresh_controls();
@@ -664,7 +666,7 @@ impl App {
     /// Opens the preset chooser against the current controls.
     fn open_preset(&mut self, sender: ComponentSender<Self>) {
         if !self.state.device.is_connected() {
-            self.shell.toast("Aucun ZG01 connecté");
+            self.shell.toast(&t("No ZG01 connected"));
             return;
         }
         let controls = self.state.controls.clone();
@@ -681,7 +683,7 @@ impl App {
     /// message; the values stay unsaved until the header Save action.
     fn apply_preset(&mut self, choice: PresetChoice, sender: ComponentSender<Self>) {
         let Some(writer) = self.writer.clone() else {
-            self.shell.toast("Aucun ZG01 connecté");
+            self.shell.toast(&t("No ZG01 connected"));
             return;
         };
         for apply in &choice.plan.applies {
@@ -699,7 +701,7 @@ impl App {
             });
         if let Err(err) = spawned {
             tracing::warn!("could not start the preset thread: {err}");
-            self.shell.toast("Impossible de charger le preset");
+            self.shell.toast(&t("Could not load the preset"));
         }
     }
 
@@ -722,7 +724,7 @@ impl App {
     /// Queues one control write on the coalescing writer.
     fn write_control(&mut self, name: &str, value: i64) {
         let Some(writer) = self.writer.clone() else {
-            self.shell.toast("Aucun ZG01 connecté");
+            self.shell.toast(&t("No ZG01 connected"));
             self.revert_control(name);
             return;
         };
@@ -807,8 +809,10 @@ impl App {
             }
             WriteOutcome::Err { name, error } => {
                 tracing::warn!("could not write the control {name:?}: {error}");
-                self.shell
-                    .toast(&format!("Écriture de {name} impossible : {error}"));
+                self.shell.toast(&tf(
+                    "Could not write {name}: {error}",
+                    &[("{name}", &name), ("{error}", &error)],
+                ));
                 self.revert_control(&name);
             }
         }
@@ -863,7 +867,7 @@ impl App {
         }
         self.shell.show_device_lost();
         self.sync_shell_state();
-        self.shell.toast("ZG01 déconnecté");
+        self.shell.toast(&t("ZG01 disconnected"));
     }
 
     /// Reads a card that just appeared, off the GTK thread.
@@ -932,7 +936,7 @@ impl App {
                 if let Some((generation, delay)) = self.reloads.retry() {
                     if first_failure {
                         self.shell
-                            .toast("ZG01 détecté, mais ses contrôles sont illisibles");
+                            .toast(&t("ZG01 detected, but its controls cannot be read"));
                     }
                     self.spawn_retry(generation, delay, sender);
                 }
@@ -985,14 +989,14 @@ impl App {
         self.start_writer(&sender);
         self.start_meters(&sender);
         self.shell.set_page(self.page);
-        self.shell.toast("ZG01 connecté");
+        self.shell.toast(&t("ZG01 connected"));
     }
 }
 
 /// The name the preset bar shows for a preset.
 fn preset_label(block: &str, name: &str) -> String {
     match (block.is_empty(), name.is_empty()) {
-        (true, true) => "Preset sans nom".to_string(),
+        (true, true) => t("Unnamed preset"),
         (true, false) => name.to_string(),
         (false, true) => block.to_string(),
         (false, false) => format!("{block} · {name}"),
@@ -1118,7 +1122,7 @@ mod tests {
         assert_eq!(preset_label("MIC INPUT", "Studio"), "MIC INPUT · Studio");
         assert_eq!(preset_label("MIC INPUT", ""), "MIC INPUT");
         assert_eq!(preset_label("", "Studio"), "Studio");
-        assert_eq!(preset_label("", ""), "Preset sans nom");
+        assert_eq!(preset_label("", ""), "Unnamed preset");
     }
 
     #[test]

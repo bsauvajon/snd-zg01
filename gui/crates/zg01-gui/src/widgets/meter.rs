@@ -20,6 +20,7 @@ use gtk4::prelude::*;
 use gtk4::{self as gtk, AccessibleProperty, AccessibleRole, Orientation};
 
 use super::{rounded_rect, theme};
+use crate::i18n::{t, tf};
 
 /// The default height of the drawing area, in logical pixels.
 const AREA_HEIGHT: i32 = 150;
@@ -298,11 +299,14 @@ fn refresh_accessible(area: &gtk::DrawingArea, spec: &MeterSpec) {
     let level = spec.card.into_iter().chain(spec.linux).fold(0.0, f64::max);
     let any = spec.card.is_some() || spec.linux.is_some();
     let text = if any {
-        format!("{} %", (level * 100.0).round() as i32)
+        tf(
+            "{percent} %",
+            &[("{percent}", &((level * 100.0).round() as i32).to_string())],
+        )
     } else {
-        "inconnu".to_string()
+        t("unknown")
     };
-    let description = format!("Mètre {}", spec.label);
+    let description = tf("Meter {name}", &[("{name}", &spec.label)]);
 
     let mut properties = vec![
         gtk::accessible::Property::Label(&spec.label),

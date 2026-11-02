@@ -15,7 +15,8 @@ fi
 
 # Clean previous builds
 make clean || true
-rm -rf debian/snd-zg01-dkms debian/.debhelper debian/files debian/*.debhelper* debian/*.substvars
+rm -rf debian/snd-zg01-dkms debian/snd-zg01-tools debian/snd-zg01-gui \
+  debian/.debhelper debian/files debian/*.debhelper* debian/*.substvars
 rm -f ../*.deb ../*.dsc ../*.tar.* ../*.buildinfo ../*.changes
 
 # Build the package
@@ -25,13 +26,15 @@ debuild -us -uc -b
 
 # Clean latest build temporary artifacts
 make clean || true
-rm -rf debian/snd-zg01-dkms debian/.debhelper debian/files debian/*.debhelper* debian/*.substvars
+rm -rf debian/snd-zg01-dkms debian/snd-zg01-tools debian/snd-zg01-gui \
+  debian/.debhelper debian/files debian/*.debhelper* debian/*.substvars
 
 echo ""
 echo "Build complete! Package created:"
 ls -lh ../*.deb
 
 echo ""
-echo "To install the package, run:"
+echo "To install the packages, run:"
 echo "  sudo dpkg -i ../snd-zg01-dkms_*.deb"
+echo "  # optional: ../snd-zg01-tools_*.deb and ../snd-zg01-gui_*.deb"
 echo "  sudo apt-get install -f  # If there are dependency issues"

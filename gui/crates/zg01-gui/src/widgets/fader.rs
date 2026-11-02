@@ -23,6 +23,7 @@ use zg01_core::geometry::{fraction_to_value, snap_to_step, value_to_fraction};
 use zg01_core::model::{format_value, ControlValue, Unit};
 
 use super::{rounded_rect, theme};
+use crate::i18n::tf;
 
 /// What the fader shows while the device value is unknown.
 const UNKNOWN_TEXT: &str = "—";
@@ -366,8 +367,14 @@ fn refresh(area: &gtk::DrawingArea, label: &gtk::Label, spec: &FaderSpec, value:
         None => UNKNOWN_TEXT.to_string(),
     };
     let tooltip = match value.known() {
-        Some(value) => format!("{} : {}", spec.label, format_value(spec.unit, value)),
-        None => format!("{} : valeur inconnue", spec.label),
+        Some(value) => tf(
+            "{label}: {value}",
+            &[
+                ("{label}", &spec.label),
+                ("{value}", &format_value(spec.unit, value)),
+            ],
+        ),
+        None => tf("{label}: unknown value", &[("{label}", &spec.label)]),
     };
 
     if value.known().is_some() {
@@ -378,7 +385,7 @@ fn refresh(area: &gtk::DrawingArea, label: &gtk::Label, spec: &FaderSpec, value:
     label.set_text(&text);
     area.set_tooltip_text(Some(&tooltip));
 
-    let description = format!("Contrôle {}", spec.name);
+    let description = tf("Control {name}", &[("{name}", &spec.name)]);
     let mut properties = vec![
         gtk::accessible::Property::Label(&spec.label),
         gtk::accessible::Property::Description(&description),

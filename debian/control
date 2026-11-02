@@ -2,7 +2,8 @@ Source: snd-zg01-dkms
 Section: kernel
 Priority: optional
 Maintainer: Brice Sauvajon <brice@sauvajon.net>
-Build-Depends: debhelper-compat (= 13), dkms
+Build-Depends: debhelper-compat (= 13), dkms, cargo, rustc,
+ pkg-config, libasound2-dev, libgtk-4-dev, libadwaita-1-dev, gettext
 Standards-Version: 4.6.0
 Homepage: https://github.com/bsauvajon/snd-zg01
 
@@ -36,3 +37,23 @@ Description: Control CLI for the Yamaha ZG01 driver
  .
  This package is architecture dependent (it ships a compiled binary);
  the snd-zg01-dkms package stays architecture independent.
+
+Package: snd-zg01-gui
+Section: sound
+Architecture: amd64 arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: snd-zg01-dkms, pipewire
+Description: GTK4 control GUI for the Yamaha ZG01 driver
+ ZG01 Control is a GTK4/libadwaita companion for the Yamaha ZG01 audio
+ interface. It drives the controls exposed by the snd-zg01 driver: the
+ Mixage stream sends and output, the microphone gate, compressor,
+ equalizer and limiter, and every remaining ALSA control in an advanced
+ table.
+ .
+ The GUI reads the driver cache and keeps the displayed values until a
+ control is written again; the Save action persists the settings on the
+ device. It ships the French translation and never runs as root.
+ .
+ This package is architecture dependent (it ships a compiled binary).
+ The driver is only recommended: without it the window explains that no
+ ZG01 card was detected.

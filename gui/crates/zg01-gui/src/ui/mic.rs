@@ -26,6 +26,7 @@ use zg01_core::mixage::MeterId;
 use zg01_core::model::{format_value, AppState, ControlValue, Unit};
 
 use super::mic_model::{BlockModel, EqModel, MicModel};
+use crate::i18n::{t, tf};
 use crate::widgets::{Fader, FaderSpec, Meter, MeterSpec};
 
 /// The full scale of the meter controls, in device steps.
@@ -221,12 +222,12 @@ impl MicScreen {
         root.set_margin_start(24);
         root.set_margin_end(24);
 
-        let title = gtk::Label::new(Some("Micro"));
+        let title = gtk::Label::new(Some(&t("Micro")));
         title.add_css_class("page-title");
         title.set_xalign(0.0);
         root.append(&title);
 
-        let subtitle = gtk::Label::new(Some("Chaîne de traitement : GATE › COMP › EQ › LIMITEUR."));
+        let subtitle = gtk::Label::new(Some(&t("Processing chain: GATE › COMP › EQ › LIMITER.")));
         subtitle.add_css_class("page-subtitle");
         subtitle.set_xalign(0.0);
         root.append(&subtitle);
@@ -379,7 +380,7 @@ fn build_block(
     card.append(&header);
 
     if let Some(control) = &block.value {
-        let fader = build_fader(state, control, "Niveau", on_event);
+        let fader = build_fader(state, control, &t("Level"), on_event);
         card.append(fader.widget());
         faders.push(FaderSlot {
             name: control.clone(),
@@ -395,7 +396,7 @@ fn build_block(
             list.append(&editor.root);
             editors.push(editor);
         }
-        let expander = gtk::Expander::new(Some("Avancé"));
+        let expander = gtk::Expander::new(Some(&t("Advanced")));
         expander.add_css_class("mic-advanced");
         expander.set_child(Some(&list));
         card.append(&expander);
@@ -417,7 +418,7 @@ fn build_eq(
     section.add_css_class("mic-eq");
 
     let header = gtk::Box::new(Orientation::Horizontal, 8);
-    let title = gtk::Label::new(Some("EQ"));
+    let title = gtk::Label::new(Some(&t("EQ")));
     title.add_css_class("strip-title");
     title.set_xalign(0.0);
     title.set_hexpand(true);
@@ -442,12 +443,15 @@ fn build_eq(
         column.add_css_class("eq-band");
         column.set_hexpand(true);
 
-        let name = gtk::Label::new(Some(&format!("BANDE {number}")));
+        let name = gtk::Label::new(Some(&tf(
+            "BAND {number}",
+            &[("{number}", &number.to_string())],
+        )));
         name.add_css_class("strip-subtitle");
         name.set_xalign(0.0);
         column.append(&name);
 
-        let fader = build_fader(state, &band.gain, "Gain", on_event);
+        let fader = build_fader(state, &band.gain, &t("Gain"), on_event);
         column.append(fader.widget());
         faders.push(FaderSlot {
             name: band.gain.clone(),
@@ -455,21 +459,21 @@ fn build_eq(
             fader,
         });
 
-        let frequency = Editor::new(state, &band.frequency, "Fréquence", on_event);
+        let frequency = Editor::new(state, &band.frequency, &t("Frequency"), on_event);
         column.append(&frequency.root);
         editors.push(frequency);
 
-        let q = Editor::new(state, &band.q, "Q", on_event);
+        let q = Editor::new(state, &band.q, &t("Q"), on_event);
         column.append(&q.root);
         editors.push(q);
 
         if let Some(control) = &band.shape {
             let label = if number == 1 {
-                "Forme grave"
+                t("Low shape")
             } else {
-                "Forme aiguë"
+                t("High shape")
             };
-            let (toggle, row) = build_toggle(state, control, label, on_event);
+            let (toggle, row) = build_toggle(state, control, &label, on_event);
             column.append(&row);
             toggles.push(toggle);
         }
@@ -581,7 +585,7 @@ fn build_meter(state: &AppState, id: MeterId, label: &str) -> Metered {
 
 /// A muted fallback for a block with no usable control.
 fn unavailable_label() -> gtk::Label {
-    let label = gtk::Label::new(Some("Indisponible"));
+    let label = gtk::Label::new(Some(&t("Unavailable")));
     label.add_css_class("fader-value");
     label.add_css_class("unknown");
     label
@@ -614,21 +618,21 @@ fn fader_spec(state: &AppState, name: &str, label: &str) -> FaderSpec {
 /// The user label of an advanced sub-parameter.
 fn advanced_label(name: &str) -> String {
     let suffix = match name.split_once(" Out ") {
-        Some(_) => "Gain de sortie",
+        Some(_) => "Output gain",
         None => name.rsplit(' ').next().unwrap_or(name),
     };
     match suffix {
-        "Threshold" => "Seuil",
-        "Range" => "Plage",
-        "Attack" => "Attaque",
-        "Hold" => "Maintien",
-        "Decay" => "Chute",
-        "Ratio" => "Ratio",
-        "Release" => "Relâchement",
-        "Knee" => "Coude",
-        other => other,
+        "Output gain" => t("Output gain"),
+        "Threshold" => t("Threshold"),
+        "Range" => t("Range"),
+        "Attack" => t("Attack"),
+        "Hold" => t("Hold"),
+        "Decay" => t("Decay"),
+        "Ratio" => t("Ratio"),
+        "Release" => t("Release"),
+        "Knee" => t("Knee"),
+        other => other.to_string(),
     }
-    .to_string()
 }
 
 /// The band number of an EQ gain control, e.g. `EQ Band 2 Gain` is 2.
@@ -664,12 +668,12 @@ mod tests {
 
     #[test]
     fn the_advanced_labels_strip_the_block_prefix() {
-        assert_eq!(advanced_label("Gate Threshold"), "Seuil");
-        assert_eq!(advanced_label("Compressor Attack"), "Attaque");
-        assert_eq!(advanced_label("Limiter Release"), "Relâchement");
-        assert_eq!(advanced_label("Compressor Out Gain"), "Gain de sortie");
-        assert_eq!(advanced_label("Limiter Out Gain"), "Gain de sortie");
-        assert_eq!(advanced_label("Gate Decay"), "Chute");
+        assert_eq!(advanced_label("Gate Threshold"), "Threshold");
+        assert_eq!(advanced_label("Compressor Attack"), "Attack");
+        assert_eq!(advanced_label("Limiter Release"), "Release");
+        assert_eq!(advanced_label("Compressor Out Gain"), "Output gain");
+        assert_eq!(advanced_label("Limiter Out Gain"), "Output gain");
+        assert_eq!(advanced_label("Gate Decay"), "Decay");
     }
 
     #[test]

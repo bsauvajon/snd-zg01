@@ -28,13 +28,14 @@ use zg01_core::geometry::snap_to_step;
 use zg01_core::model::{format_value, AppState, ControlValue, Unit};
 
 use super::advanced_model::{AdvancedModel, AdvancedRow};
+use crate::i18n::{t, tnf};
 
 /// What the editor shows while the device value is unknown.
 const UNKNOWN_TEXT: &str = "—";
 
 /// The tooltip of a raw row's warning icon.
 const RAW_TOOLTIP: &str =
-    "Paramètre brut : la sémantique de ce contrôle n'est pas décodée. Vérifiez la valeur avant de l'écrire.";
+    "Raw parameter: the meaning of this control is not decoded. Check the value before writing it.";
 
 /// The width of the warning-icon column.
 const BADGE_WIDTH: i32 = 18;
@@ -225,9 +226,9 @@ impl ControlEditor {
                 entry.set_digits(0);
                 entry.set_width_request(EDITOR_WIDTH);
                 entry.add_css_class("advanced-number");
-                entry.set_tooltip_text(Some(
-                    "Entrez la valeur du registre : la plage est trop large pour un curseur.",
-                ));
+                entry.set_tooltip_text(Some(&t(
+                    "Enter the register value: the range is too wide for a slider.",
+                )));
                 entry.set_value(start as f64);
                 let handler_guard = guard.clone();
                 let handler_last = last.clone();
@@ -372,9 +373,11 @@ impl FilterBar {
             }
         }
 
-        self.count.set_text(&format!(
-            "{shown} contrôle{}",
-            if shown == 1 { "" } else { "s" }
+        self.count.set_text(&tnf(
+            "{count} control",
+            "{count} controls",
+            shown,
+            &[("{count}", &shown.to_string())],
         ));
         self.empty.set_visible(shown == 0);
     }
@@ -401,14 +404,14 @@ impl AdvancedScreen {
         root.set_margin_start(24);
         root.set_margin_end(24);
 
-        let title = gtk::Label::new(Some("Avancé"));
+        let title = gtk::Label::new(Some(&t("Advanced")));
         title.add_css_class("page-title");
         title.set_xalign(0.0);
         root.append(&title);
 
-        let subtitle = gtk::Label::new(Some(
-            "Tous les contrôles ALSA que Mixage, Micro et la table curatée ne couvrent pas.",
-        ));
+        let subtitle = gtk::Label::new(Some(&t(
+            "Every ALSA control that Mixage, Micro and the curated table do not cover.",
+        )));
         subtitle.add_css_class("page-subtitle");
         subtitle.set_xalign(0.0);
         root.append(&subtitle);
@@ -418,16 +421,16 @@ impl AdvancedScreen {
         count.set_xalign(1.0);
 
         let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some("Rechercher un contrôle"));
+        search.set_placeholder_text(Some(&t("Search for a control")));
         search.set_hexpand(true);
-        search.set_tooltip_text(Some("Filtrer les contrôles par nom"));
+        search.set_tooltip_text(Some(&t("Filter controls by name")));
 
         let groups = groups_of(&model);
-        let mut labels = vec!["Tous les groupes".to_string()];
+        let mut labels = vec![t("All groups")];
         labels.extend(groups.iter().cloned());
         let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let group_filter = gtk::DropDown::from_strings(&label_refs);
-        group_filter.set_tooltip_text(Some("Filtrer par section de la console"));
+        group_filter.set_tooltip_text(Some(&t("Filter by console section")));
 
         let toolbar = gtk::Box::new(Orientation::Horizontal, 10);
         toolbar.add_css_class("advanced-toolbar");
@@ -436,7 +439,7 @@ impl AdvancedScreen {
         toolbar.append(&count);
         root.append(&toolbar);
 
-        let empty = gtk::Label::new(Some("Aucun contrôle ne correspond à ce filtre."));
+        let empty = gtk::Label::new(Some(&t("No control matches this filter.")));
         empty.add_css_class("advanced-empty");
         empty.set_visible(false);
 
@@ -537,22 +540,22 @@ fn build_header() -> gtk::Box {
     spacer.set_width_request(BADGE_WIDTH);
     header.append(&spacer);
 
-    for (label, width) in [
+    for (key, width) in [
         ("Section", GROUP_WIDTH),
-        ("Contrôle", NAME_WIDTH),
-        ("Éditeur", EDITOR_WIDTH),
-        ("Valeur", VALUE_WIDTH),
-        ("Unité", UNIT_WIDTH),
+        ("Control", NAME_WIDTH),
+        ("Editor", EDITOR_WIDTH),
+        ("Value", VALUE_WIDTH),
+        ("Unit", UNIT_WIDTH),
         ("Type", TYPE_WIDTH),
     ] {
-        let column = gtk::Label::new(Some(label));
+        let column = gtk::Label::new(Some(&t(key)));
         column.add_css_class("advanced-column");
         column.set_xalign(0.0);
         column.set_width_request(width);
-        if label == "Contrôle" {
+        if key == "Control" {
             column.set_hexpand(true);
         }
-        if label == "Valeur" {
+        if key == "Value" {
             column.set_xalign(1.0);
         }
         header.append(&column);
@@ -579,7 +582,7 @@ fn build_row(row: &AdvancedRow, editor: gtk::Widget, value_label: &gtk::Label) -
     if row.raw {
         let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
         icon.add_css_class("raw-badge");
-        icon.set_tooltip_text(Some(RAW_TOOLTIP));
+        icon.set_tooltip_text(Some(&t(RAW_TOOLTIP)));
         badge.append(&icon);
     }
     line.append(&badge);
@@ -605,13 +608,13 @@ fn build_row(row: &AdvancedRow, editor: gtk::Widget, value_label: &gtk::Label) -
     line.append(&editor);
     line.append(value_label);
 
-    let unit = gtk::Label::new(Some(unit_label(row.unit)));
+    let unit = gtk::Label::new(Some(&unit_label(row.unit)));
     unit.add_css_class("advanced-unit");
     unit.set_xalign(0.0);
     unit.set_width_request(UNIT_WIDTH);
     line.append(&unit);
 
-    let kind = gtk::Label::new(Some(type_label(row.unit)));
+    let kind = gtk::Label::new(Some(&type_label(row.unit)));
     kind.add_css_class("advanced-type");
     kind.set_xalign(0.0);
     kind.set_width_request(TYPE_WIDTH);
@@ -620,9 +623,9 @@ fn build_row(row: &AdvancedRow, editor: gtk::Widget, value_label: &gtk::Label) -
     list_row.set_child(Some(&line));
 
     if !row.writable {
-        list_row.set_tooltip_text(Some(
-            "Lecture seule : le pilote refuse les écritures de ce contrôle.",
-        ));
+        list_row.set_tooltip_text(Some(&t(
+            "Read-only: the driver refuses writes to this control.",
+        )));
     }
 
     list_row
@@ -637,27 +640,27 @@ fn groups_of(model: &AdvancedModel) -> Vec<String> {
 }
 
 /// The unit column of a row.
-fn unit_label(unit: Unit) -> &'static str {
+fn unit_label(unit: Unit) -> String {
     match unit {
-        Unit::Db => "dB",
-        Unit::Hz => "Hz",
-        Unit::Q => "Q",
-        Unit::Steps => "pas",
-        Unit::Percent => "%",
-        Unit::Bool => "on/off",
-        Unit::Raw => "brut",
+        Unit::Db => t("dB"),
+        Unit::Hz => t("Hz"),
+        Unit::Q => t("Q"),
+        Unit::Steps => t("steps"),
+        Unit::Percent => t("%"),
+        Unit::Bool => t("on/off"),
+        Unit::Raw => t("raw"),
     }
 }
 
 /// The type column of a row.
-fn type_label(unit: Unit) -> &'static str {
+fn type_label(unit: Unit) -> String {
     match unit {
-        Unit::Db => "gain",
-        Unit::Hz => "fréquence",
-        Unit::Q => "Q",
-        Unit::Percent => "pourcentage",
-        Unit::Steps | Unit::Raw => "entier",
-        Unit::Bool => "interrupteur",
+        Unit::Db => t("gain"),
+        Unit::Hz => t("frequency"),
+        Unit::Q => t("Q"),
+        Unit::Percent => t("percentage"),
+        Unit::Steps | Unit::Raw => t("integer"),
+        Unit::Bool => t("switch"),
     }
 }
 
@@ -673,9 +676,9 @@ mod tests {
     #[test]
     fn the_unit_and_type_columns_name_every_unit() {
         assert_eq!(unit_label(Unit::Db), "dB");
-        assert_eq!(unit_label(Unit::Steps), "pas");
-        assert_eq!(type_label(Unit::Bool), "interrupteur");
-        assert_eq!(type_label(Unit::Hz), "fréquence");
+        assert_eq!(unit_label(Unit::Steps), "steps");
+        assert_eq!(type_label(Unit::Bool), "switch");
+        assert_eq!(type_label(Unit::Hz), "frequency");
         assert_eq!(type_label(Unit::Q), "Q");
     }
 
@@ -720,7 +723,7 @@ mod tests {
         gtk::init().expect("a GTK display, e.g. Xvfb");
 
         let search = gtk::SearchEntry::new();
-        let group_filter = gtk::DropDown::from_strings(&["Tous les groupes", "MIC"]);
+        let group_filter = gtk::DropDown::from_strings(&["All groups", "MIC"]);
         let filter = Rc::new(super::FilterBar {
             model: AdvancedModel { rows: Vec::new() },
             entries: Vec::new(),
