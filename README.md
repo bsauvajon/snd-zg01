@@ -249,10 +249,14 @@ and needs no root; it opens the ALSA control device directly.
   a search field, a section filter and a type-aware editor.
 
 **Sauvegarder** persists the current values with `Save to ZG01`.
-**Réinitialiser** reloads the persisted settings; because the driver cache is
-not refreshed, the displayed values become unknown until a control is
-written or a preset is applied. Presets are loaded from `.zgpreset` files
-through the same parser as `zgctl`; `.zg01` backups are rejected.
+**Réinitialiser** reloads the persisted settings and starts a fresh MIC
+state read. Direct MIC fields (gate switch/value/range, compressor and
+limiter switches/levels, EQ switch/shapes/Q) are refreshed from the device;
+the transformed MIC fields and the non-MIC sections become unknown until a
+control is written or a preset is applied. The Micro screen also offers
+**Read from ZG01** for a fresh read without a reset. Presets are loaded from
+`.zgpreset` files through the same parser as `zgctl`; `.zg01` backups are
+rejected.
 
 ### Keybindings
 
@@ -270,11 +274,16 @@ The fader widgets are keyboard accessible:
 
 ### Cache caveat
 
-The GUI reads the values the driver last wrote, not the device state. A
-setting changed by ZG Controller on Windows, by `alsactl`, or by a device
-reset is not visible until that control is written again from Linux. The
-footer keeps a `Driver values (cache)` badge and its tooltip says so. Save is
-the only action that persists the current values on the ZG01.
+Direct MIC fields come from the MIC state dump read at probe, on
+**Read from ZG01**, and automatically after Reset. The transformed MIC
+fields, the Mixage section and the remaining controls come from the driver's
+write cache. A setting changed by ZG Controller on Windows or by a device
+reset is not visible for those cached fields until that control is written
+again from Linux. Writes through ALSA from other tools update the driver
+cache, but the GUI only re-reads the controls when the card is reloaded. The
+footer badge distinguishes `MIC read` from `Mixage/Avancé cache`, and its
+tooltip says which values are refreshed. Save is the only action that
+persists the current values on the ZG01.
 
 ### Meters
 

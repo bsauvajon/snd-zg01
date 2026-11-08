@@ -50,9 +50,11 @@ Description: GTK4 control GUI for the Yamaha ZG01 driver
  equalizer and limiter, and every remaining ALSA control in an advanced
  table.
  .
- The GUI reads the driver cache and keeps the displayed values until a
- control is written again; the Save action persists the settings on the
- device. It ships the French translation and never runs as root.
+ The GUI reads direct MIC fields from the device state dump (at probe,
+ through the Read from ZG01 action and after Reset) and keeps the
+ transformed MIC fields and the non-MIC sections from the driver cache
+ until they are written again. The Save action persists the settings on
+ the device. It ships the French translation and never runs as root.
  .
  This package is architecture dependent (it ships a compiled binary).
  The driver is only recommended: without it the window explains that no

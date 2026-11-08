@@ -16,10 +16,12 @@ stream sends, the STREAM OUT switches and meter, and the preset bar.
 \fBAvancé\fR lists every ALSA control the curated screens do not
 claim.
 .PP
-The displayed values come from the driver cache, not from a fresh device
-read. Use the \fBSave\fR action to persist the current values on the ZG01;
-\fBReset\fR reloads the persisted settings and marks the displayed values
-unknown.
+Direct MIC fields come from the MIC state dump read at probe, by the
+\fBRead from ZG01\fR action, and automatically after \fBReset\fR. The
+transformed MIC fields and the non-MIC sections come from the driver cache;
+their displayed values stay until the control is written again. Use
+\fBSave\fR to persist the current values on the ZG01; \fBReset\fR reloads
+the persisted settings and starts a fresh state read.
 .SH ENVIRONMENT
 .TP
 .B ZG01_LOCALEDIR
