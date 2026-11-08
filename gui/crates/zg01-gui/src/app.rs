@@ -1366,6 +1366,7 @@ impl App {
             );
             return;
         }
+        tracing::trace!("Linux meter snapshot: {snapshot:?}");
         for id in LinuxMeterId::ALL {
             let available = snapshot.is_available(id);
             let level = snapshot.level(id);
