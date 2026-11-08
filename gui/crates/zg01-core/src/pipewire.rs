@@ -173,6 +173,253 @@ pub fn discover_nodes() -> Result<Nodes, PipewireError> {
     parse_pw_dump(&String::from_utf8_lossy(&output.stdout))
 }
 
+#[cfg(feature = "pipewire")]
+use std::io::Read;
+#[cfg(feature = "pipewire")]
+use std::process::{Child, Stdio};
+use std::sync::atomic::AtomicBool;
+#[cfg(feature = "pipewire")]
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{self, Receiver};
+#[cfg(feature = "pipewire")]
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
+#[cfg(feature = "pipewire")]
+use std::sync::Mutex;
+#[cfg(feature = "pipewire")]
+use std::thread::JoinHandle;
+#[cfg(feature = "pipewire")]
+use std::time::Instant;
+
+#[cfg(feature = "pipewire")]
+type Update = (LinuxMeterId, Option<f64>);
+
+#[cfg(feature = "pipewire")]
+struct Recorder {
+    stop: Arc<AtomicBool>,
+    child: Arc<Mutex<Option<Child>>>,
+    join: JoinHandle<()>,
+}
+
+#[cfg(feature = "pipewire")]
+impl Recorder {
+    fn start(id: LinuxMeterId, node: u64, sink: bool, updates: Sender<Update>) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let child = Arc::new(Mutex::new(None));
+        let thread_stop = stop.clone();
+        let thread_child = child.clone();
+        let join = std::thread::Builder::new()
+            .name(format!("zg01-pw-{}", id.index()))
+            .spawn(move || recorder_loop(id, node, sink, thread_stop, thread_child, updates))
+            .expect("could not start a PipeWire recorder");
+        Recorder { stop, child, join }
+    }
+
+    fn stop(self) {
+        self.stop.store(true, Ordering::Relaxed);
+        stop_child(&self.child);
+        let _ = self.join.join();
+    }
+}
+
+#[cfg(feature = "pipewire")]
+fn stop_child(slot: &Arc<Mutex<Option<Child>>>) {
+    if let Some(mut child) = slot.lock().expect("the child slot").take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+#[cfg(feature = "pipewire")]
+fn recorder_loop(
+    id: LinuxMeterId,
+    node: u64,
+    sink: bool,
+    stop: Arc<AtomicBool>,
+    slot: Arc<Mutex<Option<Child>>>,
+    updates: Sender<Update>,
+) {
+    let mut backoff = Duration::from_secs(1);
+    while !stop.load(Ordering::Relaxed) {
+        let mut command = Command::new("pw-record");
+        command
+            .args(recorder_args(node, sink))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                tracing::warn!("could not start pw-record for {id:?}: {err}");
+                let _ = updates.send((id, None));
+                sleep_or_stop(&stop, backoff);
+                backoff = (backoff * 2).min(Duration::from_secs(5));
+                continue;
+            }
+        };
+        let Some(mut stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = updates.send((id, None));
+            sleep_or_stop(&stop, backoff);
+            continue;
+        };
+        *slot.lock().expect("the child slot") = Some(child);
+        backoff = Duration::from_secs(1);
+
+        let mut buffer = [0_u8; 4096];
+        let mut peak = 0_u32;
+        let mut pending = None;
+        let mut window = Instant::now();
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            match stdout.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(len) => {
+                    let mut first = 0;
+                    if let Some(byte) = pending.take() {
+                        let value = i16::from_ne_bytes([byte, buffer[0]]);
+                        peak = peak.max(value.unsigned_abs() as u32);
+                        first = 1;
+                    }
+                    let end = first + (len - first) / 2 * 2;
+                    for sample in buffer[first..end].chunks_exact(2) {
+                        let value = i16::from_ne_bytes([sample[0], sample[1]]);
+                        peak = peak.max(value.unsigned_abs() as u32);
+                    }
+                    if end < len {
+                        pending = Some(buffer[len - 1]);
+                    }
+                    if window.elapsed() >= LINUX_METER_INTERVAL {
+                        if updates.send((id, Some(level_from_peak(peak)))).is_err() {
+                            stop_child(&slot);
+                            return;
+                        }
+                        peak = 0;
+                        window = Instant::now();
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        stop_child(&slot);
+        let _ = updates.send((id, None));
+        sleep_or_stop(&stop, backoff);
+        backoff = (backoff * 2).min(Duration::from_secs(5));
+    }
+}
+
+#[cfg(feature = "pipewire")]
+fn sleep_or_stop(stop: &AtomicBool, delay: Duration) {
+    let deadline = Instant::now() + delay;
+    while Instant::now() < deadline {
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+        std::thread::sleep(
+            Duration::from_millis(50).min(deadline.saturating_duration_since(Instant::now())),
+        );
+    }
+}
+
+#[cfg(feature = "pipewire")]
+pub fn spawn_linux_meters(
+    generation: u64,
+    interval: Duration,
+    stop: Arc<AtomicBool>,
+) -> Receiver<LinuxMetersSnapshot> {
+    let (snapshots, receiver) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("zg01-pw-meters".to_string())
+        .spawn(move || coordinator_loop(generation, interval, stop, snapshots))
+        .expect("could not start the PipeWire meter poller");
+    receiver
+}
+
+#[cfg(not(feature = "pipewire"))]
+pub fn spawn_linux_meters(
+    _generation: u64,
+    _interval: Duration,
+    _stop: Arc<AtomicBool>,
+) -> Receiver<LinuxMetersSnapshot> {
+    let (_sender, receiver) = mpsc::channel();
+    receiver
+}
+
+#[cfg(feature = "pipewire")]
+fn coordinator_loop(
+    generation: u64,
+    interval: Duration,
+    stop: Arc<AtomicBool>,
+    snapshots: Sender<LinuxMetersSnapshot>,
+) {
+    let (updates, receiver) = mpsc::channel::<Update>();
+    let mut available = [false; 3];
+    let mut values: [Option<f64>; 3] = [None; 3];
+    let mut started = [false; 3];
+    let mut recorders: Vec<Recorder> = Vec::new();
+    let mut retry = Instant::now();
+    let mut last_send: Option<Instant> = None;
+
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+        if Instant::now() >= retry && !started.iter().all(|started| *started) {
+            retry = Instant::now() + Duration::from_secs(2);
+            match discover_nodes() {
+                Ok(nodes) => {
+                    for (id, node, sink) in [
+                        (LinuxMeterId::MicIn, nodes.mic_in, false),
+                        (LinuxMeterId::VoiceOut, nodes.voice_out, true),
+                        (LinuxMeterId::GameOut, nodes.game_out, true),
+                    ] {
+                        let Some(node) = node else { continue };
+                        available[id.index()] = true;
+                        if !started[id.index()] {
+                            started[id.index()] = true;
+                            recorders.push(Recorder::start(id, node, sink, updates.clone()));
+                        }
+                    }
+                }
+                Err(err) => tracing::debug!("could not discover the PipeWire meters: {err}"),
+            }
+        }
+
+        let wait = last_send
+            .map(|sent| interval.saturating_sub(sent.elapsed()))
+            .unwrap_or_default();
+        match receiver.recv_timeout(wait) {
+            Ok((id, value)) => {
+                values[id.index()] = value;
+                while let Ok((id, value)) = receiver.try_recv() {
+                    values[id.index()] = value;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+
+        let due = last_send.is_none_or(|sent| sent.elapsed() >= interval);
+        if due {
+            let snapshot = LinuxMetersSnapshot {
+                values,
+                available,
+                generation,
+            };
+            if snapshots.send(snapshot).is_err() {
+                break;
+            }
+            last_send = Some(Instant::now());
+        }
+    }
+
+    for recorder in recorders {
+        recorder.stop();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{level_from_peak, parse_pw_dump, recorder_args, LinuxMetersSnapshot};
@@ -248,5 +495,21 @@ mod tests {
         assert!(!snapshot.is_available(LinuxMeterId::GameOut));
         assert!(snapshot.belongs_to(7));
         assert!(!snapshot.belongs_to(8));
+    }
+
+    #[cfg(feature = "pipewire")]
+    #[test]
+    fn stopping_a_recorder_kills_its_child() {
+        use std::process::Command;
+        use std::sync::{Arc, Mutex};
+        let slot = Arc::new(Mutex::new(Some(
+            Command::new("sh")
+                .arg("-c")
+                .arg("sleep 30")
+                .spawn()
+                .expect("a child"),
+        )));
+        super::stop_child(&slot);
+        assert!(slot.lock().expect("the slot").is_none());
     }
 }
