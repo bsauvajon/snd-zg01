@@ -32,7 +32,10 @@ pkgver() {
 }
 
 build() {
-  make -C "${_pkgname}/gui" build
+  # Arch enables LTO in CFLAGS. The C `zgpreset` archive is linked by lld
+  # through Rust; without the GCC LTO plugin its bytecode members leave the
+  # symbols undefined. Build the small C file as plain objects.
+  CFLAGS="${CFLAGS:-} -fno-lto" make -C "${_pkgname}/gui" build
 }
 
 package() {

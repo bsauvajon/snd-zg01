@@ -16,3 +16,6 @@ relm4 = { version = "0.11", features = ["libadwaita", "gnome_50"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 zg01-core = { path = "../zg01-core" }
+
+[build-dependencies]
+cc = "1"

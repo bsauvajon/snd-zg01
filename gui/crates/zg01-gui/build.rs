@@ -1,19 +1,40 @@
-//! Links the `.zgpreset` parser built by `zg01-core`.
+//! Builds and links the `.zgpreset` parser into the GUI binary.
 //!
-//! Cargo normally carries a dependency's `rustc-link-lib` through its rlib,
-//! but `makepkg` on Arch has been observed to reach the final binary link
-//! without the native archive. `zg01-core` declares `links = "zgpreset"`
-//! and exports its `OUT_DIR`; this script repeats the link directives on the
-//! binary so the final link is independent of that propagation.
+//! `zg01-core` also builds the archive for its own tests, but Cargo's
+//! propagation of that static library through the rlib is unreliable under
+//! `makepkg`/lld: the final binary either misses the symbols or links the
+//! object twice. Building the small C parser again in this package keeps
+//! the archive and the link arguments in the binary's own `OUT_DIR`.
+
+use std::path::PathBuf;
 
 fn main() {
-    let libdir = std::env::var("DEP_ZGPRESET_LIBDIR")
-        .expect("zg01-core must export the zgpreset library directory");
-    // Raw link arguments are appended after the Rust rlibs, in this order.
-    // `cargo:rustc-link-lib` before `cargo:rustc-link-search` makes lld
-    // process `-lzgpreset` before it knows the search path, which leaves
-    // the symbols undefined under `makepkg`.
-    println!("cargo:rustc-link-arg=-L{libdir}");
-    println!("cargo:rustc-link-arg=-lzgpreset");
+    let crate_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let tools = crate_dir.join("../../../tools");
+    let source = tools.join("zgpreset.c");
+    let header = tools.join("zgpreset.h");
+    let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+
+    cc::Build::new()
+        .file(&source)
+        .include(&tools)
+        .warnings(true)
+        .flag_if_supported("-std=c11")
+        // `makepkg` on Arch enables LTO; lld linked through Rust has no GCC
+        // LTO plugin, so the C member must stay a plain object file.
+        .flag_if_supported("-fno-lto")
+        .cargo_metadata(false)
+        .compile("zgpreset");
+
+    // Link the archive by path and as a whole archive. The path avoids the
+    // `-Wl,-Bdynamic` state that makes `-lzgpreset` search for a shared
+    // library; whole-archive makes the result independent of whether rustc
+    // places the native argument before or after the Rust rlibs.
+    let archive = out.join("libzgpreset.a");
+    println!("cargo:rustc-link-arg=-Wl,--whole-archive");
+    println!("cargo:rustc-link-arg={}", archive.display());
+    println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+    println!("cargo:rerun-if-changed={}", source.display());
+    println!("cargo:rerun-if-changed={}", header.display());
     println!("cargo:rerun-if-changed=build.rs");
 }

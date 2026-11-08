@@ -1137,6 +1137,7 @@ dependencies = [
 name = "zg01-gui"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "gtk4",
  "libadwaita",
  "relm4",
