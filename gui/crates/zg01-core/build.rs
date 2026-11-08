@@ -21,4 +21,8 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed={}", header.display());
+    println!(
+        "cargo:libdir={}",
+        std::env::var("OUT_DIR").expect("OUT_DIR")
+    );
 }

@@ -42,7 +42,7 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y devscripts debhelper fakeroot build-essential \
             cargo rustc pkg-config libasound2-dev libgtk-4-dev \
-            libadwaita-1-dev gettext
+            libadwaita-1-dev gettext dkms
 
       - name: Set Debian changelog version from the GUI tag
         run: |

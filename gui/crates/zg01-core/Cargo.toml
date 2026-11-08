@@ -4,6 +4,7 @@ description = "Device, model and preset logic for the Yamaha ZG01 control GUI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+links = "zgpreset"
 
 [features]
 default = ["pipewire"]
