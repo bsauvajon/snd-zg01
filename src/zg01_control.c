@@ -1035,29 +1035,30 @@ void zg01_control_apply_state(struct zg01_dev *dev,
     static const struct {
         u8 field;
         u16 addr;
+        u16 max;
     } map[] = {
-        { ZG01_SF_GATE_SWITCH, ZG01_PARAM_GATE_ENABLE },
-        { ZG01_SF_GATE_VALUE, ZG01_PARAM_GATE_VALUE },
-        { ZG01_SF_GATE_RANGE, ZG01_PARAM_GATE_RANGE },
-        { ZG01_SF_GATE_ATTACK, ZG01_PARAM_GATE_ATTACK },
-        { ZG01_SF_GATE_HOLD, ZG01_PARAM_GATE_HOLD },
-        { ZG01_SF_GATE_DECAY, ZG01_PARAM_GATE_DECAY },
-        { ZG01_SF_COMP_SWITCH, ZG01_PARAM_COMP_ENABLE },
-        { ZG01_SF_COMP_VALUE, ZG01_PARAM_COMP_VALUE },
-        { ZG01_SF_COMP_THRESHOLD, ZG01_PARAM_COMP_THRESHOLD },
-        { ZG01_SF_COMP_RATIO, ZG01_PARAM_COMP_RATIO },
-        { ZG01_SF_COMP_KNEE, ZG01_PARAM_COMP_KNEE },
-        { ZG01_SF_LIM_SWITCH, ZG01_PARAM_LIMITER_ENABLE },
-        { ZG01_SF_LIM_VALUE, ZG01_PARAM_LIMITER_VALUE },
-        { ZG01_SF_LIM_THRESHOLD, ZG01_PARAM_LIMITER_THRESHOLD },
-        { ZG01_SF_LIM_KNEE, ZG01_PARAM_LIMITER_KNEE },
-        { ZG01_SF_EQ_SWITCH, ZG01_PARAM_EQ_ENABLE },
-        { ZG01_SF_EQ_LOW_SHAPE, ZG01_PARAM_LOW_SHAPE },
-        { ZG01_SF_EQ_HIGH_SHAPE, ZG01_PARAM_HIGH_SHAPE },
-        { ZG01_SF_EQ_Q1, ZG01_PARAM_EQ_Q(0) },
-        { ZG01_SF_EQ_Q2, ZG01_PARAM_EQ_Q(1) },
-        { ZG01_SF_EQ_Q3, ZG01_PARAM_EQ_Q(2) },
-        { ZG01_SF_EQ_Q4, ZG01_PARAM_EQ_Q(3) },
+        { ZG01_SF_GATE_SWITCH, ZG01_PARAM_GATE_ENABLE, 1 },
+        { ZG01_SF_GATE_VALUE, ZG01_PARAM_GATE_VALUE, 100 },
+        { ZG01_SF_GATE_RANGE, ZG01_PARAM_GATE_RANGE, 73 },
+        { ZG01_SF_GATE_ATTACK, ZG01_PARAM_GATE_ATTACK, 283 },
+        { ZG01_SF_GATE_HOLD, ZG01_PARAM_GATE_HOLD, 213 },
+        { ZG01_SF_GATE_DECAY, ZG01_PARAM_GATE_DECAY, 300 },
+        { ZG01_SF_COMP_SWITCH, ZG01_PARAM_COMP_ENABLE, 1 },
+        { ZG01_SF_COMP_VALUE, ZG01_PARAM_COMP_VALUE, 100 },
+        { ZG01_SF_COMP_THRESHOLD, ZG01_PARAM_COMP_THRESHOLD, 73 },
+        { ZG01_SF_COMP_RATIO, ZG01_PARAM_COMP_RATIO, 120 },
+        { ZG01_SF_COMP_KNEE, ZG01_PARAM_COMP_KNEE, 2 },
+        { ZG01_SF_LIM_SWITCH, ZG01_PARAM_LIMITER_ENABLE, 1 },
+        { ZG01_SF_LIM_VALUE, ZG01_PARAM_LIMITER_VALUE, 100 },
+        { ZG01_SF_LIM_THRESHOLD, ZG01_PARAM_LIMITER_THRESHOLD, 73 },
+        { ZG01_SF_LIM_KNEE, ZG01_PARAM_LIMITER_KNEE, 2 },
+        { ZG01_SF_EQ_SWITCH, ZG01_PARAM_EQ_ENABLE, 1 },
+        { ZG01_SF_EQ_LOW_SHAPE, ZG01_PARAM_LOW_SHAPE, 1 },
+        { ZG01_SF_EQ_HIGH_SHAPE, ZG01_PARAM_HIGH_SHAPE, 1 },
+        { ZG01_SF_EQ_Q1, ZG01_PARAM_EQ_Q(0), 60 },
+        { ZG01_SF_EQ_Q2, ZG01_PARAM_EQ_Q(1), 60 },
+        { ZG01_SF_EQ_Q3, ZG01_PARAM_EQ_Q(2), 60 },
+        { ZG01_SF_EQ_Q4, ZG01_PARAM_EQ_Q(3), 60 },
     };
     unsigned int i;
 
@@ -1066,9 +1067,16 @@ void zg01_control_apply_state(struct zg01_dev *dev,
 
     mutex_lock(&dev->param_mutex);
     for (i = 0; i < ARRAY_SIZE(map); i++) {
-        if (values->known & ZG01_STATE_KNOWN(map[i].field))
-            *zg01_cache(dev, map[i].addr) =
-                values->value[map[i].field];
+        if (!(values->known & ZG01_STATE_KNOWN(map[i].field)))
+            continue;
+        /*
+         * The state dump may carry the device's wider raw range (0..120
+         * for Compressor/Limiter) while the ALSA control is 0..100.  Do
+         * not seed the cache with a value the control cannot report.
+         */
+        if (values->value[map[i].field] > map[i].max)
+            continue;
+        *zg01_cache(dev, map[i].addr) = values->value[map[i].field];
     }
     mutex_unlock(&dev->param_mutex);
 }
