@@ -31,6 +31,9 @@ pub mod mic;
 /// The control model: what a control is and how its value reads.
 pub mod model;
 
+/// The Linux-side meter sources read through PipeWire.
+pub mod pipewire;
+
 /// Loading a `.zgpreset` file and planning the values it applies.
 pub mod preset;
 

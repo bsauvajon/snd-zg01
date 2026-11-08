@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["pipewire"]
+pipewire = []
+
 [dependencies]
 alsa = "0.12"
 # The `alsa` crate does not wrap `snd_ctl_elem_info()`, which the control
