@@ -7,6 +7,7 @@
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include "zg01_feedback.h"
+#include "zg01_state.h"
 
 #define VENDOR_ID_YAMAHA 0x0499
 #define PRODUCT_ID_ZG01  0x1513
@@ -450,13 +451,13 @@ struct zg01_meter_state {
      * here; a workqueue parses and updates the control cache in process
      * context.  state_lock protects the collector fields only.
      */
-    unsigned char *state_buf;
-    unsigned int state_frames;
+    struct zg01_state_collector state;
     bool state_armed;
     bool state_ready;
     spinlock_t state_lock;
     struct work_struct state_work;
     struct delayed_work state_timeout;
+    struct mutex state_mutex;                /* serialises request admission */
 };
 
 struct zg01_dev {

@@ -14,6 +14,7 @@
  */
 
 #include <linux/bitops.h>
+#include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/usb.h>
@@ -1085,11 +1086,12 @@ static int zg01_ctl_info(struct snd_kcontrol *kcontrol,
 }
 
 /*
- * The getters return the driver cache: the device exposes no usable
- * per-parameter read (its replies are statuses) and the state dump is
- * not decoded, so the cache is the source of truth.  It is seeded with
- * the built-in defaults at load and updated on every successful write;
- * settings changed outside the driver are not reflected.
+ * Direct MIC fields come from the state dump read at probe, State Read
+ * or Reset; the transformed MIC fields and the non-MIC sections return
+ * the write cache, seeded with the built-in defaults and updated on every
+ * successful write.  Settings changed outside the driver are therefore
+ * reflected for the direct MIC fields after a read, and remain invisible
+ * for the cached fields.
  */
 static int zg01_ctl_get(struct snd_kcontrol *kcontrol,
                         struct snd_ctl_elem_value *ucontrol)
@@ -1203,8 +1205,20 @@ static int zg01_reset_put(struct snd_kcontrol *kcontrol,
 
     ret = zg01_param_reset(dev);
     if (!ret) {
-        int sret = zg01_state_request(dev);
+        int sret = -EBUSY;
+        int attempt;
 
+        /*
+         * Do not adopt a read that started before the reset.  Wait for
+         * the active read to finish (or time out) and then issue a fresh
+         * post-reset request; at most the driver's 2 s timeout.
+         */
+        for (attempt = 0; attempt < 100; attempt++) {
+            sret = zg01_state_request(dev);
+            if (sret != -EBUSY)
+                break;
+            msleep(20);
+        }
         if (sret && sret != -EBUSY)
             dev_dbg(&dev->interface->dev,
                     "state read after reset failed: %d\n", sret);

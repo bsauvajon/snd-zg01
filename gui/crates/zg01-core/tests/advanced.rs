@@ -219,6 +219,25 @@ fn the_device_actions_are_not_rows() {
 }
 
 #[test]
+fn the_state_readback_controls_are_not_rows() {
+    let controls = controls(&[
+        "P48V Capture Switch",
+        zg01_core::model::STATE_READ_ACTION,
+        zg01_core::model::STATE_READ_STATUS,
+        zg01_core::model::STATE_READ_KNOWN,
+    ]);
+    let model = AdvancedModel::from_controls(
+        &controls,
+        &layout(),
+        &MixageModel::from_controls(&[]),
+        &MicModel::from_controls(&[]),
+    );
+
+    let names: Vec<&str> = model.rows.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(names, ["P48V Capture Switch"]);
+}
+
+#[test]
 fn the_meters_are_listed_read_only_and_unknown() {
     let mut surface = all_controls();
     surface.extend(controls(&zg01_core::meters::METER_CONTROLS));

@@ -26,19 +26,21 @@
       que tous les autres contrôles ALSA dans une table avancée.
     </p>
     <p>
-      At startup and on “Read from ZG01”, the application requests the MIC
-      state dump and shows the device's persisted gate, compressor, limiter
-      and EQ values. The Mixage section and the DSP-transformed MIC fields
-      still come from the driver cache and are labelled as such. Save
-      persists the current device settings on the ZG01.
+      The driver reads the MIC state dump at probe; the application shows
+      the last successful read and offers “Read from ZG01” for a fresh
+      one. It displays the device's persisted gate, compressor, limiter
+      and EQ values. The Mixage section still comes from the driver cache;
+      the DSP-transformed MIC fields are shown unknown. Save persists the
+      current device settings on the ZG01.
     </p>
     <p xml:lang="fr">
-      Au démarrage et via « Lire depuis le ZG01 », l'application demande le
-      dump d'état MIC et affiche les valeurs persistées de la porte, du
-      compresseur, du limiteur et de l'égaliseur. La section Mixage et les
-      champs MIC transformés viennent encore du cache du pilote et sont
-      signalés comme tels. Sauvegarder conserve les réglages courants de
-      l'appareil.
+      Le pilote lit le dump d'état MIC au chargement ; l'application
+      affiche la dernière lecture réussie et propose « Lire depuis le
+      ZG01 » pour une lecture fraîche. Elle affiche les valeurs persistées
+      de la porte, du compresseur, du limiteur et de l'égaliseur. La
+      section Mixage vient encore du cache du pilote ; les champs MIC
+      transformés sont affichés comme inconnus. Sauvegarder conserve les
+      réglages courants de l'appareil.
     </p>
   </description>
 

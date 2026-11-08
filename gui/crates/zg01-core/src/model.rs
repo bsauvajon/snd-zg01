@@ -53,13 +53,10 @@ const ACTION_CONTROLS: [&str; 3] = [SAVE_ACTION, RESET_ACTION, STATE_READ_ACTION
 /// The bit positions match `enum zg01_state_field` in `src/zg01_state.h`.
 /// The values exist because the driver parsed the dump; the transformed
 /// fields below do not.
-const DIRECT_MIC: [(&str, u32); 22] = [
+const DIRECT_MIC: [(&str, u32); 19] = [
     ("Gate Capture Switch", 1 << 0),
     ("Gate", 1 << 1),
     ("Gate Range", 1 << 2),
-    ("Gate Attack", 1 << 3),
-    ("Gate Hold", 1 << 4),
-    ("Gate Decay", 1 << 5),
     ("Compressor Capture Switch", 1 << 6),
     ("Compressor", 1 << 7),
     ("Compressor Threshold", 1 << 8),
@@ -81,9 +78,14 @@ const DIRECT_MIC: [(&str, u32); 22] = [
 /// The MIC fields the state dump stores as DSP values, not as UI values.
 ///
 /// They cannot be populated from the dump; the GUI shows them unknown
-/// rather than caching a plausible but wrong number.
-const TRANSFORMED_MIC: [&str; 15] = [
+/// rather than caching a plausible but wrong number.  Gate Attack, Hold
+/// and Decay are here because their ALSA ranges (57..283, 0..213 and
+/// 24..300) do not fit one 7-bit payload byte.
+const TRANSFORMED_MIC: [&str; 18] = [
     "Gate Threshold",
+    "Gate Attack",
+    "Gate Hold",
+    "Gate Decay",
     "Compressor Attack",
     "Compressor Release",
     "Compressor Out Gain",
@@ -358,12 +360,26 @@ impl AppState {
         {
             control.value = ControlValue::Unknown;
         }
+        self.state_read = StateRead::Unknown;
     }
 
     /// Forgets one control value, when the device publishes it.
     fn mark_unknown(&mut self, name: &str) {
         if let Some(control) = self.control_mut(name) {
             control.value = ControlValue::Unknown;
+        }
+    }
+
+    /// Forgets the whole MIC chain.
+    ///
+    /// Used when a Read failed or timed out: the direct fields and the
+    /// transformed fields no longer describe the device.
+    pub fn mark_mic_unknown(&mut self) {
+        for (name, _) in DIRECT_MIC {
+            self.mark_unknown(name);
+        }
+        for name in TRANSFORMED_MIC {
+            self.mark_unknown(name);
         }
     }
 
@@ -404,12 +420,7 @@ impl AppState {
             }
             self.state_read = StateRead::Known { known };
         } else {
-            for (name, _) in DIRECT_MIC {
-                self.mark_unknown(name);
-            }
-            for name in TRANSFORMED_MIC {
-                self.mark_unknown(name);
-            }
+            self.mark_mic_unknown();
             self.state_read = match status {
                 Some(0) => StateRead::Pending,
                 Some(value) if value < 0 => StateRead::Failed,
@@ -434,7 +445,6 @@ impl AppState {
 pub fn apply_reset(state: &mut AppState, writer: &ControlWriter) -> Result<(), String> {
     let result = reset_device(writer);
     state.mark_all_unknown();
-    state.state_read = StateRead::Unknown;
     result
 }
 

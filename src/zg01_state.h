@@ -30,7 +30,11 @@ typedef uint32_t u32;
 #define ZG01_STATE_DUMP_SIZE (ZG01_STATE_FRAME_SIZE * ZG01_STATE_FRAME_COUNT)
 #define ZG01_STATE_PAYLOAD_SIZE 3072
 
-/* Direct fields, in payload order.  Keep the enum below the 32-bit mask. */
+/*
+ * State field ids.  The bit positions are the Rust GUI's known-mask ABI:
+ * never reorder an existing id, append new fields.  Keep the enum below
+ * the 32-bit mask.
+ */
 enum zg01_state_field {
     ZG01_SF_GATE_SWITCH,
     ZG01_SF_GATE_VALUE,
@@ -63,6 +67,19 @@ struct zg01_state_values {
     u8 value[ZG01_SF_COUNT];
     u32 known; /* ZG01_STATE_KNOWN() bits for the fields actually parsed */
 };
+
+/*
+ * Host-testable eight-frame assembly.  The driver's URB callback fills it
+ * under its spinlock; tests feed it frame by frame.  The first frame must
+ * carry the type-20 header; a ninth frame is rejected.
+ */
+struct zg01_state_collector {
+    u8 frames[ZG01_STATE_DUMP_SIZE];
+    unsigned int count;
+};
+
+int zg01_state_collect(struct zg01_state_collector *collector,
+                       const u8 *frame, unsigned int len);
 
 /*
  * Parse one complete dump.  Returns 0 on success, -EINVAL for a short or

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: zg01-control 0.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/bsauvajon/snd-zg01/issues\n"
-"POT-Creation-Date: 2026-11-08 11:10+0100\n"
+"POT-Creation-Date: 2026-11-08 12:48+0100\n"
 "PO-Revision-Date: 2026-11-02 00:00+0100\n"
 "Last-Translator: ZG01 Control contributors\n"
 "Language-Team: French\n"
@@ -41,120 +41,120 @@ msgstr "La chaîne micro : GATE, COMP, EQ et LIMITEUR."
 msgid "Every ALSA control the curated screens do not cover."
 msgstr "Tous les contrôles ALSA que les écrans curatés ne couvrent pas."
 
-#: crates/zg01-gui/src/app.rs:578 crates/zg01-gui/src/app.rs:638
-#: crates/zg01-gui/src/app.rs:1008 crates/zg01-gui/src/app.rs:1035
+#: crates/zg01-gui/src/app.rs:584 crates/zg01-gui/src/app.rs:644
+#: crates/zg01-gui/src/app.rs:1020 crates/zg01-gui/src/app.rs:1047
 msgid "A state read is in progress; wait for it to finish"
 msgstr "Une lecture d’état est en cours ; attendez sa fin"
 
-#: crates/zg01-gui/src/app.rs:584
+#: crates/zg01-gui/src/app.rs:590
 msgid "Save queued until the preset finishes"
 msgstr "Sauvegarde en attente de la fin du preset"
 
-#: crates/zg01-gui/src/app.rs:589
+#: crates/zg01-gui/src/app.rs:595
 msgid "Cannot save: unknown values or no card"
 msgstr "Sauvegarde impossible : valeurs inconnues ou carte absente"
 
-#: crates/zg01-gui/src/app.rs:593 crates/zg01-gui/src/app.rs:657
-#: crates/zg01-gui/src/app.rs:745 crates/zg01-gui/src/app.rs:749
-#: crates/zg01-gui/src/app.rs:994 crates/zg01-gui/src/app.rs:1039
-#: crates/zg01-gui/src/app.rs:1171
+#: crates/zg01-gui/src/app.rs:599 crates/zg01-gui/src/app.rs:663
+#: crates/zg01-gui/src/app.rs:750 crates/zg01-gui/src/app.rs:754
+#: crates/zg01-gui/src/app.rs:1006 crates/zg01-gui/src/app.rs:1051
+#: crates/zg01-gui/src/app.rs:1183
 msgid "No ZG01 connected"
 msgstr "Aucun ZG01 connecté"
 
-#: crates/zg01-gui/src/app.rs:609
+#: crates/zg01-gui/src/app.rs:615
 msgid "Could not start the save"
 msgstr "Impossible de lancer la sauvegarde"
 
-#: crates/zg01-gui/src/app.rs:620
+#: crates/zg01-gui/src/app.rs:626
 msgid "Settings saved to the ZG01"
 msgstr "Réglages sauvegardés sur le ZG01"
 
-#: crates/zg01-gui/src/app.rs:624
+#: crates/zg01-gui/src/app.rs:630
 msgid "Save failed: {error}"
 msgstr "Échec de la sauvegarde : {error}"
 
-#: crates/zg01-gui/src/app.rs:650
+#: crates/zg01-gui/src/app.rs:656
 msgid "Reset queued until the preset finishes"
 msgstr "Réinitialisation en attente de la fin du preset"
 
-#: crates/zg01-gui/src/app.rs:666
+#: crates/zg01-gui/src/app.rs:672
 msgid "Resetting the ZG01…"
 msgstr "Réinitialisation du ZG01…"
 
-#: crates/zg01-gui/src/app.rs:714
+#: crates/zg01-gui/src/app.rs:719
 msgid "ZG01 reset — reading the MIC state…"
 msgstr "ZG01 réinitialisé — lecture de l’état MIC…"
 
-#: crates/zg01-gui/src/app.rs:718
+#: crates/zg01-gui/src/app.rs:723
 msgid "Reset failed: {error}"
 msgstr "Réinitialisation impossible : {error}"
 
-#: crates/zg01-gui/src/app.rs:736 crates/zg01-gui/src/app.rs:1003
-#: crates/zg01-gui/src/app.rs:1030
+#: crates/zg01-gui/src/app.rs:741 crates/zg01-gui/src/app.rs:1015
+#: crates/zg01-gui/src/app.rs:1042
 msgid "A reset is in progress; wait for it to finish"
 msgstr "Une réinitialisation est en cours ; attendez sa fin"
 
-#: crates/zg01-gui/src/app.rs:741
+#: crates/zg01-gui/src/app.rs:746
 msgid "A preset is being applied; wait for it to finish"
 msgstr "Un preset est en cours d’application ; attendez sa fin"
 
-#: crates/zg01-gui/src/app.rs:755
+#: crates/zg01-gui/src/app.rs:760
 msgid "Reading the MIC state…"
 msgstr "Lecture de l’état MIC…"
 
-#: crates/zg01-gui/src/app.rs:799
+#: crates/zg01-gui/src/app.rs:804
 msgid "Could not start the MIC state read"
 msgstr "Impossible de lancer la lecture de l’état MIC"
 
-#: crates/zg01-gui/src/app.rs:820
+#: crates/zg01-gui/src/app.rs:825
 msgid "MIC state read from the ZG01"
 msgstr "État MIC lu depuis le ZG01"
 
-#: crates/zg01-gui/src/app.rs:825
+#: crates/zg01-gui/src/app.rs:830
 msgid "Could not read the MIC state: {error}"
 msgstr "Impossible de lire l’état MIC : {error}"
 
-#: crates/zg01-gui/src/app.rs:829
+#: crates/zg01-gui/src/app.rs:834
 msgid "Could not read the MIC state"
 msgstr "Impossible de lire l’état MIC"
 
-#: crates/zg01-gui/src/app.rs:998 crates/zg01-gui/src/app.rs:1025
+#: crates/zg01-gui/src/app.rs:1010 crates/zg01-gui/src/app.rs:1037
 msgid "A preset is already being applied"
 msgstr "Un preset est déjà en cours d’application"
 
-#: crates/zg01-gui/src/app.rs:1085
+#: crates/zg01-gui/src/app.rs:1097
 msgid "Could not load the preset"
 msgstr "Impossible de charger le preset"
 
-#: crates/zg01-gui/src/app.rs:1103
+#: crates/zg01-gui/src/app.rs:1115
 msgid "Cancelling the preset…"
 msgstr "Annulation du preset…"
 
-#: crates/zg01-gui/src/app.rs:1156 crates/zg01-gui/src/ui/preset_dialog.rs:453
+#: crates/zg01-gui/src/app.rs:1168 crates/zg01-gui/src/ui/preset_dialog.rs:453
 msgid "Preset cancelled"
 msgstr "Preset annulé"
 
-#: crates/zg01-gui/src/app.rs:1277
+#: crates/zg01-gui/src/app.rs:1295
 msgid "Could not write {name}: {error}"
 msgstr "Écriture de {name} impossible : {error}"
 
-#: crates/zg01-gui/src/app.rs:1355
+#: crates/zg01-gui/src/app.rs:1373
 msgid "ZG01 disconnected"
 msgstr "ZG01 déconnecté"
 
-#: crates/zg01-gui/src/app.rs:1370
+#: crates/zg01-gui/src/app.rs:1388
 msgid "ZG01 connection lost — reconnecting"
 msgstr "Connexion au ZG01 perdue — reconnexion en cours"
 
-#: crates/zg01-gui/src/app.rs:1458
+#: crates/zg01-gui/src/app.rs:1476
 msgid "ZG01 detected, but its controls cannot be read"
 msgstr "ZG01 détecté, mais ses contrôles sont illisibles"
 
-#: crates/zg01-gui/src/app.rs:1532
+#: crates/zg01-gui/src/app.rs:1559
 msgid "ZG01 connected"
 msgstr "ZG01 connecté"
 
-#: crates/zg01-gui/src/app.rs:1554
+#: crates/zg01-gui/src/app.rs:1594
 msgid "Unnamed preset"
 msgstr "Preset sans nom"
 
@@ -168,16 +168,16 @@ msgid "Yamaha ZG01 · card {card} · {driver}"
 msgstr "Yamaha ZG01 · carte {card} · {driver}"
 
 #: crates/zg01-gui/src/window.rs:152
-msgid "MIC read · Mixage cache"
-msgstr "MIC lu · Mixage en cache"
+msgid "MIC read · Mixage/Advanced cache"
+msgstr "MIC lu · Mixage/Avancé en cache"
 
 #: crates/zg01-gui/src/window.rs:153
 msgid "Reading MIC state…"
 msgstr "Lecture de l’état MIC…"
 
 #: crates/zg01-gui/src/window.rs:154
-msgid "MIC unknown · Mixage cache"
-msgstr "MIC inconnu · Mixage en cache"
+msgid "MIC unknown · Mixage/Advanced cache"
+msgstr "MIC inconnu · Mixage/Avancé en cache"
 
 #: crates/zg01-gui/src/window.rs:155 crates/zg01-gui/src/window.rs:580
 msgid "Driver values (cache)"
@@ -305,11 +305,12 @@ msgstr "La fenêtre reste réactive pendant la lecture de la carte."
 
 #: crates/zg01-gui/src/window.rs:583
 msgid ""
-"Direct MIC fields come from the ZG01 state read; the Mixage section and the "
-"transformed MIC fields come from the driver cache."
+"Direct MIC fields come from the ZG01 state read; transformed MIC fields are "
+"shown unknown, and the Mixage/Advanced sections come from the driver cache."
 msgstr ""
-"Les champs MIC directs viennent de la lecture d’état du ZG01 ; la section "
-"Mixage et les champs MIC transformés viennent de la cache du pilote."
+"Les champs MIC directs viennent de la lecture d’état du ZG01 ; les champs "
+"MIC transformés sont affichés comme inconnus, et les sections Mixage/Avancé "
+"viennent du cache du pilote."
 
 #: crates/zg01-gui/src/window.rs:624
 msgid "Screen in preparation."
@@ -561,11 +562,11 @@ msgstr "Départs stream, sortie stream et mètres."
 
 #: crates/zg01-gui/src/ui/mixage.rs:164
 msgid ""
-"MIC state is read from the ZG01; the Mixage section still shows the driver "
-"cache."
+"The Mixage section shows the driver cache; the MIC state is read on the "
+"Micro screen."
 msgstr ""
-"L’état MIC est lu depuis le ZG01 ; la section Mixage affiche encore la cache "
-"du pilote."
+"La section Mixage affiche le cache du pilote ; l’état MIC se lit dans "
+"l’écran Micro."
 
 #: crates/zg01-gui/src/ui/mixage.rs:241
 msgid "{done} of {total} applied, {skipped} skipped"
@@ -787,6 +788,13 @@ msgstr "inconnu"
 #: crates/zg01-gui/src/widgets/meter.rs:309
 msgid "Meter {name}"
 msgstr "Mètre {name}"
+
+#~ msgid ""
+#~ "MIC state is read from the ZG01; the Mixage section still shows the "
+#~ "driver cache."
+#~ msgstr ""
+#~ "L’état MIC est lu depuis le ZG01 ; la section Mixage affiche encore la "
+#~ "cache du pilote."
 
 #~ msgid ""
 #~ "The displayed values come from the driver cache. They are not re-read "

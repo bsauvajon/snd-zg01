@@ -40,6 +40,9 @@ pub mod units;
 /// The coalescing control writer.
 pub mod writer;
 
+/// The background MIC state read worker.
+pub mod state_read;
+
 /// Placeholder identifier for the ALSA PCM device handled by the GUI.
 ///
 /// The real device is resolved at runtime in a later task.

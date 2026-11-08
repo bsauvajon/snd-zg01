@@ -29,10 +29,10 @@ Expected:
 - The window opens on **Mixage**, 1100x680 by default.
 - The header shows `ZG01`, the card index and the driver name.
 - The sidebar shows **Mixage**, **Micro** and **Avancé**.
-- The footer says `MIC lu · Mixage en cache` / `MIC read · Mixage cache`
-  after a successful MIC state read. If the read failed it says
-  `MIC inconnu · Mixage en cache`; on a driver without the readback it
-  still says `Valeurs du driver (cache)`.
+- The footer says `MIC lu · Mixage/Avancé en cache` /
+  `MIC read · Mixage/Advanced cache` after a successful MIC state read. If
+  the read failed it says `MIC inconnu · Mixage/Avancé en cache`; on a
+  driver without the readback it still says `Valeurs du driver (cache)`.
 - No stack trace on stderr; `journalctl --user -b` has no panic. A
   `ZG01 connected` toast may appear on the first connection.
 
@@ -97,13 +97,13 @@ Expected:
 - A control the driver does not publish is hidden; the screen never shows a
   widget bound to a missing control.
 - The Micro header has **Lire depuis le ZG01** / **Read from ZG01**.
-- The direct fields (gate switch/value/range/attack/hold/decay, compressor
+- The direct fields (gate switch/value/range, compressor
   switch/value/threshold/ratio/knee, limiter switch/value/threshold/knee,
   EQ switch/shapes/Q) show the persisted device state, not the built-in
   defaults. In the current unit Gate reads on/60 and Limiter on/50.
-- The transformed fields (gate threshold, compressor/limiter
-  attack/release/out gain, EQ gain/frequency) stay dashed unknown; they are
-  not populated from the dump.
+- The transformed fields (gate threshold/attack/hold/decay,
+  compressor/limiter attack/release/out gain, EQ gain/frequency) stay
+  dashed unknown; they are not populated from the dump.
 - Returning to Mixage keeps the values and does not reload the card.
 
 ## 5. Preset apply
@@ -131,7 +131,8 @@ Expected:
 2. Change the MIC state outside the GUI (ZG Controller on Windows, or the
    device's RESET), or press **Réinitialiser** / **Reset** in the GUI.
 3. Click **Lire depuis le ZG01** / **Read from ZG01** and watch the footer.
-4. Try a read with the ZG01 unplugged (or simulate a timeout) and recover.
+4. Simulate a driver timeout (or read while the card is being removed)
+   and recover; physical unplug/replug is covered in section 8.
 
 Expected:
 
@@ -139,10 +140,11 @@ Expected:
   Gate on/60, Limiter on/50 and the EQ Q values from the dump.
 - The transformed fields stay dashed unknown; the GUI never displays a
   DSP coefficient as an attack or a gain.
-- A successful read sets the footer to `MIC lu · Mixage en cache` and
-  enables Save even though the transformed fields remain unknown.
+- A successful read sets the footer to `MIC lu · Mixage/Avancé en cache`
+  and enables Save even though the transformed fields remain unknown.
 - A failed/timeout read leaves the MIC chain dashed, the footer at
-  `MIC inconnu · Mixage en cache`, Save disabled, and shows an error toast.
+  `MIC inconnu · Mixage/Avancé en cache`, Save disabled, and shows an
+  error toast.
 - The Mixage page carries the notice that its section still uses the
   driver cache.
 - Reset triggers its own post-reset read; the direct fields come back
@@ -162,7 +164,8 @@ Expected:
   built-in defaults.
 - Reset reloads the persisted settings and triggers a post-reset state
   read: the direct MIC fields become known again, Save is enabled after
-  that read, and the transformed fields/Mixage stay dashed unknown.
+  that read, and the transformed fields stay dashed unknown; Mixage
+  keeps the driver cache and its notice.
 - The unknown banner clears when the post-reset read succeeds; it stays
   while the read is pending or failed.
 - Save never writes the cache defaults for the transformed fields or the

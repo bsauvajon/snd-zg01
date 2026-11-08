@@ -26,11 +26,11 @@ fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
         .push(readback_control(STATE_READ_STATUS, 1, false));
     state
         .controls
-        .push(readback_control(STATE_READ_KNOWN, 0x3fffff, false));
+        .push(readback_control(STATE_READ_KNOWN, 0x3fffc7, false));
 
     state.apply_readback();
 
-    assert_eq!(state.state_read, StateRead::Known { known: 0x3fffff });
+    assert_eq!(state.state_read, StateRead::Known { known: 0x3fffc7 });
     assert!(state.can_save());
     assert_eq!(
         state.control("Gate").map(|control| control.value),
@@ -38,6 +38,10 @@ fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
     );
     assert_eq!(
         state.control("Gate Threshold").map(|control| control.value),
+        Some(ControlValue::Unknown)
+    );
+    assert_eq!(
+        state.control("Gate Attack").map(|control| control.value),
         Some(ControlValue::Unknown)
     );
     assert_eq!(
@@ -60,6 +64,42 @@ fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
         state.control("EQ Band 1 Gain").map(|control| control.value),
         Some(ControlValue::Unknown)
     );
+}
+
+#[test]
+fn a_partial_known_mask_leaves_the_missing_direct_field_unknown() {
+    let mut state = state_with(&[]);
+    state.controls = controls_with_mic();
+    state
+        .control_mut("Compressor Threshold")
+        .expect("Compressor Threshold is present")
+        .value = ControlValue::Known(61);
+    state
+        .controls
+        .push(readback_control(STATE_READ_STATUS, 1, false));
+    state.controls.push(readback_control(
+        STATE_READ_KNOWN,
+        0x3fffc7 & !(1 << 8),
+        false,
+    ));
+
+    state.apply_readback();
+
+    assert_eq!(
+        state
+            .control("Compressor Threshold")
+            .map(|control| control.value),
+        Some(ControlValue::Unknown)
+    );
+    assert_eq!(
+        state.control("Gate").map(|control| control.value),
+        Some(ControlValue::Known(0))
+    );
+    assert_eq!(
+        state.control("EQ Band 1 Q").map(|control| control.value),
+        Some(ControlValue::Known(0))
+    );
+    assert!(state.can_save());
 }
 
 #[test]

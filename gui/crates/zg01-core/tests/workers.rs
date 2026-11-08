@@ -9,7 +9,8 @@ use std::time::Duration;
 use zg01_core::alsa::{AlsaBackend, AlsaError, CardInfo, ControlInfo};
 use zg01_core::device::{spawn_watcher, DeviceEvent};
 use zg01_core::meters::{poll_meters, METER_CONTROLS};
-use zg01_core::model::SAVE_ACTION;
+use zg01_core::model::{SAVE_ACTION, STATE_READ_ACTION};
+use zg01_core::state_read::spawn_state_read_with;
 use zg01_core::writer::{ControlWriter, WriteOutcome};
 
 /// What a backend answers to a read.
@@ -34,6 +35,7 @@ impl Default for ReadAnswer {
 struct RecordingBackend {
     writes: Mutex<Vec<(String, i64)>>,
     answer: Mutex<ReadAnswer>,
+    fail_write: AtomicBool,
 }
 
 impl RecordingBackend {
@@ -58,6 +60,9 @@ impl AlsaBackend for RecordingBackend {
 
     fn write(&self, name: &str, value: i64) -> Result<(), AlsaError> {
         self.writes.lock().unwrap().push((name.into(), value));
+        if self.fail_write.load(Ordering::Relaxed) {
+            return Err(AlsaError::Unknown(name.to_string()));
+        }
         Ok(())
     }
 }
@@ -493,4 +498,73 @@ fn the_watcher_reports_the_card_that_came_back() {
     );
     let event = rx.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_eq!(event, DeviceEvent::Connected(card()));
+}
+
+#[test]
+fn a_state_read_writes_the_action_and_reports_success() {
+    let backend = Arc::new(RecordingBackend::default());
+    *backend.answer.lock().unwrap() = ReadAnswer::Value(1);
+    let (writer, _outcomes) = ControlWriter::spawn_with_generation(backend.clone(), 0);
+
+    let results = spawn_state_read_with(
+        backend.clone(),
+        writer,
+        Duration::from_millis(100),
+        Duration::from_millis(5),
+    );
+    let outcome = results
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the state read worker answers");
+
+    assert!(outcome.succeeded());
+    assert_eq!(backend.writes(), vec![(STATE_READ_ACTION.to_string(), 1)]);
+}
+
+#[test]
+fn a_pending_state_read_waits_without_a_second_write() {
+    let backend = Arc::new(RecordingBackend::default());
+    let (writer, _outcomes) = ControlWriter::spawn_with_generation(backend.clone(), 0);
+
+    let results = spawn_state_read_with(
+        backend.clone(),
+        writer,
+        Duration::from_millis(40),
+        Duration::from_millis(5),
+    );
+    let outcome = results
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the state read worker answers");
+
+    assert_eq!(outcome.status, 0);
+    assert!(outcome.pending_before);
+    assert!(!outcome.succeeded());
+    assert!(
+        backend.writes().is_empty(),
+        "a pending read must not be restarted"
+    );
+}
+
+#[test]
+fn a_failed_state_action_is_not_a_success() {
+    let backend = Arc::new(RecordingBackend::default());
+    *backend.answer.lock().unwrap() = ReadAnswer::Value(1);
+    backend.fail_write.store(true, Ordering::Relaxed);
+    let (writer, _outcomes) = ControlWriter::spawn_with_generation(backend.clone(), 0);
+
+    let results = spawn_state_read_with(
+        backend.clone(),
+        writer,
+        Duration::from_millis(100),
+        Duration::from_millis(5),
+    );
+    let outcome = results
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the state read worker answers");
+
+    assert_eq!(outcome.status, 1);
+    assert!(outcome.wrote.is_err());
+    assert!(
+        !outcome.succeeded(),
+        "a stale success status must not hide a failed action"
+    );
 }

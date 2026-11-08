@@ -65,9 +65,6 @@ int main(int argc, char **argv)
     expect(&v, ZG01_SF_GATE_SWITCH, 1, "gate switch");
     expect(&v, ZG01_SF_GATE_VALUE, 60, "gate value");
     expect(&v, ZG01_SF_GATE_RANGE, 17, "gate range");
-    expect(&v, ZG01_SF_GATE_ATTACK, 109, "gate attack");
-    expect(&v, ZG01_SF_GATE_HOLD, 101, "gate hold");
-    expect(&v, ZG01_SF_GATE_DECAY, 60, "gate decay");
     expect(&v, ZG01_SF_COMP_SWITCH, 1, "compressor switch");
     expect(&v, ZG01_SF_COMP_VALUE, 30, "compressor value");
     expect(&v, ZG01_SF_COMP_THRESHOLD, 61, "compressor threshold");
@@ -85,9 +82,16 @@ int main(int argc, char **argv)
     expect(&v, ZG01_SF_EQ_Q3, 17, "eq q3");
     expect(&v, ZG01_SF_EQ_Q4, 5, "eq q4");
 
-    all = (1u << ZG01_SF_COUNT) - 1u;
+    all = ((1u << ZG01_SF_COUNT) - 1u) &
+          ~(ZG01_STATE_KNOWN(ZG01_SF_GATE_ATTACK) |
+            ZG01_STATE_KNOWN(ZG01_SF_GATE_HOLD) |
+            ZG01_STATE_KNOWN(ZG01_SF_GATE_DECAY));
     if (v.known != all)
-        fail("known mask does not cover the direct fields");
+        fail("known mask does not cover exactly the direct fields");
+    if (v.known & ZG01_STATE_KNOWN(ZG01_SF_GATE_ATTACK) ||
+        v.known & ZG01_STATE_KNOWN(ZG01_SF_GATE_HOLD) ||
+        v.known & ZG01_STATE_KNOWN(ZG01_SF_GATE_DECAY))
+        fail("a >127-range gate timing field was marked known");
 
     if (zg01_state_parse(frames, ZG01_STATE_DUMP_SIZE - 1, &v) != -EINVAL)
         fail("short dump was accepted");
@@ -129,6 +133,95 @@ int main(int argc, char **argv)
         if (zg01_state_parse(frames, ZG01_STATE_DUMP_SIZE, &v) != -EINVAL)
             fail("non-7-bit payload byte was accepted");
         frames[index] = 0x01;
+    }
+
+    /* Even an ignored payload byte must stay 7-bit. */
+    {
+        unsigned int packet = 100 / 3;
+        unsigned int byte = 100 % 3;
+        unsigned int index = packet * 4 + 1 + byte;
+        u8 saved = frames[index];
+
+        frames[index] = 0x80;
+        if (zg01_state_parse(frames, ZG01_STATE_DUMP_SIZE, &v) != -EINVAL)
+            fail("non-7-bit ignored byte was accepted");
+        frames[index] = saved;
+    }
+
+    /* A non-continuation CIN in any packet is not a state frame. */
+    {
+        u8 saved = frames[40];
+
+        frames[40] = 0xff;
+        if (zg01_state_parse(frames, ZG01_STATE_DUMP_SIZE, &v) != -EINVAL)
+            fail("non-continuation CIN was accepted");
+        frames[40] = saved;
+    }
+
+    /* A duplicated frame is spliced at the wrong descriptor position. */
+    {
+        u8 saved[ZG01_STATE_FRAME_SIZE];
+
+        memcpy(saved, frames + ZG01_STATE_FRAME_SIZE, sizeof(saved));
+        memcpy(frames + ZG01_STATE_FRAME_SIZE, frames, sizeof(saved));
+        if (zg01_state_parse(frames, ZG01_STATE_DUMP_SIZE, &v) != -EINVAL)
+            fail("duplicated frame was accepted");
+        memcpy(frames + ZG01_STATE_FRAME_SIZE, saved, sizeof(saved));
+    }
+
+    /* A dropped frame shifts the descriptors. */
+    {
+        u8 saved[ZG01_STATE_FRAME_SIZE];
+
+        memcpy(saved, frames + ZG01_STATE_FRAME_SIZE, sizeof(saved));
+        memcpy(frames + ZG01_STATE_FRAME_SIZE,
+               frames + 2 * ZG01_STATE_FRAME_SIZE, sizeof(saved));
+        if (zg01_state_parse(frames, ZG01_STATE_DUMP_SIZE, &v) != -EINVAL)
+            fail("dropped frame was accepted");
+        memcpy(frames + ZG01_STATE_FRAME_SIZE, saved, sizeof(saved));
+    }
+
+    /* A direct field outside its ALSA range poisons the cache. */
+    {
+        unsigned int packet = 1460 / 3;
+        unsigned int byte = 1460 % 3;
+        unsigned int index = packet * 4 + 1 + byte;
+
+        frames[index] = 2; /* Gate Capture Switch is 0/1 */
+        if (zg01_state_parse(frames, ZG01_STATE_DUMP_SIZE, &v) != -EINVAL)
+            fail("out-of-range switch was accepted");
+        frames[index] = 0x01;
+    }
+
+    /* The host-testable collector assembles exactly the eight frames. */
+    {
+        struct zg01_state_collector collector = { 0 };
+        unsigned int i;
+
+        for (i = 0; i < ZG01_STATE_FRAME_COUNT; i++) {
+            if (zg01_state_collect(&collector,
+                                   frames + i * ZG01_STATE_FRAME_SIZE,
+                                   ZG01_STATE_FRAME_SIZE) != 0)
+                fail("the collector rejected a valid frame");
+        }
+        if (collector.count != ZG01_STATE_FRAME_COUNT)
+            fail("the collector did not assemble eight frames");
+        if (zg01_state_parse(collector.frames, ZG01_STATE_DUMP_SIZE, &v) != 0)
+            fail("the collected dump was rejected");
+        expect(&v, ZG01_SF_GATE_VALUE, 60, "collected gate value");
+
+        if (zg01_state_collect(&collector, frames, ZG01_STATE_FRAME_SIZE) !=
+            -EINVAL)
+            fail("a ninth frame was accepted");
+
+        {
+            struct zg01_state_collector shifted = { 0 };
+
+            if (zg01_state_collect(&shifted,
+                                   frames + ZG01_STATE_FRAME_SIZE,
+                                   ZG01_STATE_FRAME_SIZE) != -EINVAL)
+                fail("a continuation was accepted as the first frame");
+        }
     }
 
     free(frames);

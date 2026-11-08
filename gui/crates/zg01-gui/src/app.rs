@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gtk4::prelude::*;
 use relm4::prelude::*;
@@ -28,6 +28,7 @@ use zg01_core::model::{
     SAVE_ACTION, STATE_READ_ACTION, STATE_READ_STATUS,
 };
 use zg01_core::preset::{apply_plan_cancellable, ApplyCancellation, ApplyReport};
+use zg01_core::state_read::{spawn_state_read, StateReadOutcome};
 use zg01_core::units::Conv;
 use zg01_core::writer::{ControlWriter, WriteOutcome};
 
@@ -167,6 +168,10 @@ pub(crate) struct App {
     reset: Option<u64>,
     /// The MIC state read in flight, when there is one.
     state_read_op: Option<u64>,
+    /// A failed/pending read result to apply after the reload.
+    readback_override: Option<StateRead>,
+    /// Whether the startup read was already followed.
+    startup_read_attempted: bool,
     /// A Save requested while a preset was running.
     pending_save: bool,
     /// A Reset requested while a preset was running.
@@ -220,12 +225,8 @@ pub(crate) enum Msg {
     StateReadFinished {
         /// The read operation it belongs to.
         id: u64,
-        /// The driver status: 1 success, 0 pending, negative error.
-        status: i64,
-        /// Whether a read was already pending when the worker started.
-        pending_before: bool,
-        /// Whether the State Read action reached the device.
-        wrote: Result<(), String>,
+        /// The worker result.
+        outcome: StateReadOutcome,
     },
     /// A preset application made progress.
     PresetProgress {
@@ -490,6 +491,8 @@ impl SimpleComponent for App {
             save: None,
             reset: None,
             state_read_op: None,
+            readback_override: None,
+            startup_read_attempted: false,
             pending_save: false,
             pending_reset: false,
             last_preset: None,
@@ -527,12 +530,7 @@ impl SimpleComponent for App {
             Msg::Quit => relm4::main_application().quit(),
             Msg::SaveFinished { id, result } => self.save_finished(id, result),
             Msg::ResetFinished { id, result } => self.reset_finished(id, result, sender),
-            Msg::StateReadFinished {
-                id,
-                status,
-                pending_before,
-                wrote,
-            } => self.state_read_finished(id, status, pending_before, wrote, sender),
+            Msg::StateReadFinished { id, outcome } => self.state_read_finished(id, outcome, sender),
             Msg::PresetProgress {
                 id,
                 done,
@@ -705,7 +703,6 @@ impl App {
         }
         self.reset = None;
         self.state.mark_all_unknown();
-        self.state.state_read = StateRead::Unknown;
         self.refresh_controls();
         self.shell.set_busy(false, "");
         self.set_screens_sensitive(self.state.device.is_connected());
@@ -755,58 +752,35 @@ impl App {
         self.shell.set_busy(true, &t("Reading the MIC state…"));
         self.set_screens_sensitive(false);
 
+        let results = spawn_state_read(backend, writer);
         let sender = sender.clone();
-        let spawned = std::thread::Builder::new()
-            .name("zg01-state-read".to_string())
-            .spawn(move || {
-                let pending_before = matches!(backend.read(STATE_READ_STATUS), Ok(0));
-                let wrote = if pending_before {
-                    Ok(())
-                } else {
-                    writer.set_and_wait(STATE_READ_ACTION, 1)
-                };
-                let deadline = Instant::now() + Duration::from_millis(2500);
-                let mut status = if pending_before { 0 } else { -1 };
-                loop {
-                    match backend.read(STATE_READ_STATUS) {
-                        Ok(value) => {
-                            status = value;
-                            if value != 0 {
-                                break;
-                            }
-                        }
-                        Err(err) => {
-                            tracing::debug!("could not read the state status: {err}");
-                        }
-                    }
-                    if Instant::now() >= deadline {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_millis(25));
+        gtk4::glib::timeout_add_local(Duration::from_millis(25), move || {
+            match results.try_recv() {
+                Ok(outcome) => {
+                    sender.input(Msg::StateReadFinished { id, outcome });
+                    gtk4::glib::ControlFlow::Break
                 }
-                sender.input(Msg::StateReadFinished {
-                    id,
-                    status,
-                    pending_before,
-                    wrote,
-                });
-            });
-        if let Err(err) = spawned {
-            tracing::warn!("could not start the state read thread: {err}");
-            self.state_read_op = None;
-            self.shell.set_busy(false, "");
-            self.set_screens_sensitive(self.state.device.is_connected());
-            self.shell.toast(&t("Could not start the MIC state read"));
-        }
+                Err(TryRecvError::Empty) => gtk4::glib::ControlFlow::Continue,
+                Err(TryRecvError::Disconnected) => {
+                    sender.input(Msg::StateReadFinished {
+                        id,
+                        outcome: StateReadOutcome {
+                            status: -1,
+                            pending_before: false,
+                            wrote: Err("the state read worker did not answer".to_string()),
+                        },
+                    });
+                    gtk4::glib::ControlFlow::Break
+                }
+            }
+        });
     }
 
     /// Handles the completion of a MIC state read.
     fn state_read_finished(
         &mut self,
         id: u64,
-        status: i64,
-        pending_before: bool,
-        wrote: Result<(), String>,
+        outcome: StateReadOutcome,
         sender: ComponentSender<Self>,
     ) {
         if self.state_read_op != Some(id) {
@@ -815,20 +789,27 @@ impl App {
         self.state_read_op = None;
         self.shell.set_busy(false, "");
         self.set_screens_sensitive(self.state.device.is_connected());
-        let succeeded = state_read_succeeded(status, pending_before, &wrote);
+        let succeeded = outcome.succeeded();
         if succeeded {
             self.shell.toast(&t("MIC state read from the ZG01"));
         } else {
-            match wrote {
+            match &outcome.wrote {
                 Err(err) => {
                     self.shell.toast(&tf(
                         "Could not read the MIC state: {error}",
-                        &[("{error}", &err)],
+                        &[("{error}", err)],
                     ));
                 }
                 Ok(()) => self.shell.toast(&t("Could not read the MIC state")),
             }
         }
+        self.readback_override = if succeeded {
+            None
+        } else if outcome.status == 0 {
+            Some(StateRead::Pending)
+        } else {
+            Some(StateRead::Failed)
+        };
         self.start_reload(sender);
     }
 
@@ -1252,6 +1233,12 @@ impl App {
             WriteOutcome::Err { name, error } if name == SAVE_ACTION => {
                 tracing::debug!("the save action failed: {error}");
             }
+            WriteOutcome::Ok { name, .. } if name == STATE_READ_ACTION => {
+                tracing::debug!("the state read action is on the device");
+            }
+            WriteOutcome::Err { name, error } if name == STATE_READ_ACTION => {
+                tracing::debug!("the state read action failed: {error}");
+            }
             WriteOutcome::Ok { name, value } => {
                 if !self.writes.accepts(&name) {
                     tracing::debug!(
@@ -1494,6 +1481,9 @@ impl App {
         // A completion from the card that just left cannot own an operation.
         self.invalidate_operations();
         let first_connection = !self.state.device.is_connected();
+        if first_connection {
+            self.startup_read_attempted = false;
+        }
         let layout = self.state.layout.clone();
         tracing::info!(
             "reading card hw:{}: {} controls",
@@ -1505,6 +1495,12 @@ impl App {
         self.device_generation = self.reloads.generation;
         self.state = AppState::new(DeviceState::Connected(loaded.card), loaded.controls, layout);
         self.state.apply_readback();
+        if let Some(override_state) = self.readback_override.take() {
+            if !override_state.is_known() {
+                self.state.mark_mic_unknown();
+            }
+            self.state.state_read = override_state;
+        }
         self.backend = Some(loaded.backend);
         // The values were just read; an outcome from before the reload
         // must not overwrite one of them.
@@ -1531,16 +1527,11 @@ impl App {
         if first_connection {
             self.shell.toast(&t("ZG01 connected"));
         }
+        if !self.startup_read_attempted && self.state.state_read == StateRead::Pending {
+            self.startup_read_attempted = true;
+            self.read_state(sender);
+        }
     }
-}
-
-/// Whether a finished state read actually delivered a device state.
-///
-/// The status is the driver's; a read that was already pending when the
-/// worker started is a success even though the `State Read` action itself
-/// returned `-EBUSY`. A failed action with no pending read is not.
-fn state_read_succeeded(status: i64, pending_before: bool, wrote: &Result<(), String>) -> bool {
-    status == 1 && (wrote.is_ok() || pending_before)
 }
 
 /// Whether a write outcome describes the card the screens currently show.
@@ -1591,7 +1582,17 @@ fn load_device(layout: &Layout) -> Result<Loaded, String> {
     let infos = backend
         .list_controls()
         .map_err(|err| format!("could not list the controls: {err}"))?;
+    /*
+     * A startup dump can complete while the controls are read, leaving
+     * the direct values from before the dump with a fresh success status.
+     * Read the status around the snapshot and retry if it moved.
+     */
+    let status_before = backend.read(STATE_READ_STATUS).ok();
     let controls = read_controls(backend.as_ref(), infos, layout);
+    let status_after = backend.read(STATE_READ_STATUS).ok();
+    if status_before != status_after {
+        return Err("the MIC state changed while the controls were read".to_string());
+    }
     Ok(Loaded {
         card,
         backend,
@@ -1658,8 +1659,8 @@ fn unit_for(layout: &Layout, name: &str, kind: ControlKind) -> Unit {
 #[cfg(test)]
 mod tests {
     use super::{
-        outcome_is_current, preset_label, read_controls, retry_delay, state_read_succeeded,
-        unit_for, Page, ReloadCompletion, ReloadTracker, WriteEpoch, RETRY_FIRST, RETRY_MAX,
+        outcome_is_current, preset_label, read_controls, retry_delay, unit_for, Page,
+        ReloadCompletion, ReloadTracker, WriteEpoch, RETRY_FIRST, RETRY_MAX,
     };
     use std::time::Duration;
     use zg01_core::alsa::{ControlInfo, ControlKind, FakeAlsa};
@@ -1873,17 +1874,5 @@ mod tests {
             !writes.accepts("Gate Threshold"),
             "writing one control after the reset says nothing about the others"
         );
-    }
-
-    #[test]
-    fn a_failed_state_read_action_is_not_a_success() {
-        assert!(!state_read_succeeded(1, false, &Err("busy".to_string())));
-        assert!(state_read_succeeded(1, false, &Ok(())));
-        assert!(
-            state_read_succeeded(1, true, &Err("busy".to_string())),
-            "a read that was already pending can complete the request"
-        );
-        assert!(!state_read_succeeded(-110, false, &Ok(())));
-        assert!(!state_read_succeeded(0, false, &Ok(())));
     }
 }

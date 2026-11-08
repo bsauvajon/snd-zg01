@@ -109,12 +109,13 @@ loader, Save/Reset, disconnect/reconnect, the custom fader and meter
 widgets, the French translation and the packaging. The hardware
 acceptance checklist lives in `../docs/GUI_TEST.md`.
 
-**MIC state readback.** At startup and on **Read from ZG01**, the GUI asks
-the driver for the MIC state dump and displays the persisted gate,
-compressor, limiter and direct EQ fields. The Mixage section and the
-DSP-transformed MIC fields (gate threshold, attack/release/out gain, EQ
-gain/frequency) still come from the driver cache and are marked unknown or
-with the Mixage notice. See `../docs/STATE_DUMP_PROTOCOL.md` and
+**MIC state readback.** The driver reads the MIC state dump at probe; the
+GUI shows the last successful read and offers **Read from ZG01** for a fresh
+one. It displays the persisted gate, compressor, limiter and direct EQ
+fields. The Mixage section still comes from the driver cache; the
+DSP-transformed MIC fields (gate threshold/attack/hold/decay,
+compressor/limiter attack/release/out gain, EQ gain/frequency) are shown
+unknown. See `../docs/STATE_DUMP_PROTOCOL.md` and
 `../docs/superpowers/specs/2026-11-08-zg01-mic-readback.md`.
 
 **Live-meter acceptance is blocked.** The decode and the meter controls

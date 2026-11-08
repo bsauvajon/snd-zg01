@@ -2,9 +2,10 @@
 
 Source spec: `docs/superpowers/specs/2026-11-08-zg01-mic-readback.md`
 Branch: `feat/zg01-gui`
-Worktree: `/home/brice/repos/snd-zg01/.worktrees/zg01-gui`
-Status: phases 1–2 implemented; phase 2 pending review/commit; phases 3–4
-pending.
+Worktree: the `zg01-gui` worktree (repository-relative)
+Status: phases 1–4 implemented and committed (`a732bed`, `49328f6`,
+`b2095bc`, `eb037bc`); final-review fixes in progress; hardware GUI
+confirmation pending.
 
 ## Phase 1 — protocol, fixture, parser
 
@@ -87,6 +88,11 @@ DoD met on hardware.
 - A `State Read` write that races an already-armed read can surface as a
   failure toast even though the pending read completes; the next Read
   recovers.
+- The driver cache-application/kcontrol path still has no host test (the
+  parser, collector, worker, model and hardware are covered); the cache
+  map and status publication are exercised on hardware only.
+- The GUI hardware acceptance report/screenshot for the final UI is still
+  pending user confirmation.
 - After the first state frame, a stray 512-byte frame would be appended as
   a continuation; the parser rejects the dump and the cache stays intact,
   but the read fails. The 512-byte channel is state-only while armed

@@ -353,13 +353,13 @@ after two seconds); `State Read Known` is the parser field mask.  A failed
 or partial read leaves the cache untouched.  `Reset to ZG01` re-reads
 automatically after the reset frame.
 
-Direct fields (gate switch/value/range/attack/hold/decay, compressor
+Direct fields (gate switch/value/range, compressor
 switch/value/threshold/ratio/knee, limiter switch/value/threshold/knee,
 EQ switch/shapes/Q) come from the dump.  The transformed fields (gate
-threshold, compressor/limiter attack/release/out gain, EQ gain/frequency)
-and the non-MIC sections still return the **write cache**, which is seeded
-with the vendor defaults.  The GUI must show those as unknown, not as
-device-read values.
+threshold/attack/hold/decay, compressor/limiter attack/release/out gain,
+EQ gain/frequency) and the non-MIC sections still return the **write
+cache**, which is seeded with the vendor defaults.  The GUI must show
+those as unknown, not as device-read values.
 
 The per-id `04 f0 43 30` reads remain statuses, not values.  `Save to
 ZG01` persists the device state; it does not refresh the cache by itself.

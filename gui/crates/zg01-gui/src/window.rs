@@ -149,9 +149,9 @@ impl Shell {
     /// Updates the footer badge for the last MIC state read.
     pub fn set_readback(&self, state: StateRead) {
         let text = match state {
-            StateRead::Known { .. } => t("MIC read · Mixage cache"),
+            StateRead::Known { .. } => t("MIC read · Mixage/Advanced cache"),
             StateRead::Pending => t("Reading MIC state…"),
-            StateRead::Failed => t("MIC unknown · Mixage cache"),
+            StateRead::Failed => t("MIC unknown · Mixage/Advanced cache"),
             StateRead::Unknown => t("Driver values (cache)"),
         };
         self.read_badge.set_text(&text);
@@ -580,7 +580,7 @@ fn build_footer() -> (gtk::Box, gtk::Label) {
     let badge = gtk::Label::new(Some(&t("Driver values (cache)")));
     badge.add_css_class("cache-badge");
     badge.set_tooltip_text(Some(&t(
-        "Direct MIC fields come from the ZG01 state read; the Mixage section and the transformed MIC fields come from the driver cache.",
+        "Direct MIC fields come from the ZG01 state read; transformed MIC fields are shown unknown, and the Mixage/Advanced sections come from the driver cache.",
     )));
     footer.append(&badge);
 

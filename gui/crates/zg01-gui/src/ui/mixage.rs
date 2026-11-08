@@ -161,7 +161,7 @@ impl MixageScreen {
         root.append(&subtitle);
 
         let notice = gtk::Label::new(Some(&t(
-            "MIC state is read from the ZG01; the Mixage section still shows the driver cache.",
+            "The Mixage section shows the driver cache; the MIC state is read on the Micro screen.",
         )));
         notice.add_css_class("dim-label");
         notice.set_xalign(0.0);

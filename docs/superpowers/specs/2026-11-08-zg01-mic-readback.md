@@ -38,9 +38,11 @@ GUI.
 In scope:
 
 - the MIC section (type-20 id `0x03`) only;
-- the direct fields of GATE, COMP and LIMITER, plus the EQ switch, shapes
-  and band Q; the transformed attack/release/out-gain/threshold and the
-  EQ biquad gain/frequency stay Unknown;
+- the direct fields (gate switch/value/range, compressor
+  switch/value/threshold/ratio/knee, limiter switch/value/threshold/knee,
+  EQ switch/shapes/Q); the transformed gate threshold/attack/hold/decay,
+  compressor/limiter attack/release/out-gain and EQ biquad
+  gain/frequency stay Unknown;
 - driver state collection, parsing, cache update, a read status and a
   refresh action;
 - GUI status, refresh, Unknown provenance, Save guard and Reset flow;
@@ -65,8 +67,9 @@ Request (`0x03` bulk out, 512 bytes, zero padded):
 
 Response: eight 512-byte frames on `0x83`. Each frame is 128 four-byte
 USB-MIDI packets `[CIN][d0][d1][d2]`; concatenate the three data bytes to
-get a 3072-byte payload. The payload starts `f0 43 00 3e 1b 1f 14 …` and
-ends with `f7`. The field map below is in **payload byte offsets**.
+get a 3072-byte payload. The payload starts `f0 43 00 3e 1b 1f 14 …`; the
+observed fixture ends in zero padding, not `f7`. The field map below is in
+**payload byte offsets**.
 
 Confirmed direct fields (controlled single-control captures, payload index):
 
@@ -75,9 +78,6 @@ Confirmed direct fields (controlled single-control captures, payload index):
 | Gate Capture Switch | 1460 | 0/1 |
 | Gate | 1461 | 0..100 |
 | Gate Range | 1464 | direct |
-| Gate Attack | 1465 | direct |
-| Gate Hold | 1467 | direct |
-| Gate Decay | 1468 | direct |
 | Compressor Capture Switch | 1470 | 0/1, confirmed off/on |
 | Compressor | 1472 | direct |
 | Compressor Threshold | 1473 | direct |
@@ -101,6 +101,9 @@ them Unknown until an inverse model exists):
 | Control | Offset(s) | Observed device value |
 |---|---:|---|
 | Gate Threshold | 1462 | 80 written → 73 in the dump |
+| Gate Attack | 1465 | ALSA range 57..283 exceeds one 7-bit byte |
+| Gate Hold | 1467 | ALSA range 0..213 exceeds one 7-bit byte |
+| Gate Decay | 1468 | ALSA range 24..300 exceeds one 7-bit byte |
 | Compressor Attack | 1475 | 170 → 42 |
 | Compressor Release | 1477 | 162 → 34 |
 | Compressor Out Gain | 1481 (+1487) | 160 → 32 |

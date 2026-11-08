@@ -52,9 +52,6 @@ ALSA control, re-reading the dump and diffing.
 | Gate Capture Switch | 1460 | 0/1 |
 | Gate | 1461 | 0..100 |
 | Gate Range | 1464 | raw |
-| Gate Attack | 1465 | raw |
-| Gate Hold | 1467 | raw |
-| Gate Decay | 1468 | raw |
 | Compressor Capture Switch | 1470 | 0/1 |
 | Compressor | 1472 | raw |
 | Compressor Threshold | 1473 | raw |
@@ -81,6 +78,9 @@ user value (0.50..16.0 in 0.01 steps). The driver's existing
 | Field | Offset(s) | Observed |
 |---|---:|---|
 | Gate Threshold | 1462 | 80 written → 73 |
+| Gate Attack | 1465 | 109 observed; ALSA range 57..283 exceeds one 7-bit byte |
+| Gate Hold | 1467 | 101 observed; ALSA range 0..213 exceeds one 7-bit byte |
+| Gate Decay | 1468 | 60 observed; ALSA range 24..300 exceeds one 7-bit byte |
 | Compressor Attack | 1475 | 170 → 42 |
 | Compressor Release | 1477 | 162 → 34 |
 | Compressor Out Gain | 1481 (+1487) | 160 → 32 |
