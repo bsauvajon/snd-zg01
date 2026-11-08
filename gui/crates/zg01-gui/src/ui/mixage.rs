@@ -160,6 +160,14 @@ impl MixageScreen {
         subtitle.set_xalign(0.0);
         root.append(&subtitle);
 
+        let notice = gtk::Label::new(Some(&t(
+            "MIC state is read from the ZG01; the Mixage section still shows the driver cache.",
+        )));
+        notice.add_css_class("dim-label");
+        notice.set_xalign(0.0);
+        notice.set_wrap(true);
+        root.append(&notice);
+
         let panel = gtk::Box::new(Orientation::Horizontal, 0);
         panel.add_css_class("panel");
         panel.set_margin_top(6);

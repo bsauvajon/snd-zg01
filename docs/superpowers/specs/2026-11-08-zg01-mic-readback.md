@@ -168,7 +168,8 @@ came from an off→on capture in which exactly one payload byte moved.
   fields are Unknown rather than defaults.
 - `Reset to ZG01`: the driver re-reads after the reset; the GUI waits for
   the new status and reloads, so the values are Known again.
-- Save is enabled only when a read succeeded. The Save command itself
+- Save is enabled after a successful read, or when every writable value is
+  known (for example a fully applied preset). The Save command itself
   does not write cached fields; it persists the device state. Applying a
   preset still writes the preset values and marks those fields Known.
 - The Mixage page is unchanged in this phase and carries a short "état

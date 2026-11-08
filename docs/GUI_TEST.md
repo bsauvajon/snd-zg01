@@ -29,8 +29,12 @@ Expected:
 - The window opens on **Mixage**, 1100x680 by default.
 - The header shows `ZG01`, the card index and the driver name.
 - The sidebar shows **Mixage**, **Micro** and **Avancé**.
-- The footer says `Valeurs du driver (cache)` / `Driver values (cache)`.
-- No toast, no stack trace on stderr; `journalctl --user -b` has no panic.
+- The footer says `MIC lu · Mixage en cache` / `MIC read · Mixage cache`
+  after a successful MIC state read. If the read failed it says
+  `MIC inconnu · Mixage en cache`; on a driver without the readback it
+  still says `Valeurs du driver (cache)`.
+- No stack trace on stderr; `journalctl --user -b` has no panic. A
+  `ZG01 connected` toast may appear on the first connection.
 
 ## 2. Live meters
 
@@ -87,11 +91,19 @@ Expected:
 
 Expected:
 
-- The chain reads `GATE › COMP › EQ › LIMIT`.
+- The chain reads `GATE › COMP › EQ › LIMITER`.
 - Each switch and fader writes its own control; no cross-talk.
 - The expander shows the block's out-gain and threshold controls.
 - A control the driver does not publish is hidden; the screen never shows a
   widget bound to a missing control.
+- The Micro header has **Lire depuis le ZG01** / **Read from ZG01**.
+- The direct fields (gate switch/value/range/attack/hold/decay, compressor
+  switch/value/threshold/ratio/knee, limiter switch/value/threshold/knee,
+  EQ switch/shapes/Q) show the persisted device state, not the built-in
+  defaults. In the current unit Gate reads on/60 and Limiter on/50.
+- The transformed fields (gate threshold, compressor/limiter
+  attack/release/out gain, EQ gain/frequency) stay dashed unknown; they are
+  not populated from the dump.
 - Returning to Mixage keeps the values and does not reload the card.
 
 ## 5. Preset apply
@@ -112,7 +124,31 @@ Expected:
 - The preset bar names the applied preset.
 - Nothing is persisted until Save; the report reminds the user.
 
-## 6. Save and Reset
+## 6. MIC state readback
+
+1. Open **Micro** and note the direct values and the dashed transformed
+   fields.
+2. Change the MIC state outside the GUI (ZG Controller on Windows, or the
+   device's RESET), or press **Réinitialiser** / **Reset** in the GUI.
+3. Click **Lire depuis le ZG01** / **Read from ZG01** and watch the footer.
+4. Try a read with the ZG01 unplugged (or simulate a timeout) and recover.
+
+Expected:
+
+- The direct fields update to the persisted state; the current unit reads
+  Gate on/60, Limiter on/50 and the EQ Q values from the dump.
+- The transformed fields stay dashed unknown; the GUI never displays a
+  DSP coefficient as an attack or a gain.
+- A successful read sets the footer to `MIC lu · Mixage en cache` and
+  enables Save even though the transformed fields remain unknown.
+- A failed/timeout read leaves the MIC chain dashed, the footer at
+  `MIC inconnu · Mixage en cache`, Save disabled, and shows an error toast.
+- The Mixage page carries the notice that its section still uses the
+  driver cache.
+- Reset triggers its own post-reset read; the direct fields come back
+  known and Save is enabled again.
+
+## 7. Save and Reset
 
 1. Change a control, then click **Sauvegarder** / **Save**.
 2. Wait for the toast, then close and reopen the GUI.
@@ -122,15 +158,18 @@ Expected:
 Expected:
 
 - Save writes `Save to ZG01` and the toast confirms it.
-- Reopening shows the saved value from the driver cache.
-- Reset reloads the persisted settings and marks the displayed values
-  unknown: the unknown banner appears, values are dashed, and Save is
-  disabled.
-- Writing one control or loading a preset clears the unknown state for that
-  value; the banner disappears once Save is possible again.
+- Reopening shows the saved MIC values from the state read, not the
+  built-in defaults.
+- Reset reloads the persisted settings and triggers a post-reset state
+  read: the direct MIC fields become known again, Save is enabled after
+  that read, and the transformed fields/Mixage stay dashed unknown.
+- The unknown banner clears when the post-reset read succeeds; it stays
+  while the read is pending or failed.
+- Save never writes the cache defaults for the transformed fields or the
+  Mixage section; it only persists the device state.
 - A failed Save or Reset shows an error toast and does not claim success.
 
-## 7. Disconnect and reconnect
+## 8. Disconnect and reconnect
 
 1. While the GUI is open, unplug the ZG01.
 2. Wait five seconds, then plug it back in.
@@ -145,7 +184,7 @@ Expected:
 - A write started just before the unplug never lands on the next card and
   never overwrites a value read after reconnect.
 
-## 8. No root and no hidden fallback
+## 9. No root and no hidden fallback
 
 1. Run the GUI as the logged-in user with no `sudo`.
 2. Check `ps -o user,pid,cmd -C zg01-control`.
@@ -158,7 +197,7 @@ Expected:
 - If the user cannot open the card, the connection view explains the USB and
   module checks instead of falling back to a privileged path.
 
-## 9. Clean shutdown
+## 10. Clean shutdown
 
 1. Close the window while meters are running.
 2. Reopen it immediately.
@@ -178,7 +217,7 @@ Kernel:
 Driver commit:
 GUI commit:
 Card index / driver:
-Steps passed: 1 2 3 4 5 6 7 8 9
+Steps passed: 1 2 3 4 5 6 7 8 9 10
 Failures and evidence (screenshots, journal lines):
 Notes:
 ```

@@ -77,7 +77,7 @@ impl AdvancedModel {
         let rows = controls
             .iter()
             .filter(|control| !claimed.contains(control.name()))
-            .filter(|control| !control.is_action())
+            .filter(|control| !control.is_internal())
             .map(|control| AdvancedRow {
                 name: control.name().to_string(),
                 value: control.value,

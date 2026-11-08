@@ -8,7 +8,7 @@
 
 use zg01_core::alsa::{CardInfo, ControlInfo, ControlKind};
 use zg01_core::layout::Layout;
-use zg01_core::model::{AppState, Control, ControlValue, DeviceState, Unit};
+use zg01_core::model::{AppState, Control, ControlValue, DeviceState, StateRead, Unit};
 
 /// A writable integer control with the given name and range.
 pub fn control(name: &str, min: i64, max: i64) -> Control {
@@ -134,5 +134,6 @@ pub fn state_with(names: &[&str]) -> AppState {
         layout: Layout {
             screens: Vec::new(),
         },
+        state_read: StateRead::Unknown,
     }
 }

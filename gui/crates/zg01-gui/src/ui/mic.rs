@@ -45,6 +45,8 @@ pub(crate) enum MicEvent {
         /// The value to write.
         value: i64,
     },
+    /// Re-read the MIC state dump from the device.
+    ReadState,
 }
 
 /// One card meter and the reading slot it uses.
@@ -225,12 +227,27 @@ impl MicScreen {
         let title = gtk::Label::new(Some(&t("Micro")));
         title.add_css_class("page-title");
         title.set_xalign(0.0);
-        root.append(&title);
 
         let subtitle = gtk::Label::new(Some(&t("Processing chain: GATE › COMP › EQ › LIMITER.")));
         subtitle.add_css_class("page-subtitle");
         subtitle.set_xalign(0.0);
-        root.append(&subtitle);
+
+        let top = gtk::Box::new(Orientation::Horizontal, 12);
+        let titles = gtk::Box::new(Orientation::Vertical, 4);
+        titles.set_hexpand(true);
+        titles.append(&title);
+        titles.append(&subtitle);
+        top.append(&titles);
+
+        let read = gtk::Button::with_label(&t("Read from ZG01"));
+        read.add_css_class("suggested-action");
+        read.set_valign(gtk::Align::Center);
+        read.connect_clicked({
+            let on_event = on_event.clone();
+            move |_| on_event(MicEvent::ReadState)
+        });
+        top.append(&read);
+        root.append(&top);
 
         let stage = gtk::Box::new(Orientation::Horizontal, 16);
         stage.set_margin_top(6);

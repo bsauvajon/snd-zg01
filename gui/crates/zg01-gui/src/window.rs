@@ -11,6 +11,7 @@ use gtk4::prelude::*;
 use libadwaita::prelude::*;
 use relm4::prelude::*;
 use zg01_core::alsa::CardInfo;
+use zg01_core::model::StateRead;
 
 use crate::app::{App, Msg, Page};
 use crate::i18n::{t, tf};
@@ -59,6 +60,8 @@ pub(crate) struct Shell {
     device_banner: adw::Banner,
     /// The banner shown while startup reads or a reset runs.
     busy_banner: adw::Banner,
+    /// The footer badge describing the value provenance.
+    read_badge: gtk::Label,
     /// The banner offering to reapply the last preset after a reconnect.
     reapply_banner: adw::Banner,
     /// The navigation list.
@@ -86,7 +89,7 @@ impl Shell {
         main.append(&sidebar_box);
         main.append(&stack);
 
-        let footer = build_footer();
+        let (footer, read_badge) = build_footer();
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
@@ -113,6 +116,7 @@ impl Shell {
             unknown_banner,
             device_banner,
             busy_banner,
+            read_badge,
             reapply_banner,
             sidebar,
             stack,
@@ -140,6 +144,17 @@ impl Shell {
         self.unknown_banner.set_revealed(false);
         self.device_banner.set_revealed(false);
         self.busy_banner.set_revealed(false);
+    }
+
+    /// Updates the footer badge for the last MIC state read.
+    pub fn set_readback(&self, state: StateRead) {
+        let text = match state {
+            StateRead::Known { .. } => t("MIC read · Mixage cache"),
+            StateRead::Pending => t("Reading MIC state…"),
+            StateRead::Failed => t("MIC unknown · Mixage cache"),
+            StateRead::Unknown => t("Driver values (cache)"),
+        };
+        self.read_badge.set_text(&text);
     }
 
     /// Shows the connection view and the disconnected header.
@@ -557,15 +572,15 @@ fn loading_page() -> gtk::Box {
     root
 }
 
-/// Builds the footer with the cache badge.
-fn build_footer() -> gtk::Box {
+/// Builds the footer with the value-provenance badge.
+fn build_footer() -> (gtk::Box, gtk::Label) {
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     footer.add_css_class("footer");
 
     let badge = gtk::Label::new(Some(&t("Driver values (cache)")));
     badge.add_css_class("cache-badge");
     badge.set_tooltip_text(Some(&t(
-        "The displayed values come from the driver cache. They are not re-read from the device on every display.",
+        "Direct MIC fields come from the ZG01 state read; the Mixage section and the transformed MIC fields come from the driver cache.",
     )));
     footer.append(&badge);
 
@@ -577,7 +592,7 @@ fn build_footer() -> gtk::Box {
     version.add_css_class("footer-version");
     footer.append(&version);
 
-    footer
+    (footer, badge)
 }
 
 /// A placeholder body for the screens later tasks fill in.

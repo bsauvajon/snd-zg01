@@ -40,29 +40,32 @@ DoD met: parser test green on the fixture; strict `W=1` build green.
 - [x] Hardware: startup `Status=1`, `Known=0x3fffff`, Gate on/60,
       Limiter on/50 after module load; `State Read` action works; Gate
       80 → Reset → Gate 60 with `Status=1`.
-- [ ] Phase 2 review and commit.
+- [x] Phase 2 review and commit (`49328f6`).
 
-DoD met on hardware; commit pending.
+DoD met on hardware.
 
 ## Phase 3 — GUI
 
-- [ ] Read `State Read Status`/known mask; Micro direct fields from the
+- [x] Read `State Read Status`/known mask; Micro direct fields from the
       device are `Known`, transformed fields `Unknown` (dashed).
-- [ ] **Lire depuis le ZG01** action; waits for the status; reloads.
-- [ ] Startup: probe read normally already complete; if not, Unknown.
-- [ ] Reset flow: wait for the driver's post-reset read, reload.
-- [ ] Save enabled only after a successful read; no cache-default Save.
-- [ ] Mixage page notice: section not decoded in this phase.
-- [ ] GUI tests with a fake backend; `make -C gui test`.
-- [ ] Hardware `GUI_TEST.md`: persisted Gate on/60 shown; external change
-      + Read; Reset + Read.
+- [x] **Lire depuis le ZG01** action; waits for the status; reloads.
+- [x] Startup: probe read normally already complete; if not, Unknown.
+- [x] Reset flow: wait for the driver's post-reset read, reload.
+- [x] Save enabled only after a successful read; no cache-default Save.
+- [x] Mixage page notice: section not decoded in this phase.
+- [x] Footer provenance badge (`MIC lu · Mixage en cache`).
+- [x] Model readback tests (`apply_readback`, `can_save`, status
+      transitions) and `make -C gui test`.
+- [ ] Hardware `GUI_TEST.md` user confirmation: persisted Gate on/60
+      shown; external change + Read; Reset + Read.
 
 ## Phase 4 — packaging and release notes
 
-- [ ] Desktop/AppStream copy: MIC readback, Mixage cached, live meters
+- [x] Desktop/AppStream copy: MIC readback, Mixage cached, live meters
       blocked.
-- [ ] Release note limits.
-- [ ] Validators; final whole-branch review.
+- [x] README status and release note limits.
+- [ ] Validators (network URL warnings remain) and final whole-branch
+      review.
 
 ## Unaddressed / deferred
 
@@ -73,9 +76,15 @@ DoD met on hardware; commit pending.
   deferred.
 - Mixage/Game/Stream and Advanced state sections: type-20 ids not
   captured; GUI keeps the cache and must label it.
-- A `State Read` while another is pending returns `-EBUSY`; a Reset during
-  a pending read can miss its post-reset read. The GUI must serialize
-  Reset/Read in phase 3 (review M1).
+- A `State Read` while another is pending returns `-EBUSY`. Phase 3
+  serializes Read/Reset/Save/Preset in the GUI; the driver still returns
+  `-EBUSY` for direct ALSA callers.
+- A state read/reload marks a transformed MIC field unknown even after the
+  user wrote it; the write is known until the next read. This is the
+  documented consequence of not decoding the DSP value.
+- A `State Read` write that races an already-armed read can surface as a
+  failure toast even though the pending read completes; the next Read
+  recovers.
 - After the first state frame, a stray 512-byte frame would be appended as
   a continuation; the parser rejects the dump and the cache stays intact,
   but the read fails. The 512-byte channel is state-only while armed

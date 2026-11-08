@@ -32,12 +32,96 @@ pub const SAVE_ACTION: &str = "Save to ZG01";
 /// The action control that reloads the persisted settings from the device.
 pub const RESET_ACTION: &str = "Reset to ZG01";
 
+/// The action control that re-reads the MIC state dump from the device.
+pub const STATE_READ_ACTION: &str = "State Read";
+
+/// The read-only result of the last state read.
+pub const STATE_READ_STATUS: &str = "State Read Status";
+
+/// The read-only mask of the fields the last state read applied.
+pub const STATE_READ_KNOWN: &str = "State Read Known";
+
 /// The write-only action controls.
 ///
 /// An action asks the device to do something; it holds no setting the GUI
 /// displays. A reset therefore does not invalidate it, and it never keeps
 /// Save disabled.
-const ACTION_CONTROLS: [&str; 2] = [SAVE_ACTION, RESET_ACTION];
+const ACTION_CONTROLS: [&str; 3] = [SAVE_ACTION, RESET_ACTION, STATE_READ_ACTION];
+
+/// The direct MIC fields in the driver's state-dump mask.
+///
+/// The bit positions match `enum zg01_state_field` in `src/zg01_state.h`.
+/// The values exist because the driver parsed the dump; the transformed
+/// fields below do not.
+const DIRECT_MIC: [(&str, u32); 22] = [
+    ("Gate Capture Switch", 1 << 0),
+    ("Gate", 1 << 1),
+    ("Gate Range", 1 << 2),
+    ("Gate Attack", 1 << 3),
+    ("Gate Hold", 1 << 4),
+    ("Gate Decay", 1 << 5),
+    ("Compressor Capture Switch", 1 << 6),
+    ("Compressor", 1 << 7),
+    ("Compressor Threshold", 1 << 8),
+    ("Compressor Ratio", 1 << 9),
+    ("Compressor Knee", 1 << 10),
+    ("Limiter Capture Switch", 1 << 11),
+    ("Limiter", 1 << 12),
+    ("Limiter Threshold", 1 << 13),
+    ("Limiter Knee", 1 << 14),
+    ("EQ Capture Switch", 1 << 15),
+    ("EQ Low Shape", 1 << 16),
+    ("EQ High Shape", 1 << 17),
+    ("EQ Band 1 Q", 1 << 18),
+    ("EQ Band 2 Q", 1 << 19),
+    ("EQ Band 3 Q", 1 << 20),
+    ("EQ Band 4 Q", 1 << 21),
+];
+
+/// The MIC fields the state dump stores as DSP values, not as UI values.
+///
+/// They cannot be populated from the dump; the GUI shows them unknown
+/// rather than caching a plausible but wrong number.
+const TRANSFORMED_MIC: [&str; 15] = [
+    "Gate Threshold",
+    "Compressor Attack",
+    "Compressor Release",
+    "Compressor Out Gain",
+    "Limiter Attack",
+    "Limiter Release",
+    "Limiter Out Gain",
+    "EQ Band 1 Gain",
+    "EQ Band 2 Gain",
+    "EQ Band 3 Gain",
+    "EQ Band 4 Gain",
+    "EQ Band 1 Frequency",
+    "EQ Band 2 Frequency",
+    "EQ Band 3 Frequency",
+    "EQ Band 4 Frequency",
+];
+
+/// The result of the last MIC state read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateRead {
+    /// No read was attempted in this session.
+    Unknown,
+    /// A read is in flight.
+    Pending,
+    /// The read succeeded; `known` is the driver's field mask.
+    Known {
+        /// The driver's `State Read Known` mask.
+        known: u32,
+    },
+    /// The read failed or timed out.
+    Failed,
+}
+
+impl StateRead {
+    /// Whether the device state was read successfully.
+    pub fn is_known(self) -> bool {
+        matches!(self, StateRead::Known { .. })
+    }
+}
 
 /// The unit a control value is expressed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
@@ -129,10 +213,19 @@ impl Control {
 
     /// Whether this control is a write-only device action.
     ///
-    /// [`SAVE_ACTION`] and [`RESET_ACTION`] are actions, not settings: they
-    /// are writable but have no value the GUI can rely on.
+    /// [`SAVE_ACTION`], [`RESET_ACTION`] and [`STATE_READ_ACTION`] are
+    /// actions, not settings: they are writable but have no value the GUI
+    /// can rely on.
     pub fn is_action(&self) -> bool {
         ACTION_CONTROLS.contains(&self.name())
+    }
+
+    /// Whether this control is an implementation detail of the readback.
+    ///
+    /// The State Read status and known-mask controls are read-only and
+    /// driver-internal; they do not belong in the Avancé table.
+    pub fn is_internal(&self) -> bool {
+        self.is_action() || matches!(self.name(), STATE_READ_STATUS | STATE_READ_KNOWN)
     }
 
     /// The value as it is shown to the user.
@@ -182,6 +275,8 @@ pub struct AppState {
     pub controls: Vec<Control>,
     /// The curated layout table.
     pub layout: Layout,
+    /// The last MIC state read result.
+    pub state_read: StateRead,
 }
 
 impl AppState {
@@ -191,6 +286,7 @@ impl AppState {
             device,
             controls,
             layout,
+            state_read: StateRead::Unknown,
         }
     }
 
@@ -208,18 +304,20 @@ impl AppState {
 
     /// Whether the values can be saved to the device.
     ///
-    /// Saving is blocked while the device is disconnected, and while a
-    /// writable value has no known value: a reset invalidates the driver
-    /// cache without telling the GUI what the device now holds. Read-only
-    /// controls (the meters) and write-only actions (`Save to ZG01`,
-    /// `Reset to ZG01`) never block a save.
+    /// Save is blocked while the device is disconnected. It is allowed
+    /// after a successful MIC state read, even though the transformed MIC
+    /// fields and the non-MIC sections remain unknown: Save persists the
+    /// device state and does not write those cached values. Before a read,
+    /// the old all-known rule still applies, so a Reset cannot save the
+    /// cache defaults and a fully applied preset can still be saved.
     pub fn can_save(&self) -> bool {
         self.device.is_connected()
-            && self
-                .controls
-                .iter()
-                .filter(|control| is_writable_value(control))
-                .all(|control| control.value != ControlValue::Unknown)
+            && (self.state_read.is_known()
+                || self
+                    .controls
+                    .iter()
+                    .filter(|control| is_writable_value(control))
+                    .all(|control| control.value != ControlValue::Unknown))
     }
 
     /// Marks the device as gone without forgetting the values it last held.
@@ -261,6 +359,64 @@ impl AppState {
             control.value = ControlValue::Unknown;
         }
     }
+
+    /// Forgets one control value, when the device publishes it.
+    fn mark_unknown(&mut self, name: &str) {
+        if let Some(control) = self.control_mut(name) {
+            control.value = ControlValue::Unknown;
+        }
+    }
+
+    /// Applies the result of a MIC state read to the model.
+    ///
+    /// A successful read (`State Read Status == 1`) makes the direct MIC
+    /// fields known from the values the driver just read; the fields the
+    /// dump stores as DSP values are marked unknown, never shown as if they
+    /// came from the device. A failed or pending read marks the whole MIC
+    /// chain unknown. The Mixage and Avancé sections are outside this
+    /// scope and keep their cached values; the Mixage screen carries a
+    /// notice.
+    pub fn apply_readback(&mut self) {
+        let status = self
+            .control(STATE_READ_STATUS)
+            .and_then(|control| control.value());
+        let known = self
+            .control(STATE_READ_KNOWN)
+            .and_then(|control| control.value())
+            .unwrap_or(0) as u32;
+
+        if status == Some(1) {
+            for (name, bit) in DIRECT_MIC {
+                let value = if known & bit != 0 {
+                    self.control(name).and_then(|control| control.value())
+                } else {
+                    None
+                };
+                match value {
+                    Some(value) => {
+                        self.mark_known(name, value);
+                    }
+                    None => self.mark_unknown(name),
+                }
+            }
+            for name in TRANSFORMED_MIC {
+                self.mark_unknown(name);
+            }
+            self.state_read = StateRead::Known { known };
+        } else {
+            for (name, _) in DIRECT_MIC {
+                self.mark_unknown(name);
+            }
+            for name in TRANSFORMED_MIC {
+                self.mark_unknown(name);
+            }
+            self.state_read = match status {
+                Some(0) => StateRead::Pending,
+                Some(value) if value < 0 => StateRead::Failed,
+                _ => StateRead::Unknown,
+            };
+        }
+    }
 }
 
 /// Applies a `Reset to ZG01` action and forgets every displayed value.
@@ -278,6 +434,7 @@ impl AppState {
 pub fn apply_reset(state: &mut AppState, writer: &ControlWriter) -> Result<(), String> {
     let result = reset_device(writer);
     state.mark_all_unknown();
+    state.state_read = StateRead::Unknown;
     result
 }
 
