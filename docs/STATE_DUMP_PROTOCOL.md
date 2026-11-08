@@ -100,6 +100,23 @@ Recovering these needs either an inverse device curve or a biquad model.
 Until then the GUI shows them Unknown; it never displays the coefficient
 as the user value.
 
+## Driver integration
+
+The driver sends the type-20 request at probe, after submitting the meter
+reader URB, and on every write of `State Read`.  The reader treats the
+first 512-byte frame with the `f0 43 00` header as the start and the next
+seven 512-byte frames as its continuations; the 192-byte meter frames are
+unaffected.  A workqueue parses the eight frames and applies the direct
+fields to the address-keyed control cache under `param_mutex`.  The
+transformed fields are not touched.  `State Read Status` returns 0 while
+one read is pending, 1 on success, or a negative errno; `State Read Known`
+is the parser known mask.  A timeout of two seconds aborts a read without
+touching the cache.  `Reset to ZG01` sends the reset and then a state read.
+
+The GUI must read the status/known mask and display only the direct
+fields as device-read; the transformed fields and the non-MIC sections
+remain the write cache.
+
 ## Evidence
 
 Controlled captures (payload diff, one control at a time):

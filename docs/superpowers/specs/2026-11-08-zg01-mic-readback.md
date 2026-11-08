@@ -144,22 +144,22 @@ came from an off→on capture in which exactly one payload byte moved.
 - `zg01_param_meter_init` stays the sender. The probe arms the collector
   before sending the type-20 request, so the existing startup read
   populates the cache with no extra traffic.
-- A new write-only `State Read` kcontrol (value 1) arms the collector and
+- A new `State Read` action kcontrol (write 1; get 0, following the
+  Save/Reset pattern) arms the collector and
   re-sends the type-20 request; a read-only `State Read Status` returns
   0 (never), 1 (ok), or a negative error. Both are tiny, documented
   controls, not hidden sysfs hooks.
 - `Reset to ZG01` automatically arms and re-sends the type-20 request
   after the reset frame; this is the flow the GUI uses.
-- The parser only touches fields in the confirmed table. The EQ
-  gain/frequency and the probable switches stay at the previous cache
-  value; the status control plus a per-field known mask tells the GUI
-  which fields were actually read.
+- The parser only touches fields in the confirmed table. The transformed
+  fields stay at the previous cache value; the status control plus a
+  per-field known mask tells the GUI which fields were actually read.
 
 ### GUI
 
 - The Micro page reads `State Read Status` and the known mask. Fields
-  read from the device are `Known`; EQ gain/frequency (and any probable
-  field not yet confirmed) are `Unknown` with the existing dashed style.
+  read from the device are `Known`; the transformed fields are `Unknown`
+  with the existing dashed style.
 - A **Read from ZG01** action in the Micro header triggers `State Read`,
   waits for the status to become ok, and reloads the controls. It is
   enabled only when the card is present.

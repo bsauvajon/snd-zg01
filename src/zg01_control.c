@@ -24,6 +24,7 @@
 #include "zg01_addr.h"
 #include "zg01_codec.h"
 #include "zg01_control.h"
+#include "zg01_state.h"
 
 int zg01_init_control(struct zg01_dev *dev)
 {
@@ -1020,6 +1021,57 @@ static u32 *zg01_cache(struct zg01_dev *dev, u16 addr)
                             [addr % ZG01_PARAM_PAGE_SIZE];
 }
 
+/*
+ * Apply the direct fields of a parsed MIC state dump to the write cache.
+ * The transformed fields (attack/release/out gain, gate threshold, EQ
+ * biquad gain/frequency) are absent from the parser's table on purpose:
+ * their payload bytes are device coefficients, not the values the ALSA
+ * controls expose.
+ */
+void zg01_control_apply_state(struct zg01_dev *dev,
+                              const struct zg01_state_values *values)
+{
+    static const struct {
+        u8 field;
+        u16 addr;
+    } map[] = {
+        { ZG01_SF_GATE_SWITCH, ZG01_PARAM_GATE_ENABLE },
+        { ZG01_SF_GATE_VALUE, ZG01_PARAM_GATE_VALUE },
+        { ZG01_SF_GATE_RANGE, ZG01_PARAM_GATE_RANGE },
+        { ZG01_SF_GATE_ATTACK, ZG01_PARAM_GATE_ATTACK },
+        { ZG01_SF_GATE_HOLD, ZG01_PARAM_GATE_HOLD },
+        { ZG01_SF_GATE_DECAY, ZG01_PARAM_GATE_DECAY },
+        { ZG01_SF_COMP_SWITCH, ZG01_PARAM_COMP_ENABLE },
+        { ZG01_SF_COMP_VALUE, ZG01_PARAM_COMP_VALUE },
+        { ZG01_SF_COMP_THRESHOLD, ZG01_PARAM_COMP_THRESHOLD },
+        { ZG01_SF_COMP_RATIO, ZG01_PARAM_COMP_RATIO },
+        { ZG01_SF_COMP_KNEE, ZG01_PARAM_COMP_KNEE },
+        { ZG01_SF_LIM_SWITCH, ZG01_PARAM_LIMITER_ENABLE },
+        { ZG01_SF_LIM_VALUE, ZG01_PARAM_LIMITER_VALUE },
+        { ZG01_SF_LIM_THRESHOLD, ZG01_PARAM_LIMITER_THRESHOLD },
+        { ZG01_SF_LIM_KNEE, ZG01_PARAM_LIMITER_KNEE },
+        { ZG01_SF_EQ_SWITCH, ZG01_PARAM_EQ_ENABLE },
+        { ZG01_SF_EQ_LOW_SHAPE, ZG01_PARAM_LOW_SHAPE },
+        { ZG01_SF_EQ_HIGH_SHAPE, ZG01_PARAM_HIGH_SHAPE },
+        { ZG01_SF_EQ_Q1, ZG01_PARAM_EQ_Q(0) },
+        { ZG01_SF_EQ_Q2, ZG01_PARAM_EQ_Q(1) },
+        { ZG01_SF_EQ_Q3, ZG01_PARAM_EQ_Q(2) },
+        { ZG01_SF_EQ_Q4, ZG01_PARAM_EQ_Q(3) },
+    };
+    unsigned int i;
+
+    if (!dev || !values)
+        return;
+
+    mutex_lock(&dev->param_mutex);
+    for (i = 0; i < ARRAY_SIZE(map); i++) {
+        if (values->known & ZG01_STATE_KNOWN(map[i].field))
+            *zg01_cache(dev, map[i].addr) =
+                values->value[map[i].field];
+    }
+    mutex_unlock(&dev->param_mutex);
+}
+
 static int zg01_ctl_info(struct snd_kcontrol *kcontrol,
                          struct snd_ctl_elem_info *uinfo)
 {
@@ -1144,11 +1196,91 @@ static int zg01_reset_put(struct snd_kcontrol *kcontrol,
                           struct snd_ctl_elem_value *ucontrol)
 {
     struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+    int ret;
 
     if (!ucontrol->value.integer.value[0])
         return 0;
 
-    return zg01_param_reset(dev);
+    ret = zg01_param_reset(dev);
+    if (!ret) {
+        int sret = zg01_state_request(dev);
+
+        if (sret && sret != -EBUSY)
+            dev_dbg(&dev->interface->dev,
+                    "state read after reset failed: %d\n", sret);
+    }
+    return ret;
+}
+
+/* Write-only action: writing 1 re-reads the MIC state from the device. */
+static int zg01_state_read_info(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_info *uinfo)
+{
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    uinfo->count = 1;
+    uinfo->value.integer.min = 0;
+    uinfo->value.integer.max = 1;
+    return 0;
+}
+
+static int zg01_state_read_get(struct snd_kcontrol *kcontrol,
+                               struct snd_ctl_elem_value *ucontrol)
+{
+    ucontrol->value.integer.value[0] = 0;
+    return 0;
+}
+
+static int zg01_state_read_put(struct snd_kcontrol *kcontrol,
+                               struct snd_ctl_elem_value *ucontrol)
+{
+    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+
+    if (!ucontrol->value.integer.value[0])
+        return 0;
+    return zg01_state_request(dev);
+}
+
+/*
+ * Last state read result: 0 pending/never, 1 success, negative errno.
+ * The GUI polls this after writing State Read and after Reset, then reads
+ * State Read Known to distinguish direct fields from transformed ones.
+ */
+static int zg01_state_status_info(struct snd_kcontrol *kcontrol,
+                                  struct snd_ctl_elem_info *uinfo)
+{
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    uinfo->count = 1;
+    uinfo->value.integer.min = -4095;
+    uinfo->value.integer.max = 1;
+    return 0;
+}
+
+static int zg01_state_status_get(struct snd_kcontrol *kcontrol,
+                                 struct snd_ctl_elem_value *ucontrol)
+{
+    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+
+    ucontrol->value.integer.value[0] = READ_ONCE(dev->state_status);
+    return 0;
+}
+
+static int zg01_state_known_info(struct snd_kcontrol *kcontrol,
+                                 struct snd_ctl_elem_info *uinfo)
+{
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    uinfo->count = 1;
+    uinfo->value.integer.min = 0;
+    uinfo->value.integer.max = 0x7fffffff;
+    return 0;
+}
+
+static int zg01_state_known_get(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_value *ucontrol)
+{
+    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+
+    ucontrol->value.integer.value[0] = READ_ONCE(dev->state_known);
+    return 0;
 }
 
 /*
@@ -1286,6 +1418,62 @@ int zg01_create_controls(struct zg01_dev *dev)
             .info = zg01_reset_info,
             .get = zg01_reset_get,
             .put = zg01_reset_put,
+        };
+        struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
+        int ret;
+
+        if (!kctl)
+            return -ENOMEM;
+        ret = snd_ctl_add(dev->card, kctl);
+        if (ret)
+            return ret;
+    }
+
+    {
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = "State Read",
+            .info = zg01_state_read_info,
+            .get = zg01_state_read_get,
+            .put = zg01_state_read_put,
+        };
+        struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
+        int ret;
+
+        if (!kctl)
+            return -ENOMEM;
+        ret = snd_ctl_add(dev->card, kctl);
+        if (ret)
+            return ret;
+    }
+
+    {
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = "State Read Status",
+            .access = SNDRV_CTL_ELEM_ACCESS_READ |
+                      SNDRV_CTL_ELEM_ACCESS_VOLATILE,
+            .info = zg01_state_status_info,
+            .get = zg01_state_status_get,
+        };
+        struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
+        int ret;
+
+        if (!kctl)
+            return -ENOMEM;
+        ret = snd_ctl_add(dev->card, kctl);
+        if (ret)
+            return ret;
+    }
+
+    {
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = "State Read Known",
+            .access = SNDRV_CTL_ELEM_ACCESS_READ |
+                      SNDRV_CTL_ELEM_ACCESS_VOLATILE,
+            .info = zg01_state_known_info,
+            .get = zg01_state_known_get,
         };
         struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
         int ret;

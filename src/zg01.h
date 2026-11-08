@@ -443,6 +443,20 @@ struct zg01_meter_state {
     atomic_t levels[ZG01_METER_COUNT];       /* last valid snapshot, 0..127 */
     atomic_t valid;                          /* a valid frame was seen since start */
     atomic_long_t valid_jiffies;             /* time of the last valid frame */
+
+    /*
+     * MIC state readback.  The type-20 response is eight 512-byte frames
+     * on the same endpoint as the meters.  The URB callback copies them
+     * here; a workqueue parses and updates the control cache in process
+     * context.  state_lock protects the collector fields only.
+     */
+    unsigned char *state_buf;
+    unsigned int state_frames;
+    bool state_armed;
+    bool state_ready;
+    spinlock_t state_lock;
+    struct work_struct state_work;
+    struct delayed_work state_timeout;
 };
 
 struct zg01_dev {
@@ -498,6 +512,15 @@ struct zg01_dev {
     u32 param_cache[ZG01_PARAM_PAGES][ZG01_PARAM_PAGE_SIZE];
 
     /*
+     * Last MIC state read result: 0 pending/never, 1 success, negative
+     * errno.  state_known is the parser field mask of the values that
+     * were applied to param_cache.  Both are read by the State Read
+     * Status/Known controls and written by the state work.
+     */
+    int state_status;
+    u32 state_known;
+
+    /*
      * Interfaces this anchor claimed in addition to interface 1.  They
      * are released when probe unwinds or the anchor disconnects, so a
      * failed probe does not leave interface 3/4 bound to a dead card.
@@ -533,6 +556,8 @@ void zg01_xrun_work_fn(struct work_struct *work);
 void zg01_chain_cleanup_fn(struct work_struct *work);
 void zg01_chain_quiesce_fn(struct work_struct *work);
 
+struct zg01_state_values;
+
 /* zg01_control.c */
 int zg01_init_control(struct zg01_dev *dev);
 int zg01_create_controls(struct zg01_dev *dev);
@@ -543,6 +568,8 @@ int zg01_param_reset(struct zg01_dev *dev);
 int zg01_param_keepalive(struct zg01_dev *dev);
 int zg01_param_meter_init(struct zg01_dev *dev);
 int zg01_status_poll(struct zg01_dev *dev);
+void zg01_control_apply_state(struct zg01_dev *dev,
+                              const struct zg01_state_values *values);
 
 /* zg01_meters.c */
 int zg01_meters_start(struct zg01_dev *dev);
@@ -550,6 +577,7 @@ void zg01_meters_stop(struct zg01_dev *dev);
 void zg01_meters_keepalive_fn(struct work_struct *work);
 void zg01_meters_poll_fn(struct work_struct *work);
 int zg01_meters_value(struct zg01_dev *dev, unsigned int index);
+int zg01_state_request(struct zg01_dev *dev);
 
 /* zg01_usb_discovery.c (best-effort, debug only) */
 int zg01_discover_usb_config(struct zg01_dev *dev);
