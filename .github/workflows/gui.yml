@@ -18,6 +18,9 @@ on:
       - '.github/workflows/gui.yml'
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     name: GUI build and tests
