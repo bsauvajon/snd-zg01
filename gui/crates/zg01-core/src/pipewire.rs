@@ -377,8 +377,8 @@ fn recorder_loop(
                         first = 1;
                     }
                     let end = first + (len - first) / 2 * 2;
-                    for sample in buffer[first..end].chunks_exact(2) {
-                        let value = i16::from_ne_bytes([sample[0], sample[1]]);
+                    for sample in buffer[first..end].as_chunks::<2>().0 {
+                        let value = i16::from_ne_bytes(*sample);
                         peak = peak.max(value.unsigned_abs() as u32);
                     }
                     if end < len {
