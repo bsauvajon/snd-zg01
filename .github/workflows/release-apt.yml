@@ -20,10 +20,14 @@ jobs:
 
       - name: Create draft release
         run: |
-          gh release create ${GITHUB_REF_NAME} \
-            --draft \
-            --title ${GITHUB_REF_NAME} \
-            --generate-notes
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; keeping it."
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
