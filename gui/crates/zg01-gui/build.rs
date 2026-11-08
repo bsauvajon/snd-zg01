@@ -9,7 +9,11 @@
 fn main() {
     let libdir = std::env::var("DEP_ZGPRESET_LIBDIR")
         .expect("zg01-core must export the zgpreset library directory");
-    println!("cargo:rustc-link-search=native={libdir}");
-    println!("cargo:rustc-link-lib=static=zgpreset");
+    // Raw link arguments are appended after the Rust rlibs, in this order.
+    // `cargo:rustc-link-lib` before `cargo:rustc-link-search` makes lld
+    // process `-lzgpreset` before it knows the search path, which leaves
+    // the symbols undefined under `makepkg`.
+    println!("cargo:rustc-link-arg=-L{libdir}");
+    println!("cargo:rustc-link-arg=-lzgpreset");
     println!("cargo:rerun-if-changed=build.rs");
 }
