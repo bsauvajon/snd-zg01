@@ -718,7 +718,7 @@ mod tests {
         let slot = Arc::new(Mutex::new(Some(
             Command::new("sh")
                 .arg("-c")
-                .arg("sleep 30")
+                .arg("exec sleep 30")
                 .spawn()
                 .expect("a child"),
         )));
