@@ -22,7 +22,7 @@ use std::rc::Rc;
 use gtk4::glib::Propagation;
 use gtk4::prelude::*;
 use gtk4::{self as gtk, Orientation};
-use zg01_core::mixage::MeterId;
+use zg01_core::mixage::{LinuxMeterId, MeterId};
 use zg01_core::model::{format_value, AppState, ControlValue, Unit};
 
 use super::mic_model::{BlockModel, EqModel, MicModel};
@@ -49,9 +49,10 @@ pub(crate) enum MicEvent {
     ReadState,
 }
 
-/// One card meter and the reading slot it uses.
+/// One card meter, its optional Linux source and the reading slots it uses.
 struct Metered {
     id: MeterId,
+    linux: Option<LinuxMeterId>,
     meter: Meter,
 }
 
@@ -320,7 +321,25 @@ impl MicScreen {
         let level = level_from_steps(steps);
         for metered in &self.meters {
             if metered.id == id {
-                metered.meter.set_levels(level, None, 0.0);
+                metered.meter.set_card(level);
+            }
+        }
+    }
+
+    /// Installs the `MIC IN` Linux reading; `MIC OUT` has no Linux source.
+    pub(crate) fn set_linux_meter(&self, id: LinuxMeterId, available: bool, level: Option<f64>) {
+        for metered in &self.meters {
+            if metered.linux == Some(id) {
+                metered.meter.set_linux_source(available, level);
+            }
+        }
+    }
+
+    /// Hides the Linux bars when the card leaves.
+    pub(crate) fn clear_linux_meters(&self) {
+        for metered in &self.meters {
+            if metered.linux.is_some() {
+                metered.meter.set_linux_source(false, None);
             }
         }
     }
@@ -587,7 +606,6 @@ fn build_meter(state: &AppState, id: MeterId, label: &str) -> Metered {
         label: label.to_string(),
         card: meter_level(state, id),
         card_present: true,
-        // v1 has no PipeWire source: the Linux bar is absent, not unknown.
         linux: None,
         peak: 0.0,
         linux_present: false,
@@ -598,7 +616,11 @@ fn build_meter(state: &AppState, id: MeterId, label: &str) -> Metered {
     let widget = meter.widget();
     widget.set_valign(gtk::Align::Start);
     widget.set_width_request(64);
-    Metered { id, meter }
+    Metered {
+        id,
+        linux: (id == MeterId::MicIn).then_some(LinuxMeterId::MicIn),
+        meter,
+    }
 }
 
 /// A muted fallback for a block with no usable control.

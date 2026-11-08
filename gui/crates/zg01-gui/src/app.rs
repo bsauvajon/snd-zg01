@@ -22,11 +22,12 @@ use zg01_core::device::{spawn_watcher, DeviceEvent};
 use zg01_core::layout::{load_layout_str, Layout, LAYOUT_TOML};
 use zg01_core::meters::{spawn_poller_with_generation, MeterSnapshot, METER_INTERVAL};
 use zg01_core::mic::MicModel;
-use zg01_core::mixage::{MeterId, MixageModel};
+use zg01_core::mixage::{LinuxMeterId, MeterId, MixageModel};
 use zg01_core::model::{
     spawn_reset, AppState, Control, ControlValue, DeviceState, StateRead, Unit, RESET_ACTION,
     SAVE_ACTION, STATE_READ_ACTION, STATE_READ_STATUS,
 };
+use zg01_core::pipewire::{spawn_linux_meters, LinuxMetersSnapshot, LINUX_METER_INTERVAL};
 use zg01_core::preset::{apply_plan_cancellable, ApplyCancellation, ApplyReport};
 use zg01_core::state_read::{spawn_state_read, StateReadOutcome};
 use zg01_core::units::Conv;
@@ -151,6 +152,8 @@ pub(crate) struct App {
     writer_stop: Option<Arc<AtomicBool>>,
     /// The stop flag of the meter pump, when it runs.
     meters_stop: Option<Arc<AtomicBool>>,
+    /// The stop flag of the Linux meter pump, when it runs.
+    linux_meters_stop: Option<Arc<AtomicBool>>,
     /// The epoch of the control writes, used to ignore outcomes that
     /// predate a reset.
     writes: WriteEpoch,
@@ -263,6 +266,8 @@ pub(crate) enum Msg {
     WriteOutcome(WriteOutcome),
     /// The meter pump read the four meters.
     Meters(MeterSnapshot),
+    /// The PipeWire pump read the three Linux sources.
+    LinuxMeters(LinuxMetersSnapshot),
     /// The preset preview handed a plan to apply.
     PresetChosen(PresetChoice),
     /// Applying a preset finished.
@@ -482,6 +487,7 @@ impl SimpleComponent for App {
             writer: None,
             writer_stop: None,
             meters_stop: None,
+            linux_meters_stop: None,
             writes: WriteEpoch::default(),
             shell,
             root: root.clone(),
@@ -527,7 +533,11 @@ impl SimpleComponent for App {
                     self.apply_preset(choice, sender);
                 }
             }
-            Msg::Quit => relm4::main_application().quit(),
+            Msg::Quit => {
+                self.stop_meters();
+                self.stop_writer();
+                relm4::main_application().quit();
+            }
             Msg::SaveFinished { id, result } => self.save_finished(id, result),
             Msg::ResetFinished { id, result } => self.reset_finished(id, result, sender),
             Msg::StateReadFinished { id, outcome } => self.state_read_finished(id, outcome, sender),
@@ -554,6 +564,7 @@ impl SimpleComponent for App {
             Msg::Advanced(AdvancedEvent::Write { name, value }) => self.write_control(&name, value),
             Msg::WriteOutcome(outcome) => self.write_outcome(outcome, sender),
             Msg::Meters(snapshot) => self.update_meters(snapshot, sender),
+            Msg::LinuxMeters(snapshot) => self.update_linux_meters(snapshot),
             Msg::PresetChosen(choice) => self.apply_preset(choice, sender),
             Msg::PresetApplied { id, label, report } => {
                 self.preset_applied(id, &label, &report, sender);
@@ -934,13 +945,13 @@ impl App {
         let stop = Arc::new(AtomicBool::new(false));
         self.meters_stop = Some(stop.clone());
         let events = spawn_poller_with_generation(backend, METER_INTERVAL, self.device_generation);
-        let sender = sender.clone();
+        let pump_sender = sender.clone();
         let spawned = std::thread::Builder::new()
             .name("zg01-meter-events".to_string())
             .spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     match events.recv_timeout(PUMP_TICK) {
-                        Ok(snapshot) => sender.input(Msg::Meters(snapshot)),
+                        Ok(snapshot) => pump_sender.input(Msg::Meters(snapshot)),
                         Err(RecvTimeoutError::Timeout) => {}
                         Err(RecvTimeoutError::Disconnected) => break,
                     }
@@ -949,12 +960,45 @@ impl App {
         if let Err(err) = spawned {
             tracing::warn!("could not start the meter event thread: {err}");
         }
+        self.start_linux_meters(sender);
     }
 
     /// Asks the meter pump to stop; the poller stops when its receiver is
     /// dropped.
     fn stop_meters(&mut self) {
         if let Some(stop) = self.meters_stop.take() {
+            stop.store(true, Ordering::Relaxed);
+        }
+        self.stop_linux_meters();
+    }
+
+    /// Starts the PipeWire source poller and its forwarding pump.
+    fn start_linux_meters(&mut self, sender: &ComponentSender<Self>) {
+        self.stop_linux_meters();
+        let stop = Arc::new(AtomicBool::new(false));
+        self.linux_meters_stop = Some(stop.clone());
+        let events = spawn_linux_meters(self.device_generation, LINUX_METER_INTERVAL, stop.clone());
+        let sender = sender.clone();
+        let spawned = std::thread::Builder::new()
+            .name("zg01-linux-meter-events".to_string())
+            .spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    match events.recv_timeout(PUMP_TICK) {
+                        Ok(snapshot) => sender.input(Msg::LinuxMeters(snapshot)),
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            });
+        if let Err(err) = spawned {
+            tracing::warn!("could not start the Linux meter event thread: {err}");
+        }
+    }
+
+    /// Asks the PipeWire pump to stop; the worker reaps its recorders when
+    /// the stop flag is set or its receiver is dropped.
+    fn stop_linux_meters(&mut self) {
+        if let Some(stop) = self.linux_meters_stop.take() {
             stop.store(true, Ordering::Relaxed);
         }
     }
@@ -1309,6 +1353,41 @@ impl App {
         }
     }
 
+    /// Installs the Linux readings on the screens.
+    fn update_linux_meters(&mut self, snapshot: LinuxMetersSnapshot) {
+        if !self.state.device.is_connected() {
+            return;
+        }
+        if !snapshot.belongs_to(self.device_generation) {
+            tracing::debug!(
+                "ignoring a Linux meter snapshot from generation {} (current is {})",
+                snapshot.generation,
+                self.device_generation
+            );
+            return;
+        }
+        for id in LinuxMeterId::ALL {
+            let available = snapshot.is_available(id);
+            let level = snapshot.level(id);
+            if let Some(screen) = &self.mixage {
+                screen.set_linux_meter(id, available, level);
+            }
+            if let Some(screen) = &self.mic {
+                screen.set_linux_meter(id, available, level);
+            }
+        }
+    }
+
+    /// Hides the Linux bars without touching the card meters.
+    fn clear_linux_meters(&mut self) {
+        if let Some(screen) = &self.mixage {
+            screen.clear_linux_meters();
+        }
+        if let Some(screen) = &self.mic {
+            screen.clear_linux_meters();
+        }
+    }
+
     /// Keeps the last values, disables the inputs and shows the reconnect
     /// banner when the card goes away.
     ///
@@ -1329,6 +1408,7 @@ impl App {
         self.writes.reset();
         self.stop_writer();
         self.stop_meters();
+        self.clear_linux_meters();
         // The values stay visible, but nothing can be changed until the
         // card is back and its controls have been read again. Unlike a
         // running preset, there is no Cancel action to keep usable.

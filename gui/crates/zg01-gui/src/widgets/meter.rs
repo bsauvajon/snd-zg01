@@ -193,12 +193,6 @@ impl Meter {
         self.update(|spec| apply_linux(spec, present, level));
     }
 
-    /// Installs both sides, for callers not yet migrated to the split methods.
-    pub(crate) fn set_levels(&self, card: Option<f64>, linux: Option<f64>, _peak: f64) {
-        self.set_card(card);
-        self.set_linux_source(linux.is_some(), linux);
-    }
-
     /// Applies one side of the meter, then repaints and updates the peak.
     fn update(&self, apply: impl FnOnce(&mut MeterSpec)) {
         let had_linux = self.inner.spec.borrow().linux_present;
@@ -209,7 +203,8 @@ impl Meter {
         }
         let has_linux = self.inner.spec.borrow().linux_present;
         if had_linux != has_linux {
-            self.area.set_content_width(meter_width(card_present, has_linux));
+            self.area
+                .set_content_width(meter_width(card_present, has_linux));
         }
         refresh_accessible(&self.area, &self.inner.spec.borrow());
         self.area.queue_draw();
@@ -365,7 +360,11 @@ fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
 
     let has_card = spec.card_present;
     let card_width = if has_card { CARD_WIDTH } else { 0.0 };
-    let gap = if has_card && has_linux { METER_GAP } else { 0.0 };
+    let gap = if has_card && has_linux {
+        METER_GAP
+    } else {
+        0.0
+    };
     let bars = card_width + gap + if has_linux { LINUX_WIDTH } else { 0.0 };
     let start = (f64::from(width) - bars) / 2.0;
     let card_x = start;

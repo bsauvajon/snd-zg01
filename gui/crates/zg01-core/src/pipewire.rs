@@ -160,10 +160,12 @@ pub fn parse_pw_dump(json: &str) -> Result<Nodes, PipewireError> {
 
 /// Runs `pw-dump` and parses the ZG01 nodes.
 pub fn discover_nodes() -> Result<Nodes, PipewireError> {
-    let output = Command::new("pw-dump").output().map_err(|source| PipewireError::Run {
-        tool: "pw-dump",
-        source,
-    })?;
+    let output = Command::new("pw-dump")
+        .output()
+        .map_err(|source| PipewireError::Run {
+            tool: "pw-dump",
+            source,
+        })?;
     if !output.status.success() {
         return Err(PipewireError::Status {
             tool: "pw-dump",
@@ -180,9 +182,9 @@ use std::process::{Child, Stdio};
 use std::sync::atomic::AtomicBool;
 #[cfg(feature = "pipewire")]
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::{self, Receiver};
 #[cfg(feature = "pipewire")]
 use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 #[cfg(feature = "pipewire")]
 use std::sync::Mutex;

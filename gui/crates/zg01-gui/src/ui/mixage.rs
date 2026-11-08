@@ -20,6 +20,7 @@ use std::rc::Rc;
 use gtk4::glib::Propagation;
 use gtk4::prelude::*;
 use gtk4::{self as gtk, Orientation};
+use zg01_core::mixage::LinuxMeterId;
 use zg01_core::model::{AppState, ControlValue, Unit};
 
 use super::mixage_model::{MeterId, MixageModel, StreamOutputModel, StripId, StripModel};
@@ -47,9 +48,10 @@ pub(crate) enum MixageEvent {
     CancelPreset,
 }
 
-/// One card meter and the reading slot it uses.
+/// One card meter and the reading slots it uses.
 struct Metered {
-    id: MeterId,
+    card: Option<MeterId>,
+    linux: Option<LinuxMeterId>,
     meter: Meter,
 }
 
@@ -253,16 +255,37 @@ impl MixageScreen {
     /// state, not a zero.
     pub(crate) fn set_meter(&self, id: MeterId, steps: Option<i64>) {
         let level = level_from_steps(steps);
-        for strip in &self.strips {
-            if let Some(metered) = &strip.meter {
-                if metered.id == id {
-                    metered.meter.set_levels(level, None, 0.0);
-                }
+        for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {
+            if metered.card == Some(id) {
+                metered.meter.set_card(level);
             }
         }
         if let Some(metered) = &self.output.meter {
-            if metered.id == id {
-                metered.meter.set_levels(level, None, 0.0);
+            if metered.card == Some(id) {
+                metered.meter.set_card(level);
+            }
+        }
+    }
+
+    /// Installs one Linux reading.
+    pub(crate) fn set_linux_meter(&self, id: LinuxMeterId, available: bool, level: Option<f64>) {
+        for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {
+            if metered.linux == Some(id) {
+                metered.meter.set_linux_source(available, level);
+            }
+        }
+    }
+
+    /// Hides every Linux bar and drops its last reading.
+    pub(crate) fn clear_linux_meters(&self) {
+        for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {
+            if metered.linux.is_some() {
+                metered.meter.set_linux_source(false, None);
+            }
+        }
+        if let Some(metered) = &self.output.meter {
+            if metered.linux.is_some() {
+                metered.meter.set_linux_source(false, None);
             }
         }
     }
@@ -308,19 +331,21 @@ fn build_strip(
     body.set_valign(gtk::Align::Center);
     body.set_vexpand(true);
 
-    let meter = strip.meter.map(|id| {
+    let meter = (strip.meter.is_some() || strip.linux_meter.is_some()).then(|| {
         let meter = Meter::new(MeterSpec {
-            label: "CARD".to_string(),
-            card: meter_level(state, id),
-            card_present: true,
-            // v1 has no PipeWire source: the Linux bar is absent, not
-            // unknown, so `linux_present` stays false.
+            label: if strip.meter.is_some() { "CARD" } else { "PW" }.to_string(),
+            card: strip.meter.and_then(|id| meter_level(state, id)),
+            card_present: strip.meter.is_some(),
             linux: None,
             peak: 0.0,
             linux_present: false,
         });
         body.append(meter.widget());
-        Metered { id, meter }
+        Metered {
+            card: strip.meter,
+            linux: strip.linux_meter,
+            meter,
+        }
     });
 
     let level = strip.level.as_ref().map(|name| {
@@ -437,17 +462,21 @@ fn build_output(
     body.set_valign(gtk::Align::Center);
     body.set_vexpand(true);
 
-    let meter = output.meter.map(|id| {
+    let meter = (output.meter.is_some() || output.linux_meter.is_some()).then(|| {
         let meter = Meter::new(MeterSpec {
-            label: "CARD".to_string(),
-            card: meter_level(state, id),
-            card_present: true,
+            label: if output.meter.is_some() { "CARD" } else { "PW" }.to_string(),
+            card: output.meter.and_then(|id| meter_level(state, id)),
+            card_present: output.meter.is_some(),
             linux: None,
             peak: 0.0,
             linux_present: false,
         });
         body.append(meter.widget());
-        Metered { id, meter }
+        Metered {
+            card: output.meter,
+            linux: output.linux_meter,
+            meter,
+        }
     });
 
     let switches = gtk::Box::new(Orientation::Vertical, 8);
