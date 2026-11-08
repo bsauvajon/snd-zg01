@@ -64,8 +64,10 @@ DoD met on hardware.
 - [x] Desktop/AppStream copy: MIC readback, Mixage cached, live meters
       blocked.
 - [x] README status and release note limits.
-- [ ] Validators (network URL warnings remain) and final whole-branch
-      review.
+- [x] Validators: `appstreamcli validate --no-net`, desktop file, install
+      staging, Arch packaging contract, parser, `W=1`, `make -C gui test`.
+      Network URL warnings remain external.
+- [ ] Final whole-branch review and merge decision.
 
 ## Unaddressed / deferred
 

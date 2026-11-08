@@ -26,14 +26,19 @@
       que tous les autres contrôles ALSA dans une table avancée.
     </p>
     <p>
-      The application reads the driver cache. Values shown are not
-      re-read from the device on every display; use the Save action to
-      persist the current settings on the ZG01.
+      At startup and on “Read from ZG01”, the application requests the MIC
+      state dump and shows the device's persisted gate, compressor, limiter
+      and EQ values. The Mixage section and the DSP-transformed MIC fields
+      still come from the driver cache and are labelled as such. Save
+      persists the current device settings on the ZG01.
     </p>
     <p xml:lang="fr">
-      L'application lit le cache du pilote. Les valeurs affichées ne sont
-      pas relues depuis l'appareil à chaque affichage ; utilisez l'action
-      Sauvegarder pour conserver les réglages courants sur le ZG01.
+      Au démarrage et via « Lire depuis le ZG01 », l'application demande le
+      dump d'état MIC et affiche les valeurs persistées de la porte, du
+      compresseur, du limiteur et de l'égaliseur. La section Mixage et les
+      champs MIC transformés viennent encore du cache du pilote et sont
+      signalés comme tels. Sauvegarder conserve les réglages courants de
+      l'appareil.
     </p>
   </description>
 
@@ -65,6 +70,7 @@
     <release version="0.1.0" date="2026-11-02">
       <description>
         <p>First release of the standalone ZG01 Control GUI.</p>
+        <p>MIC state readback: gate, compressor, limiter and direct EQ fields come from the device; the Mixage section and the transformed MIC fields remain cached. Live meters remain blocked on the test unit.</p>
       </description>
     </release>
   </releases>
