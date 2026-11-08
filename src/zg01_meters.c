@@ -310,23 +310,32 @@ void zg01_meters_poll_fn(struct work_struct *work)
 
 int zg01_meters_start(struct zg01_dev *dev)
 {
-    struct zg01_meter_state *m = &dev->meters;
+    struct zg01_meter_state *m;
     int err;
 
-    if (!dev || !dev->param_available)
-        return 0;
+    if (!dev)
+        return -EINVAL;
 
-    if (READ_ONCE(m->running))
-        return 0;
+    m = &dev->meters;
 
     /*
-     * Initialize the state collector before the stop below: the stop
-     * cancels these works, and a restart must cancel the previous read.
+     * Initialize the state collector before the availability check: the
+     * interface-4-less (PCM-only) path returns early, but disconnect,
+     * suspend and probe failure still call zg01_meters_stop(), which
+     * cancels these works and takes state_lock.  The same initialization
+     * must also precede the stop below, because a restart cancels the
+     * previous read.
      */
     spin_lock_init(&m->state_lock);
     mutex_init(&m->state_mutex);
     INIT_WORK(&m->state_work, zg01_state_work_fn);
     INIT_DELAYED_WORK(&m->state_timeout, zg01_state_timeout_fn);
+
+    if (!dev->param_available)
+        return 0;
+
+    if (READ_ONCE(m->running))
+        return 0;
 
     /* Release a URB left by an error stop before allocating another. */
     zg01_meters_stop(dev);
