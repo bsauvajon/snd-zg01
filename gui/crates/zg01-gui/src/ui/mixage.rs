@@ -312,6 +312,7 @@ fn build_strip(
         let meter = Meter::new(MeterSpec {
             label: "CARD".to_string(),
             card: meter_level(state, id),
+            card_present: true,
             // v1 has no PipeWire source: the Linux bar is absent, not
             // unknown, so `linux_present` stays false.
             linux: None,
@@ -440,6 +441,7 @@ fn build_output(
         let meter = Meter::new(MeterSpec {
             label: "CARD".to_string(),
             card: meter_level(state, id),
+            card_present: true,
             linux: None,
             peak: 0.0,
             linux_present: false,

@@ -586,6 +586,7 @@ fn build_meter(state: &AppState, id: MeterId, label: &str) -> Metered {
     let meter = Meter::new(MeterSpec {
         label: label.to_string(),
         card: meter_level(state, id),
+        card_present: true,
         // v1 has no PipeWire source: the Linux bar is absent, not unknown.
         linux: None,
         peak: 0.0,
