@@ -118,10 +118,13 @@ compressor/limiter attack/release/out gain, EQ gain/frequency) are shown
 unknown. See `../docs/STATE_DUMP_PROTOCOL.md` and
 `../docs/superpowers/specs/2026-11-08-zg01-mic-readback.md`.
 
-**Live-meter acceptance is blocked.** The decode and the meter controls
-are implemented, and earlier captures showed live values, but the latest
-hardware session returns only zero-length meter frames and `-ENODATA`
-after a suspend, even after a power cycle. On that device the GUI draws
-the four card meters dashed/unknown instead of a fake zero; this is the
-documented state, not a pass of the live-meter acceptance. See
-`../docs/METER_TEST.md` and `../docs/METER_PROTOCOL.md`.
+**Live-meter acceptance is blocked for the card meters.** The decode and
+the meter controls are implemented, and earlier captures showed live
+values, but the latest hardware session returns only zero-length meter
+frames and `-ENODATA` after a suspend, even after a power cycle. On that
+device the GUI draws the four card meters dashed/unknown instead of a fake
+zero. To keep the interface usable, the GUI also shows thin `PW` bars from
+PipeWire: `Voice In` for MIC, `Voice Out` for VOICE and `Game Out` for
+GAME; STREAM OUT has no Linux source. The card bars stay dashed until EP
+`0x83` returns. See `../docs/METER_TEST.md` and
+`../docs/METER_PROTOCOL.md`.

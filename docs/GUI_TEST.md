@@ -39,28 +39,35 @@ Expected:
 ## 2. Live meters
 
 1. Play audio to the ZG01 and speak into the microphone.
-2. Watch MIC IN, MIC OUT and the stream meter.
+2. Watch MIC IN, MIC OUT, VOICE, GAME and the stream meter.
 
 Expected:
 
 - The card meters move at about 20 Hz while audio flows.
+- The thin `PW` bars move at the same rate: MIC from `Voice In`, VOICE from
+  `Voice Out`, GAME from `Game Out`.
 - A silent input falls back to the bottom; it does not stay frozen.
 - A meter whose control is missing or unreadable is drawn dashed, never as a
   solid zero.
 - A control that reads `-ENODATA` (the driver has no valid frame) is also
   dashed/unknown, and the value label shows `—`; it is never shown as zero.
-- `GAME` has no card meter in v1. Do not report this as a failure; it is the
-  documented v1.1 item.
+- STREAM OUT has no Linux source: it stays card-only.
+- `GAME` has no card meter in v1, so its strip shows only the `PW` bar. Do
+  not report the missing card bar as a failure.
+- A `PW` source that exists but has no frames is dashed; a source that
+  PipeWire does not expose has no bar at all.
+- Closing the window leaves no `pw-record` process behind
+  (`pgrep -af pw-record` is empty).
 
 > **Current hardware note (2026-11-01).** The meter protocol decode passes
 > on the earlier captures, but the current test unit stops streaming after
 > a suspend: EP `0x83` returns zero-length packets and the four meter
 > controls read `-ENODATA`. The expected GUI presentation is therefore
-> four dashed/unknown card meters, not moving bars. Record that as the
-> observed state; live-meter acceptance stays **blocked** until a session
-> brings the 192-byte frames back (see `docs/METER_TEST.md`). A moving bar
-> cannot be required from this unit, and a dashed bar is not a code
-> failure.
+> four dashed/unknown card meters; the `PW` bars are the live levels on
+> this unit. Record that as the observed state; card-meter acceptance stays
+> **blocked** until a session brings the 192-byte frames back (see
+> `docs/METER_TEST.md`). A moving card bar cannot be required from this
+> unit, and a dashed card bar is not a code failure.
 
 ## 3. Fader writes
 

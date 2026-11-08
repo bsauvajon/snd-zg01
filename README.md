@@ -195,10 +195,15 @@ amixer -c zg01 cget 'name=Meter Stream Mix'
 ```
 
 The GUI polls these four controls at 20 Hz on a worker thread and draws
-the card meters. The Linux-side PipeWire bars are a v1.1 item and are not
-shown in v1. GAME has no card meter in v1 either: its strip uses PipeWire
-`Game Out` in v1.1. HDMI is not registered until its field is decoded. See
-`docs/METER_PROTOCOL.md` and the acceptance record in `docs/METER_TEST.md`.
+the card meters. It also draws a thin `PW` bar beside the card bar from
+the Linux PipeWire graph: `Voice In` for MIC, `Voice Out` for VOICE and
+`Game Out` for GAME. The two bars share the card dB scale, so a given
+height means the same level. STREAM OUT has no Linux source and stays
+card-only. When PipeWire or a node is unavailable, the `PW` bar is hidden;
+a source with no frames is drawn dashed, never as zero. GAME has no card
+meter in v1, so its strip shows only the `PW` bar. HDMI is not registered
+until its field is decoded. See `docs/METER_PROTOCOL.md` and the
+acceptance record in `docs/METER_TEST.md`.
 
 ## GUI (ZG01 Control)
 
@@ -275,10 +280,11 @@ the only action that persists the current values on the ZG01.
 
 The card meters (MIC IN, MIC OUT, PC IN, STREAM) are read-only volatile
 controls. If the driver does not publish one, or a read fails, the bar is
-drawn dashed and the accessible value is "unknown" — never a fake zero. GAME
-has no card meter in v1: its strip uses the PipeWire `Game Out` level in
-v1.1. HDMI is deferred until its field is decoded. The Linux-side PipeWire
-bars are not part of v1.
+drawn dashed and the accessible value is "unknown" — never a fake zero.
+Beside each card bar, a thin `PW` bar shows the Linux PipeWire level:
+`Voice In` for MIC, `Voice Out` for VOICE and `Game Out` for GAME. STREAM
+OUT has no Linux source. GAME has no card meter, so it shows only its `PW`
+bar. HDMI is deferred until its field is decoded.
 
 ### Translations
 
