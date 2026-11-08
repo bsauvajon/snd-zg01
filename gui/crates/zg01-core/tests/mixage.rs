@@ -3,7 +3,7 @@
 mod common;
 
 use common::{controls, controls_with_mixage};
-use zg01_core::mixage::{MeterId, MixageModel};
+use zg01_core::mixage::{LinuxMeterId, MeterId, MixageModel};
 
 #[test]
 fn builds_three_stream_strips() {
@@ -48,6 +48,23 @@ fn game_strip_has_no_card_meter_in_v1() {
     let model = MixageModel::from_controls(&controls_with_mixage());
     assert_eq!(model.strips[2].meter, None);
     assert_eq!(model.output.meter, Some(MeterId::StreamMix));
+}
+
+#[test]
+fn strips_map_to_their_linux_meters() {
+    let model = MixageModel::from_controls(&controls_with_mixage());
+    assert_eq!(model.strips[0].linux_meter, Some(LinuxMeterId::MicIn));
+    assert_eq!(model.strips[1].linux_meter, Some(LinuxMeterId::VoiceOut));
+    assert_eq!(model.strips[2].linux_meter, Some(LinuxMeterId::GameOut));
+    assert_eq!(model.output.linux_meter, None);
+}
+
+#[test]
+fn linux_meter_ids_have_stable_slots() {
+    assert_eq!(LinuxMeterId::MicIn.index(), 0);
+    assert_eq!(LinuxMeterId::VoiceOut.index(), 1);
+    assert_eq!(LinuxMeterId::GameOut.index(), 2);
+    assert_eq!(LinuxMeterId::ALL.len(), 3);
 }
 
 #[test]

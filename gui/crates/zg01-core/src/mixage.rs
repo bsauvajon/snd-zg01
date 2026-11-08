@@ -57,6 +57,39 @@ pub enum StripId {
     Game,
 }
 
+/// One of the three Linux-side sources the GUI can meter.
+///
+/// The variants are the PipeWire sources documented in
+/// `docs/superpowers/specs/2026-11-08-zg01-pipewire-meters-design.md`;
+/// `index` is the slot of the readings in a `LinuxMetersSnapshot`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LinuxMeterId {
+    /// The `Voice In` source.
+    MicIn,
+    /// The `Voice Out` sink monitor.
+    VoiceOut,
+    /// The `Game Out` sink monitor.
+    GameOut,
+}
+
+impl LinuxMeterId {
+    /// Every Linux meter, in snapshot-slot order.
+    pub const ALL: [LinuxMeterId; 3] = [
+        LinuxMeterId::MicIn,
+        LinuxMeterId::VoiceOut,
+        LinuxMeterId::GameOut,
+    ];
+
+    /// The slot of this source in a `LinuxMetersSnapshot`.
+    pub const fn index(self) -> usize {
+        match self {
+            LinuxMeterId::MicIn => 0,
+            LinuxMeterId::VoiceOut => 1,
+            LinuxMeterId::GameOut => 2,
+        }
+    }
+}
+
 /// One stream send strip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StripModel {
@@ -75,6 +108,8 @@ pub struct StripModel {
     /// `None` for GAME: the decoded frame has no separable game-only tap
     /// in v1, so the strip is shown without a card meter.
     pub meter: Option<MeterId>,
+    /// The Linux-side source of the strip, when it has one.
+    pub linux_meter: Option<LinuxMeterId>,
 }
 
 /// The stream output block: no fader, two output switches, the monitor
@@ -89,6 +124,8 @@ pub struct StreamOutputModel {
     pub monitor: Option<String>,
     /// The card meter of the stream mix.
     pub meter: Option<MeterId>,
+    /// The Linux-side source of the output, when it has one.
+    pub linux_meter: Option<LinuxMeterId>,
 }
 
 /// The whole Mixage screen.
@@ -115,6 +152,7 @@ impl MixageModel {
                     mute: find(controls, &["Streaming Mic Mute Steps"]),
                     fx: find(controls, &["Streaming Mic FX Steps"]),
                     meter: Some(MeterId::MicIn),
+                    linux_meter: Some(LinuxMeterId::MicIn),
                 },
                 StripModel {
                     id: StripId::Voice,
@@ -123,6 +161,7 @@ impl MixageModel {
                     mute: find(controls, &["Streaming Voice Mute Steps"]),
                     fx: find(controls, &["Streaming Voice FX Steps"]),
                     meter: Some(MeterId::PcIn),
+                    linux_meter: Some(LinuxMeterId::VoiceOut),
                 },
                 StripModel {
                     id: StripId::Game,
@@ -131,6 +170,7 @@ impl MixageModel {
                     mute: find(controls, &["Streaming Game Mute Steps"]),
                     fx: find(controls, &["Streaming Game FX Steps"]),
                     meter: None,
+                    linux_meter: Some(LinuxMeterId::GameOut),
                 },
             ],
             output: StreamOutputModel {
@@ -141,6 +181,7 @@ impl MixageModel {
                 ),
                 monitor: find(controls, &["Streaming Monitor Steps"]),
                 meter: Some(MeterId::StreamMix),
+                linux_meter: None,
             },
         }
     }
