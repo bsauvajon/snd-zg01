@@ -105,6 +105,11 @@ impl Shell {
 
         window.set_content(Some(&toast_overlay));
         install_shortcuts(window, &sender);
+        let close_sender = sender.clone();
+        window.connect_close_request(move |_| {
+            close_sender.input(Msg::Quit);
+            gtk4::glib::Propagation::Stop
+        });
 
         Shell {
             toast_overlay,

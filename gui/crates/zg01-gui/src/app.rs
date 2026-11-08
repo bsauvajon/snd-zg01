@@ -27,7 +27,9 @@ use zg01_core::model::{
     spawn_reset, AppState, Control, ControlValue, DeviceState, StateRead, Unit, RESET_ACTION,
     SAVE_ACTION, STATE_READ_ACTION, STATE_READ_STATUS,
 };
-use zg01_core::pipewire::{spawn_linux_meters, LinuxMetersSnapshot, LINUX_METER_INTERVAL};
+use zg01_core::pipewire::{
+    spawn_linux_meters, LinuxMetersHandle, LinuxMetersSnapshot, LINUX_METER_INTERVAL,
+};
 use zg01_core::preset::{apply_plan_cancellable, ApplyCancellation, ApplyReport};
 use zg01_core::state_read::{spawn_state_read, StateReadOutcome};
 use zg01_core::units::Conv;
@@ -152,8 +154,8 @@ pub(crate) struct App {
     writer_stop: Option<Arc<AtomicBool>>,
     /// The stop flag of the meter pump, when it runs.
     meters_stop: Option<Arc<AtomicBool>>,
-    /// The stop flag of the Linux meter pump, when it runs.
-    linux_meters_stop: Option<Arc<AtomicBool>>,
+    /// The PipeWire poller and its reaping handle, when it runs.
+    linux_meters: Option<LinuxMetersHandle>,
     /// The epoch of the control writes, used to ignore outcomes that
     /// predate a reset.
     writes: WriteEpoch,
@@ -487,7 +489,7 @@ impl SimpleComponent for App {
             writer: None,
             writer_stop: None,
             meters_stop: None,
-            linux_meters_stop: None,
+            linux_meters: None,
             writes: WriteEpoch::default(),
             shell,
             root: root.clone(),
@@ -976,15 +978,16 @@ impl App {
     fn start_linux_meters(&mut self, sender: &ComponentSender<Self>) {
         self.stop_linux_meters();
         let stop = Arc::new(AtomicBool::new(false));
-        self.linux_meters_stop = Some(stop.clone());
-        let events = spawn_linux_meters(self.device_generation, LINUX_METER_INTERVAL, stop.clone());
-        let sender = sender.clone();
+        let (events, handle) =
+            spawn_linux_meters(self.device_generation, LINUX_METER_INTERVAL, stop.clone());
+        self.linux_meters = Some(handle);
+        let pump_sender = sender.clone();
         let spawned = std::thread::Builder::new()
             .name("zg01-linux-meter-events".to_string())
             .spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     match events.recv_timeout(PUMP_TICK) {
-                        Ok(snapshot) => sender.input(Msg::LinuxMeters(snapshot)),
+                        Ok(snapshot) => pump_sender.input(Msg::LinuxMeters(snapshot)),
                         Err(RecvTimeoutError::Timeout) => {}
                         Err(RecvTimeoutError::Disconnected) => break,
                     }
@@ -995,11 +998,10 @@ impl App {
         }
     }
 
-    /// Asks the PipeWire pump to stop; the worker reaps its recorders when
-    /// the stop flag is set or its receiver is dropped.
+    /// Stops the PipeWire pump and waits for it to reap every recorder.
     fn stop_linux_meters(&mut self) {
-        if let Some(stop) = self.linux_meters_stop.take() {
-            stop.store(true, Ordering::Relaxed);
+        if let Some(mut handle) = self.linux_meters.take() {
+            handle.stop();
         }
     }
 
