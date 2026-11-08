@@ -337,11 +337,14 @@ asking whether a section of the device state changed; the fixed `00 00 00`
 
 The `04 f0 43 20` form makes the device push a **full state dump** on EP
 `0x83`: several 512-byte frames that mix parameter descriptors with DSP
-coefficient blocks (biquads), not a simple `id -> value` table.  The
-dump is not decoded: diffs between known states do not expose the UI
-values directly.
+coefficient blocks (biquads), not a simple `id -> value` table.  The MIC
+section (`04 00 00 03`) is decoded in `docs/STATE_DUMP_PROTOCOL.md`:
+gate, compressor, limiter and the direct EQ fields are readable; the
+transformed fields and the EQ biquads are not.  The driver readback is
+being integrated; until it lands, the getters still return the write
+cache described below.
 
-## Reading values: current behaviour
+## Reading values: current behaviour (before driver readback)
 
 The device exposes no usable per-parameter read, and the state dump is
 not decoded, so the driver's kcontrol getters return the **last value the
@@ -359,7 +362,9 @@ Consequences:
   written from Linux.
 - `Save to ZG01` / `Reset to ZG01` do not refresh the cache.
 
-Decoding the state dump, if ever wanted, is a separate investigation.
+The MIC state dump is decoded in `docs/STATE_DUMP_PROTOCOL.md`; the
+driver readback and the other sections are covered by the 2026-11-08
+readback spec.
 
 ## Other observed frames
 
@@ -377,8 +382,9 @@ Decoding the state dump, if ever wanted, is a separate investigation.
   come from the map, the meaning of a threshold or a time in dB or ms does
   not.
 - The `f0 43 00` preset block layout and value encoding.
-- The full 512-byte state dump layout (mixed descriptors and DSP
-  coefficients).
+- The MIC state dump is decoded; the other sections and the transformed
+  fields (attack/release/out gain, gate threshold, EQ biquads) remain
+  open.  See `docs/STATE_DUMP_PROTOCOL.md`.
 - The exact frame the application sends at page 0 offsets `0x80`-`0xff`:
   the digit follows from the encoding and the space is in use, but no
   capture of such a write has been decoded yet

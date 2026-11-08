@@ -2,7 +2,7 @@
 
 # Single module from all source files
 obj-m := snd-zg01.o
-snd-zg01-objs := src/zg01_usb.o src/zg01_pcm.o src/zg01_control.o src/zg01_usb_discovery.o src/zg01_meters.o
+snd-zg01-objs := src/zg01_usb.o src/zg01_pcm.o src/zg01_control.o src/zg01_usb_discovery.o src/zg01_meters.o src/zg01_state.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
