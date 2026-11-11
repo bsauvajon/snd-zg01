@@ -87,20 +87,29 @@ same `make -C gui install DESTDIR="$pkgdir" PREFIX=/usr` rules the CI
 packaging job validates.  `ZG01_SOURCE` overrides the source URL, so a local
 checkout or a `gui-vX.Y.Z` tag can be built without editing the recipe.
 
-## GUI release train
+## Release train
 
-The GUI ships on independent `gui-vX.Y.Z` tags; driver releases keep using
-`vX.Y.Z`.  A GUI tag builds only the GUI artifacts:
+Driver, tools and GUI ship together on `vX.Y.Z` tags (v2.1.0 and later).
+Pushing the tag runs `.github/workflows/release-apt.yml`, which creates the
+draft release and builds the Debian driver/tools/GUI packages, the APT
+repository, and the driver/tools Arch packages:
 
-1. Bump `version` in `gui/Cargo.toml` and `gui/Cargo.lock`.
+1. Bump the versions in `dkms.conf`, `debian/changelog` and, for a GUI
+   change, `gui/Cargo.toml`/`gui/Cargo.lock`.
 2. Refresh the catalogue when a source string changed:
    `make -C gui update-po` (xgettext into `gui/po/zg01-control.pot`, msgmerge
    into `gui/po/fr.po`) then fill any new `msgstr`; `make -C gui check-po`
    must pass.
-3. Tag: `git tag -a gui-v0.1.0 -m "ZG01 Control 0.1.0"` and push the tag.
-4. `.github/workflows/release-gui.yml` builds `zg01-control-git` and
-   `snd-zg01-gui`, creates a draft release and uploads only those artifacts.
+3. Tag: `git tag -a v2.1.0 -m "ZG01 2.1.0"` and push the tag.
+4. The `v*` workflow builds the Debian packages and uploads the GUI `.deb`.
+   Build the GUI Arch package from the same tag and attach it to the draft:
+   `cd packaging/arch/zg01-control-git && ZG01_SOURCE="git+https://github.com/bsauvajon/snd-zg01.git#tag=v2.1.0" makepkg --cleanbuild`
+   then `gh release upload v2.1.0 zg01-control-git-*.pkg.tar.zst --clobber`.
 5. Run the `docs/GUI_TEST.md` checklist on a real ZG01 before publishing.
+
+A `gui-vX.Y.Z` tag and `.github/workflows/release-gui.yml` remain available
+for a GUI-only release; that workflow builds only `zg01-control-git` and
+`snd-zg01-gui` into its own draft.
 
 ## Debian GUI packaging fallback
 

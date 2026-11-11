@@ -89,6 +89,12 @@ Expected:
 - `amixer` reports the same value once the write lands.
 - No other control changes because of the drag.
 
+> **Mixage is a stream mixer, not a local monitor.** The MIC/VOICE/GAME
+> faders change the USB/stream mix; they are not the headphone/speaker
+> volume. Do not fail this check because the local audio does not change.
+> Confirm the write with `amixer`; the local monitor is on the physical
+> knobs and the `Monitor *` controls in Avancé.
+
 ## 4. Micro screen
 
 1. Click the MIC strip (or select **Micro** in the sidebar).

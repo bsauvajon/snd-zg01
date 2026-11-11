@@ -128,3 +128,15 @@ PipeWire: `Voice In` for MIC, `Voice Out` for VOICE and `Game Out` for
 GAME; STREAM OUT has no Linux source. The card bars stay dashed until EP
 `0x83` returns. See `../docs/METER_TEST.md` and
 `../docs/METER_PROTOCOL.md`.
+
+**Known limitations.** The Mixage faders and STREAM OUT switches are the
+device's **stream sends/routing**, not the local monitor: the physical knobs
+and the `Monitor *` controls (Avancé) set what the headphones/speakers hear,
+so moving a Mixage fader can have no audible local effect. The **Jeu**,
+**Casque** and **Réglages** screens, compact/pinned meters, a PipeWire
+enable/disable setting and persisted GUI preferences are v1.1 work; their
+controls stay in Avancé where the driver exposes them. MIC readback covers
+only the direct state-dump fields; transformed MIC fields and non-MIC
+sections remain cached. Presets apply only to the controls the driver
+publishes, and `.zg01` backups are rejected. The window is a snapshot: it
+does not live-refresh after external ALSA writes.

@@ -34,9 +34,10 @@ sinks without moving the mix into userspace.
 Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst` and
 `zgctl-git-*.pkg.tar.zst`) are attached to each driver/tools
 [GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest);
-install the downloaded files with `sudo pacman -U <file>`. The GUI has its
-own `gui-vX.Y.Z` release train: `zg01-control-git-*.pkg.tar.zst` is attached
-to those releases, not necessarily to the latest driver release.
+install the downloaded files with `sudo pacman -U <file>`. The driver,
+`zgctl` and GUI packages are attached to the same `vX.Y.Z` releases
+(v2.1.0 and later). A `gui-vX.Y.Z` tag remains available for a GUI-only
+build.
 
 To build it yourself instead, install the build tools, DKMS, and the headers
 for the running kernel:
@@ -77,12 +78,12 @@ sudo apt install snd-zg01-dkms snd-zg01-tools
 
 `snd-zg01-tools` is optional and ships `zgctl`; `snd-zg01-gui` is the
 optional GTK4 GUI. Install only `snd-zg01-dkms` for the driver alone. The
-APT repository is refreshed by driver `v*` releases; a GUI-only `gui-v*`
-release publishes its `.deb` as a release asset instead.
+APT repository is refreshed by `v*` releases, which also attach the GUI
+`.deb` and the Arch GUI package. A `gui-vX.Y.Z` tag remains available for a
+GUI-only build.
 
-Or download the `.deb` from the latest driver release and install it
-manually. `snd-zg01-gui` follows the separate `gui-vX.Y.Z` train, so take its
-`.deb` from the GUI release that matches the version you want:
+Or download the `.deb` files from the release that matches the version you
+want:
 
 ```bash
 sudo dpkg -i snd-zg01-dkms_*.deb snd-zg01-tools_*_amd64.deb \
@@ -248,6 +249,18 @@ and needs no root; it opens the ALSA control device directly.
 - **Avancé** lists every ALSA control the curated screens do not claim, with
   a search field, a section filter and a type-aware editor.
 
+### Current feature set
+
+- Mixage: three stream sends, STREAM OUT routing switches, card and
+  PipeWire VU meters, and the preset bar.
+- Micro: gate, compressor, limiter and four-band EQ controls, plus
+  **Read from ZG01** for the direct MIC state dump.
+- Avancé: every remaining ALSA control, with search, section filtering and
+  type-aware editors.
+- Save/Reset, `.zgpreset` loading with a preview (per-block filtering is
+  available in `zgctl`), disconnect/reconnect recovery, keyboard-accessible
+  faders, French translation and desktop/packaging integration.
+
 **Sauvegarder** persists the current values with `Save to ZG01`.
 **Réinitialiser** reloads the persisted settings and starts a fresh MIC
 state read. Direct MIC fields (gate switch/value/range, compressor and
@@ -257,6 +270,22 @@ control is written or a preset is applied. The Micro screen also offers
 **Read from ZG01** for a fresh read without a reset. Presets are loaded from
 `.zgpreset` files through the same parser as `zgctl`; `.zg01` backups are
 rejected.
+
+### Mixage is a stream mixer, not a local monitor
+
+The MIC, VOICE and GAME faders are the **stream sends**
+(`Streaming Mic/Voice/Game Level Steps`). They set how much of each source
+goes to the ZG01's USB/stream mix, not the level in the local headphones or
+speakers. The local monitor is controlled by the physical knobs and the
+`Monitor *` controls; on this driver version those are in Avancé, and the
+dedicated **Casque** screen is not implemented yet.
+
+A fader or switch always writes the device parameter; the new value is
+visible with `amixer -c zg01 cget 'name=Streaming Mic Level Steps'`. Moving a
+Mixage fader can therefore have **no audible local effect** by design. The
+STREAM OUT USB/HDMI/MON switches route the stream output: MON toggles the
+stream-monitor path, USB and HDMI select the digital outputs. They do not set
+the local monitor volume.
 
 ### Keybindings
 
@@ -294,6 +323,50 @@ Beside each card bar, a thin `PW` bar shows the Linux PipeWire level:
 `Voice In` for MIC, `Voice Out` for VOICE and `Game Out` for GAME. STREAM
 OUT has no Linux source. GAME has no card meter, so it shows only its `PW`
 bar. HDMI is deferred until its field is decoded.
+
+### Known limitations and missing features
+
+- **Card meters can be unavailable.** When EP `0x83` does not stream (the
+  current test unit after a suspend), the four card controls answer
+  `-ENODATA` and the card bars stay dashed. The thin `PW` bars are then the
+  only live levels. `GAME` has no card meter in this version, and
+  `Meter HDMI In` is reserved but not decoded.
+- **PipeWire meters are runtime-optional.** They need `pw-dump` and
+  `pw-record`; if PipeWire, a tool or a ZG01 node is missing, the `PW` bars
+  are hidden. There is no enable/disable preference yet.
+- **Mixage is a stream mixer, not a local monitor.** The MIC/VOICE/GAME
+  faders and the STREAM OUT switches change the USB/stream mix and routing.
+  They do not set the local headphone/speaker volume, so moving them can
+  have no audible local effect. The local monitor path is on the physical
+  knobs and the `Monitor *` controls, which are only in Avancé until the
+  **Casque** screen exists.
+- **The curated screens are incomplete.** **Jeu**, **Casque** and
+  **Réglages** are not implemented. Their controls (game effect, binaural,
+  monitor EQ, HDMI select/4K/HDCP, LED, preferences) remain reachable in
+  Avancé when the driver exposes them; firmware/version information is not
+  exposed by this driver.
+- **MIC readback is partial.** Only the direct fields decoded from the state
+  dump are refreshed: gate switch/value/range, compressor and limiter
+  switch/value/threshold/ratio/knee, and EQ switch/shapes/Q. The
+  DSP-transformed fields (gate threshold/attack/hold/decay,
+  compressor/limiter attack/release/out gain, EQ gain/frequency) stay
+  unknown. A state read that times out also leaves the direct fields
+  unknown; Mixage and the non-MIC sections always come from the driver
+  cache.
+- **Presets cover the exposed controls only.** Only `.zgpreset` files load;
+  `.zg01` backups are rejected. Applying a preset writes the controls the
+  driver publishes and reports read-only/unsupported rows as skipped. The
+  vendor application's preset-selection traffic is not mapped.
+- **The window is a snapshot.** Controls are read when the card is loaded.
+  Writes through ALSA from another tool update the driver cache, but the
+  window does not live-refresh; a Windows-side change or a device reset is
+  invisible for cached fields until they are written again or the card is
+  reloaded.
+- **No compact/pinned meters and no GUI preferences yet.** Compact meters,
+  a settings screen and persisted window/preferences are v1.1 work.
+- **The driver is required.** The GUI needs the `snd-zg01` ALSA card; it
+  does not work with the generic `snd-usb-audio` driver. It never runs as
+  root.
 
 ### Translations
 
