@@ -79,9 +79,9 @@ is `stream_mix` channel 6; they never contained a PC In group. The
 `all-groups` fixture pins every channel of every group.
 
 The stereo captures activate only channels 0/1 (and `stream_mix` 4/5). The
-surround channels 2-7 and the exact ZG Controller VOICE strip mapping are
-not measured; the GUI uses `pc_in` 0/1 for the VOICE strip until a visual
-check settles it.
+surround channels 2-7 are not measured. The GUI maps the VOICE strip to
+`stream_mix` 0/1: a Game Out stimulus also raises `pc_in` and `game_mix`,
+so `pc_in` 0/1 must not feed that strip.
 
 ## Driver controls
 

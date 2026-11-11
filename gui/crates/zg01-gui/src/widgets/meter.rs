@@ -43,9 +43,6 @@ const SIDE_MARGIN: f64 = 6.0;
 /// The space above the bars, in logical pixels.
 const TOP_MARGIN: f64 = 4.0;
 
-/// The height of the `PW` badge above a Linux bar, in logical pixels.
-const BADGE_HEIGHT: f64 = 14.0;
-
 /// The space below the bars, in logical pixels.
 const BOTTOM_MARGIN: f64 = 4.0;
 
@@ -58,18 +55,28 @@ const CLIP_HEIGHT: f64 = 3.0;
 /// The level at which the clip marker lights up.
 const CLIP_LEVEL: f64 = 0.98;
 
+/// The height of a horizontal channel meter, in logical pixels.
+const HORIZONTAL_HEIGHT: i32 = 12;
+
+/// The height of the filled bar inside a horizontal channel meter.
+const HORIZONTAL_BAR_HEIGHT: f64 = 8.0;
+
 /// How long the peak-hold line stays after the last higher peak.
 const PEAK_HOLD: Duration = Duration::from_secs(1);
 
 /// One meter shown in a strip or beside the mic chain.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MeterSpec {
-    /// The label shown under the bars, e.g. `MIC`.
+    /// The card label shown under the bars, e.g. `MIC` or `CARD`.
     pub(crate) label: String,
+    /// The Linux (PipeWire) label shown beside the card one, e.g. `PW`.
+    pub(crate) linux_label: String,
     /// The channel levels of the card meter, normalised to `0.0..=1.0`.
     pub(crate) card: [Option<f64>; 8],
     /// How many of [`MeterSpec::card`] are shown (1 for a strip, 8 for a bank).
     pub(crate) card_count: usize,
+    /// The width of one card bar, in logical pixels.
+    pub(crate) bar_width: f64,
     /// Whether the meter has a card source at all.
     pub(crate) card_present: bool,
     /// The level of the Linux meter, normalised to `0.0..=1.0`.
@@ -97,8 +104,10 @@ impl MeterSpec {
         card_levels[0] = card;
         MeterSpec {
             label: label.to_string(),
+            linux_label: "PW".to_string(),
             card: card_levels,
             card_count: 1,
+            bar_width: CARD_WIDTH,
             card_present,
             linux,
             peak: 0.0,
@@ -154,8 +163,29 @@ struct MeterInner {
 pub(crate) struct Meter {
     root: gtk::Box,
     area: gtk::DrawingArea,
-    label: gtk::Label,
+    legend: gtk::Box,
+    card_legend: gtk::Box,
+    linux_legend: gtk::Box,
+    card_label: gtk::Label,
     inner: Rc<MeterInner>,
+}
+
+/// Builds one coloured legend entry: a dot and its label.
+fn build_legend(text: &str, colour_class: &str) -> (gtk::Box, gtk::Label) {
+    let item = gtk::Box::new(Orientation::Horizontal, 4);
+    item.set_halign(gtk::Align::Center);
+
+    let dot = gtk::Label::new(Some("●"));
+    dot.add_css_class("meter-swatch");
+    dot.add_css_class(colour_class);
+
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("meter-legend-label");
+    label.set_xalign(0.5);
+
+    item.append(&dot);
+    item.append(&label);
+    (item, label)
 }
 
 impl Meter {
@@ -176,7 +206,12 @@ impl Meter {
         root.set_halign(gtk::Align::Center);
 
         let area = gtk::DrawingArea::new();
-        let width = meter_width(spec.card_present, spec.card_count, spec.linux_present);
+        let width = meter_width(
+            spec.card_present,
+            spec.card_count,
+            spec.linux_present,
+            spec.bar_width,
+        );
         area.set_content_width(width);
         area.set_content_height(AREA_HEIGHT);
         area.set_vexpand(true);
@@ -184,12 +219,17 @@ impl Meter {
         area.add_css_class("meter");
         root.append(&area);
 
-        let label = gtk::Label::new(Some(&spec.label));
-        label.add_css_class("meter-label");
-        label.set_xalign(0.5);
-        label.set_max_width_chars(10);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        root.append(&label);
+        let legend = gtk::Box::new(Orientation::Horizontal, 8);
+        legend.add_css_class("meter-legend");
+        legend.set_halign(gtk::Align::Center);
+        let (card_legend, card_label) = build_legend(&spec.label, "meter-swatch-card");
+        let (linux_legend, _linux_label) = build_legend(&spec.linux_label, "meter-swatch-linux");
+        legend.append(&card_legend);
+        legend.append(&linux_legend);
+        card_legend.set_visible(spec.card_present);
+        linux_legend.set_visible(spec.linux_present);
+        legend.set_visible(spec.card_present || spec.linux_present);
+        root.append(&legend);
 
         let inner = Rc::new(MeterInner {
             held_peak: Cell::new(initial_peak(&spec)),
@@ -211,7 +251,10 @@ impl Meter {
         Meter {
             root,
             area,
-            label,
+            legend,
+            card_legend,
+            linux_legend,
+            card_label,
             inner,
         }
     }
@@ -231,26 +274,38 @@ impl Meter {
         self.set_card(&[card]);
     }
 
-    /// Changes the label under the bars.
+    /// Changes the card label under the bars.
     pub(crate) fn set_label(&self, text: &str) {
-        self.label.set_text(text);
+        self.card_label.set_text(text);
     }
 
     /// Shows or hides the card track, keeping the Linux bar.
     pub(crate) fn set_card_present(&self, present: bool) {
-        let (count, linux) = {
+        let (count, linux, bar_width) = {
             let mut spec = self.inner.spec.borrow_mut();
             spec.card_present = present;
-            (spec.card_count, spec.linux_present)
+            (spec.card_count, spec.linux_present, spec.bar_width)
         };
         self.area
-            .set_content_width(meter_width(present, count, linux));
+            .set_content_width(meter_width(present, count, linux, bar_width));
+        self.refresh_legend();
         self.area.queue_draw();
     }
 
     /// Installs a Linux source and its reading; the card bar is untouched.
     pub(crate) fn set_linux_source(&self, present: bool, level: Option<f64>) {
         self.update(|spec| apply_linux(spec, present, level));
+    }
+
+    /// Shows only the legend entries whose source exists.
+    fn refresh_legend(&self) {
+        let (card, linux) = {
+            let spec = self.inner.spec.borrow();
+            (spec.card_present, spec.linux_present)
+        };
+        self.card_legend.set_visible(card);
+        self.linux_legend.set_visible(linux);
+        self.legend.set_visible(card || linux);
     }
 
     /// Applies one side of the meter, then repaints and updates the peak.
@@ -264,6 +319,7 @@ impl Meter {
             spec.card_present,
             spec.card_count,
             spec.linux_present,
+            spec.bar_width,
         ));
         refresh_accessible(&self.area, &spec);
         let current = spec
@@ -275,6 +331,7 @@ impl Meter {
             .fold(0.0, f64::max);
         let candidate = spec.peak.max(current);
         drop(spec);
+        self.refresh_legend();
         self.area.queue_draw();
 
         if candidate > self.inner.held_peak.get() {
@@ -300,15 +357,16 @@ fn initial_peak(spec: &MeterSpec) -> f64 {
 }
 
 /// The width of a meter drawing area.
-fn meter_width(card_present: bool, card_count: usize, has_linux: bool) -> i32 {
+fn meter_width(card_present: bool, card_count: usize, has_linux: bool, bar_width: f64) -> i32 {
     let card_count = if card_present {
         card_count.clamp(1, 8)
     } else {
         0
     };
+    let bar_width = bar_width.clamp(1.0, 64.0);
     let mut bars = 0.0;
     if card_count > 0 {
-        bars += card_count as f64 * CARD_WIDTH;
+        bars += card_count as f64 * bar_width;
         bars += (card_count - 1) as f64 * CARD_GAP;
     }
     if card_count > 0 && has_linux {
@@ -428,11 +486,7 @@ fn refresh_accessible(area: &gtk::DrawingArea, spec: &MeterSpec) {
 fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
     let spec = inner.spec.borrow();
     let has_linux = spec.linux_present;
-    let top = if has_linux {
-        TOP_MARGIN + BADGE_HEIGHT
-    } else {
-        TOP_MARGIN
-    };
+    let top = TOP_MARGIN;
     let bottom = (f64::from(height) - BOTTOM_MARGIN).max(top);
     let length = bottom - top;
 
@@ -442,8 +496,9 @@ fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
     } else {
         0
     };
+    let card_width = spec.bar_width.clamp(1.0, 64.0);
     let card_total = if card_bars > 0 {
-        card_bars as f64 * CARD_WIDTH + (card_bars - 1) as f64 * CARD_GAP
+        card_bars as f64 * card_width + (card_bars - 1) as f64 * CARD_GAP
     } else {
         0.0
     };
@@ -459,13 +514,13 @@ fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
     // A card channel that exists but cannot be read is drawn dashed; a
     // valid frame at the floor is a solid empty track.
     for index in 0..card_bars {
-        let x = start + index as f64 * (CARD_WIDTH + CARD_GAP);
-        draw_track(context, x, CARD_WIDTH, top, bottom);
+        let x = start + index as f64 * (card_width + CARD_GAP);
+        draw_track(context, x, card_width, top, bottom);
         match bar_state(true, spec.card[index]) {
-            BarState::Unknown => draw_unknown(context, x, CARD_WIDTH, top, bottom),
+            BarState::Unknown => draw_unknown(context, x, card_width, top, bottom),
             BarState::Level(level) => {
-                draw_fill(context, x, CARD_WIDTH, level, top, bottom, 1.0);
-                draw_clip(context, x, CARD_WIDTH, level, top);
+                draw_fill(context, x, card_width, level, top, bottom, 1.0);
+                draw_clip(context, x, card_width, level, top);
             }
             BarState::Absent => {}
         }
@@ -477,7 +532,7 @@ fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
         match linux_state {
             BarState::Unknown => draw_unknown(context, linux_x, LINUX_WIDTH, top, bottom),
             BarState::Level(level) => {
-                draw_fill(context, linux_x, LINUX_WIDTH, level, top, bottom, 0.65);
+                draw_linux_fill(context, linux_x, LINUX_WIDTH, level, top, bottom);
                 draw_clip(context, linux_x, LINUX_WIDTH, level, top);
             }
             BarState::Absent => {}
@@ -502,10 +557,6 @@ fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
         );
         theme::TEXT.set_source(context, 0.9);
         let _ = context.fill();
-    }
-
-    if has_linux {
-        draw_badge(context, width);
     }
 }
 
@@ -550,6 +601,25 @@ fn draw_fill(
     let _ = context.fill();
 }
 
+/// Draws the Linux bar in the accent colour, so it reads as the `PW` source.
+fn draw_linux_fill(
+    context: &cairo::Context,
+    x: f64,
+    width: f64,
+    level: f64,
+    top: f64,
+    bottom: f64,
+) {
+    let height = (bottom - top).max(0.0);
+    let filled = level.clamp(0.0, 1.0) * height;
+    if filled <= 0.0 {
+        return;
+    }
+    theme::PW.set_source(context, 1.0);
+    rounded_rect(context, x, bottom - filled, width, filled, width / 2.0);
+    let _ = context.fill();
+}
+
 /// The green → yellow → red gradient of the meter, aligned with the track.
 fn level_gradient(bottom: f64, top: f64, alpha: f64) -> LinearGradient {
     let gradient = LinearGradient::new(0.0, bottom, 0.0, top);
@@ -590,17 +660,147 @@ fn is_clipping(level: f64) -> bool {
     level >= CLIP_LEVEL
 }
 
-/// Draws the `PW` badge above the Linux bar.
-fn draw_badge(context: &cairo::Context, width: i32) {
-    context.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
-    context.set_font_size(11.0);
-    if let Ok(extents) = context.text_extents("PW") {
-        let x = f64::from(width) - extents.width() - SIDE_MARGIN;
-        let y = TOP_MARGIN + extents.height();
-        context.move_to(x.max(0.0), y);
-        theme::MUTED.set_source(context, 0.9);
-        let _ = context.show_text("PW");
+/// A horizontal channel meter, used by the card meter banks.
+///
+/// The bar grows from left to right and uses the same green → yellow →
+/// red scale as the vertical meters. An unreadable channel is a dashed
+/// track, never a zero.
+pub(crate) struct ChannelMeter {
+    area: gtk::DrawingArea,
+    label: String,
+    level: Rc<Cell<Option<f64>>>,
+}
+
+impl ChannelMeter {
+    /// Builds a channel meter for `label`, initially at `level`.
+    pub(crate) fn new(label: &str, level: Option<f64>) -> Self {
+        let level = Rc::new(Cell::new(normalise(level)));
+        let area = gtk::DrawingArea::new();
+        area.set_content_height(HORIZONTAL_HEIGHT);
+        area.set_hexpand(true);
+        area.set_valign(gtk::Align::Center);
+        area.set_accessible_role(AccessibleRole::Meter);
+        area.add_css_class("channel-meter");
+
+        let drawn_level = level.clone();
+        area.set_draw_func(move |_, context, width, height| {
+            draw_horizontal(context, width, height, drawn_level.get());
+        });
+
+        let meter = ChannelMeter {
+            area,
+            label: label.to_string(),
+            level,
+        };
+        refresh_horizontal_accessible(&meter.area, &meter.label, meter.level.get());
+        meter
     }
+
+    /// The widget to put in a row.
+    pub(crate) fn widget(&self) -> &gtk::DrawingArea {
+        &self.area
+    }
+
+    /// Installs a new reading, or `None` for an unreadable channel.
+    pub(crate) fn set_level(&self, level: Option<f64>) {
+        let level = normalise(level);
+        self.level.set(level);
+        refresh_horizontal_accessible(&self.area, &self.label, level);
+        self.area.queue_draw();
+    }
+}
+
+/// Draws one horizontal channel bar.
+fn draw_horizontal(context: &cairo::Context, width: i32, height: i32, level: Option<f64>) {
+    let width = f64::from(width).max(1.0);
+    let height = f64::from(height);
+    let bar_height = HORIZONTAL_BAR_HEIGHT.min(height).max(1.0);
+    let top = (height - bar_height) / 2.0;
+    let radius = bar_height / 2.0;
+
+    rounded_rect(context, 0.0, top, width, bar_height, radius);
+    theme::TRACK.set_source(context, 1.0);
+    let _ = context.fill();
+
+    match level {
+        None => {
+            rounded_rect(context, 0.0, top, width, bar_height, radius);
+            theme::MUTED.set_source(context, 0.45);
+            context.set_line_width(1.0);
+            context.set_dash(&[3.0, 3.0], 0.0);
+            let _ = context.stroke();
+            context.set_dash(&[], 0.0);
+        }
+        Some(level) => {
+            let filled = level.clamp(0.0, 1.0) * width;
+            if filled > 0.0 {
+                let gradient = horizontal_gradient(width);
+                let _ = context.set_source(&gradient);
+                rounded_rect(
+                    context,
+                    0.0,
+                    top,
+                    filled,
+                    bar_height,
+                    radius.min(filled / 2.0),
+                );
+                let _ = context.fill();
+            }
+            if is_clipping(level) {
+                rounded_rect(
+                    context,
+                    (width - 3.0).max(0.0),
+                    top - 1.0,
+                    3.0,
+                    bar_height + 2.0,
+                    1.5,
+                );
+                theme::ERROR.set_source(context, 1.0);
+                let _ = context.fill();
+            }
+        }
+    }
+}
+
+/// The green → yellow → red gradient of a horizontal channel meter.
+fn horizontal_gradient(width: f64) -> LinearGradient {
+    let gradient = LinearGradient::new(0.0, 0.0, width.max(1.0), 0.0);
+    for (offset, colour) in [
+        (0.0, theme::SUCCESS),
+        (0.55, theme::SUCCESS),
+        (0.78, theme::WARNING),
+        (1.0, theme::ERROR),
+    ] {
+        let (red, green, blue) = colour.components();
+        gradient.add_color_stop_rgba(offset, red, green, blue, 1.0);
+    }
+    gradient
+}
+
+/// Updates the accessible label and value of a horizontal meter.
+fn refresh_horizontal_accessible(area: &gtk::DrawingArea, label: &str, level: Option<f64>) {
+    let text = match level {
+        Some(level) => tf(
+            "{percent} %",
+            &[("{percent}", &((level * 100.0).round() as i32).to_string())],
+        ),
+        None => t("unknown"),
+    };
+    let description = tf("Meter {name}", &[("{name}", label)]);
+    let mut properties = vec![
+        gtk::accessible::Property::Label(label),
+        gtk::accessible::Property::Description(&description),
+        gtk::accessible::Property::Orientation(Orientation::Horizontal),
+        gtk::accessible::Property::ValueMin(0.0),
+        gtk::accessible::Property::ValueMax(100.0),
+        gtk::accessible::Property::ValueText(&text),
+    ];
+    if let Some(level) = level {
+        properties.push(gtk::accessible::Property::ValueNow(level * 100.0));
+    } else {
+        area.reset_property(AccessibleProperty::ValueNow);
+    }
+    area.update_property(&properties);
 }
 
 #[cfg(test)]
@@ -609,16 +809,21 @@ mod tests {
 
     use super::{
         apply_card, apply_linux, bar_state, initial_peak, is_clipping, meter_width, normalise,
-        peak_clear_delay, BarState, MeterSpec, PEAK_HOLD,
+        peak_clear_delay, BarState, MeterSpec, CARD_WIDTH, PEAK_HOLD,
     };
 
     #[test]
     fn a_bank_width_counts_every_card_bar_and_the_pw_bar() {
-        assert_eq!(meter_width(true, 1, false), 19);
-        assert_eq!(meter_width(true, 8, false), 19 + 7 * 9);
-        assert_eq!(meter_width(true, 8, true), 26 + 7 * 9);
-        assert_eq!(meter_width(false, 0, true), 15);
-        assert_eq!(meter_width(false, 0, false), 12);
+        assert_eq!(meter_width(true, 1, false, CARD_WIDTH), 19);
+        assert_eq!(meter_width(true, 8, false, CARD_WIDTH), 19 + 7 * 9);
+        assert_eq!(meter_width(true, 8, true, CARD_WIDTH), 26 + 7 * 9);
+        assert_eq!(meter_width(false, 0, true, CARD_WIDTH), 15);
+        assert_eq!(meter_width(false, 0, false, CARD_WIDTH), 12);
+    }
+
+    #[test]
+    fn a_wide_card_bar_widens_the_meter() {
+        assert_eq!(meter_width(true, 1, false, 22.0), 34);
     }
 
     #[test]
@@ -639,6 +844,7 @@ mod tests {
     fn a_meter_spec_carries_the_card_and_linux_readings() {
         let spec = MeterSpec::mono("MIC", Some(0.5), true, None, false);
         assert_eq!(spec.label, "MIC");
+        assert_eq!(spec.linux_label, "PW");
         assert_eq!(spec.card[0], Some(0.5));
         assert_eq!(spec.linux, None);
     }

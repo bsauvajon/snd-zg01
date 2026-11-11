@@ -1,9 +1,10 @@
-//! The card meter page: the six groups, with every channel of the four
-//! surround banks.
+//! The card meter page: the two microphone levels and the four
+//! eight-channel banks, laid out as a dashboard.
 //!
 //! The page is fed by the same [`MeterSnapshot`](zg01_core::meters::MeterSnapshot)
 //! as the Mixage and Micro screens. A channel that cannot be read is drawn
-//! dashed; a valid frame at the floor is a solid empty bar.
+//! dashed; a valid frame at the floor is a solid empty bar. The channel
+//! value is the card control's 0–127 step, never an invented dB readout.
 
 use gtk4::prelude::*;
 use gtk4::{self as gtk, Orientation};
@@ -12,16 +13,28 @@ use zg01_core::mixage::MeterId;
 use zg01_core::model::AppState;
 
 use crate::i18n::t;
-use crate::widgets::{Meter, MeterSpec};
+use crate::widgets::{ChannelMeter, Meter, MeterSpec};
 
 /// The channel labels of a surround bank, in the vendor QML order.
 const CHANNELS: [&str; 8] = ["L", "R", "C", "LFE", "SBL", "SBR", "SL", "SR"];
 
-/// One meter widget and the channel it shows.
+/// The full scale of the card meter controls, in device steps.
+const METER_FULL_SCALE: f64 = 127.0;
+
+/// The two kinds of meter the page uses.
+enum MeterKind {
+    /// A tall microphone meter.
+    Vertical(Meter),
+    /// One horizontal channel row.
+    Horizontal(ChannelMeter),
+}
+
+/// One meter widget, the channel it shows and its value label.
 struct Metered {
     id: MeterId,
     channel: usize,
-    meter: Meter,
+    meter: MeterKind,
+    value: gtk::Label,
 }
 
 /// The Meters page.
@@ -46,6 +59,11 @@ impl MetersScreen {
         title.set_xalign(0.0);
         root.append(&title);
 
+        let subtitle = gtk::Label::new(Some(&t("Card levels, 0–127 steps.")));
+        subtitle.add_css_class("page-subtitle");
+        subtitle.set_xalign(0.0);
+        root.append(&subtitle);
+
         let legacy = gtk::Label::new(Some(&t(
             "Legacy driver: the card meters use the four-meter view.",
         )));
@@ -54,38 +72,31 @@ impl MetersScreen {
         legacy.set_visible(false);
         root.append(&legacy);
 
-        let content = gtk::Box::new(Orientation::Vertical, 14);
+        let content = gtk::Box::new(Orientation::Horizontal, 14);
+        content.set_hexpand(true);
+        content.set_valign(gtk::Align::Start);
         let mut meters = Vec::new();
-        for (group, label, channels) in [
-            ("MIC IN", "MIC IN", &["IN"][..]),
-            ("MIC OUT", "MIC OUT", &["OUT"][..]),
-            ("PC IN", "PC IN", &CHANNELS[..]),
-            ("HDMI IN", "HDMI IN", &CHANNELS[..]),
-            ("GAME MIX", "GAME MIX", &CHANNELS[..]),
-            ("STREAM MIX", "STREAM MIX", &CHANNELS[..]),
-        ] {
-            let id = match group {
-                "MIC IN" => MeterId::MicIn,
-                "MIC OUT" => MeterId::MicOut,
-                "PC IN" => MeterId::PcIn,
-                "HDMI IN" => MeterId::HdmiIn,
-                "GAME MIX" => MeterId::GameMix,
-                _ => MeterId::StreamMix,
-            };
-            let heading = gtk::Label::new(Some(&t(label)));
-            heading.add_css_class("meter-label");
-            heading.set_xalign(0.0);
-            content.append(&heading);
 
-            let row = gtk::Box::new(Orientation::Horizontal, 8);
-            row.set_halign(gtk::Align::Start);
-            for (channel, channel_label) in channels.iter().enumerate() {
-                let meter = Meter::new(MeterSpec::mono(channel_label, None, true, None, false));
-                row.append(meter.widget());
-                meters.push(Metered { id, channel, meter });
-            }
-            content.append(&row);
+        let banks = gtk::Grid::new();
+        banks.set_column_spacing(14);
+        banks.set_row_spacing(14);
+        banks.set_column_homogeneous(true);
+        banks.set_hexpand(true);
+        banks.set_valign(gtk::Align::Start);
+        for (index, (id, title)) in [
+            (MeterId::PcIn, "PC IN"),
+            (MeterId::HdmiIn, "HDMI IN"),
+            (MeterId::GameMix, "GAME MIX"),
+            (MeterId::StreamMix, "STREAM MIX"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let card = build_bank(id, title, &mut meters);
+            banks.attach(&card, (index % 2) as i32, (index / 2) as i32, 1, 1);
         }
+        content.append(&banks);
+        content.append(&build_mic_card(&mut meters));
 
         let scrolled = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -117,14 +128,119 @@ impl MetersScreen {
     /// Installs one group's channel readings.
     pub(crate) fn set_meter(&self, id: MeterId, levels: &[Option<i64>]) {
         for metered in &self.meters {
-            if metered.id == id {
-                let level = levels.get(metered.channel).copied().flatten();
-                metered
-                    .meter
-                    .set_card_mono(level.map(|steps| (steps as f64 / 127.0).clamp(0.0, 1.0)));
+            if metered.id != id {
+                continue;
+            }
+            let step = levels.get(metered.channel).copied().flatten();
+            let level = step.map(|steps| (steps as f64 / METER_FULL_SCALE).clamp(0.0, 1.0));
+            match &metered.meter {
+                MeterKind::Vertical(meter) => meter.set_card_mono(level),
+                MeterKind::Horizontal(meter) => meter.set_level(level),
+            }
+            match step {
+                Some(step) => {
+                    metered.value.set_text(&step.to_string());
+                    metered.value.remove_css_class("unknown");
+                }
+                None => {
+                    metered.value.set_text("—");
+                    metered.value.add_css_class("unknown");
+                }
             }
         }
     }
+}
+
+/// Builds the microphone card: two tall meters, IN and OUT.
+fn build_mic_card(meters: &mut Vec<Metered>) -> gtk::Box {
+    let card = gtk::Box::new(Orientation::Vertical, 12);
+    card.add_css_class("panel");
+    card.add_css_class("meter-card");
+    card.set_width_request(220);
+    card.set_hexpand(false);
+    card.set_valign(gtk::Align::Start);
+
+    let heading = gtk::Label::new(Some(&t("MIC")));
+    heading.add_css_class("meter-card-title");
+    heading.set_xalign(0.0);
+    card.append(&heading);
+
+    let column = gtk::Box::new(Orientation::Vertical, 16);
+    column.set_halign(gtk::Align::Center);
+    column.set_hexpand(true);
+    for (id, label) in [(MeterId::MicIn, "IN"), (MeterId::MicOut, "OUT")] {
+        let mut spec = MeterSpec::mono(label, None, true, None, false);
+        spec.bar_width = 22.0;
+        let meter = Meter::new(spec);
+        let value = channel_value();
+        value.add_css_class("mic-value");
+
+        let block = gtk::Box::new(Orientation::Vertical, 4);
+        block.set_halign(gtk::Align::Center);
+        block.append(meter.widget());
+        block.append(&value);
+        column.append(&block);
+
+        meters.push(Metered {
+            id,
+            channel: 0,
+            meter: MeterKind::Vertical(meter),
+            value,
+        });
+    }
+    card.append(&column);
+    card
+}
+
+/// Builds one eight-channel bank card.
+fn build_bank(id: MeterId, title: &str, meters: &mut Vec<Metered>) -> gtk::Box {
+    let card = gtk::Box::new(Orientation::Vertical, 10);
+    card.add_css_class("panel");
+    card.add_css_class("meter-card");
+    card.set_width_request(260);
+    card.set_hexpand(true);
+
+    let heading = gtk::Label::new(Some(&t(title)));
+    heading.add_css_class("meter-card-title");
+    heading.set_xalign(0.0);
+    card.append(&heading);
+
+    let grid = gtk::Grid::new();
+    grid.set_column_spacing(10);
+    grid.set_row_spacing(4);
+    grid.set_hexpand(true);
+    for (channel, channel_label) in CHANNELS.iter().enumerate() {
+        let label = gtk::Label::new(Some(channel_label));
+        label.add_css_class("channel-label");
+        label.set_xalign(0.0);
+        label.set_width_chars(3);
+
+        let accessible = format!("{title} {channel_label}");
+        let meter = ChannelMeter::new(&accessible, None);
+        let value = channel_value();
+
+        grid.attach(&label, 0, channel as i32, 1, 1);
+        grid.attach(meter.widget(), 1, channel as i32, 1, 1);
+        grid.attach(&value, 2, channel as i32, 1, 1);
+
+        meters.push(Metered {
+            id,
+            channel,
+            meter: MeterKind::Horizontal(meter),
+            value,
+        });
+    }
+    card.append(&grid);
+    card
+}
+
+/// A fixed-width value label, showing an em dash when unreadable.
+fn channel_value() -> gtk::Label {
+    let label = gtk::Label::new(Some("—"));
+    label.add_css_class("channel-value");
+    label.set_xalign(0.5);
+    label.set_width_chars(4);
+    label
 }
 
 #[cfg(test)]

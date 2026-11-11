@@ -184,7 +184,7 @@ impl MixageModel {
                     level: find(controls, &["Streaming Voice Level Steps"]),
                     mute: find(controls, &["Streaming Voice Mute Steps"]),
                     fx: find(controls, &["Streaming Voice FX Steps"]),
-                    meter: Some(MeterId::PcIn),
+                    meter: Some(MeterId::StreamMix),
                     linux_meter: Some(LinuxMeterId::VoiceOut),
                 },
                 StripModel {
