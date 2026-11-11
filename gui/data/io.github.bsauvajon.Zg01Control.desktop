@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ZG01 Control
+Name[fr]=ZG01 Control
+GenericName=Audio Mixer Control
+GenericName[fr]=Contrôle de mixage audio
+Comment=Control the Yamaha ZG01 audio interface
+Comment[fr]=Contrôler l'interface audio Yamaha ZG01
+Exec=zg01-control
+Icon=io.github.bsauvajon.Zg01Control
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=Yamaha;ZG01;audio;mixer;microphone;
+StartupWMClass=io.github.bsauvajon.Zg01Control

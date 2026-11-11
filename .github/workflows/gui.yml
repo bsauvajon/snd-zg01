@@ -1,0 +1,87 @@
+name: GUI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gui/**'
+      - 'tools/vendor/control-map-zg01.json'
+      - 'tools/zgpreset.c'
+      - 'tools/zgpreset.h'
+      - '.github/workflows/gui.yml'
+  pull_request:
+    paths:
+      - 'gui/**'
+      - 'tools/vendor/control-map-zg01.json'
+      - 'tools/zgpreset.c'
+      - 'tools/zgpreset.h'
+      - '.github/workflows/gui.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: GUI build and tests
+    # The workspace pins relm4's gnome_50 feature, i.e. GTK 4.22 and
+    # libadwaita 1.9; Ubuntu 24.04 ships older libraries.
+    runs-on: ubuntu-26.04
+    defaults:
+      run:
+        working-directory: gui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install GTK4/libadwaita build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libasound2-dev libgtk-4-dev libadwaita-1-dev \
+            gettext desktop-file-utils appstream
+
+      - name: Rust toolchain components
+        run: |
+          rustup component add rustfmt clippy \
+            || sudo apt-get install -y rustfmt clippy
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+  packaging:
+    name: Install and validate packaging
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libasound2-dev libgtk-4-dev libadwaita-1-dev \
+            gettext desktop-file-utils appstream
+
+      - name: Install into a staging root
+        run: |
+          staging=$(mktemp -d)
+          make -C gui install DESTDIR="$staging"
+          test -x "$staging/usr/local/bin/zg01-control"
+          test -f "$staging/usr/local/share/applications/io.github.bsauvajon.Zg01Control.desktop"
+          test -f "$staging/usr/local/share/metainfo/io.github.bsauvajon.Zg01Control.metainfo.xml"
+          test -f "$staging/usr/local/share/icons/hicolor/scalable/apps/io.github.bsauvajon.Zg01Control.svg"
+          test -f "$staging/usr/local/share/locale/fr/LC_MESSAGES/zg01-control.mo"
+
+      - name: Validate desktop entry and AppStream metadata
+        run: |
+          desktop-file-validate gui/data/io.github.bsauvajon.Zg01Control.desktop
+          appstreamcli validate --no-net gui/data/io.github.bsauvajon.Zg01Control.metainfo.xml

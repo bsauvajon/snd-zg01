@@ -1,0 +1,55 @@
+.TH ZG01-CONTROL 1 "2026-11-02" "ZG01 Control 0.1.0" "User Commands"
+.SH NAME
+zg01-control \- GTK4 control GUI for the Yamaha ZG01 audio interface
+.SH SYNOPSIS
+.B zg01-control
+.SH DESCRIPTION
+.B zg01-control
+is the standalone GTK4/libadwaita companion for the Yamaha ZG01. It talks to
+the ALSA control device exposed by the
+.B snd-zg01
+kernel driver; it does not access USB directly and never needs root.
+.PP
+The window has three screens. \fBMixage\fR shows the MIC, VOICE and GAME
+stream sends, the STREAM OUT switches and meter, and the preset bar.
+\fBMicro\fR shows the GATE, COMP, LIMIT and four-band EQ chain.
+\fBAvancé\fR lists every ALSA control the curated screens do not
+claim.
+.PP
+Direct MIC fields come from the MIC state dump read at probe, by the
+\fBRead from ZG01\fR action, and automatically after \fBReset\fR. The
+transformed MIC fields and the non-MIC sections come from the driver cache;
+their displayed values stay until the control is written again. Use
+\fBSave\fR to persist the current values on the ZG01; \fBReset\fR reloads
+the persisted settings and starts a fresh state read.
+.SH ENVIRONMENT
+.TP
+.B ZG01_LOCALEDIR
+Directory containing the gettext catalogue
+.RI ( fr/LC_MESSAGES/zg01-control.mo ).
+The binary otherwise looks next to its installation prefix, then at
+.IR target/locale
+in a source tree, then at
+.IR /usr/share/locale .
+.TP
+.B LANG
+Standard locale selection; set
+.B LANG=fr_FR.UTF-8
+for the shipped French translation.
+.SH FILES
+.TP
+.I /usr/share/applications/io.github.bsauvajon.Zg01Control.desktop
+Desktop entry.
+.TP
+.I /usr/share/metainfo/io.github.bsauvajon.Zg01Control.metainfo.xml
+AppStream metadata.
+.TP
+.I /usr/share/icons/hicolor/scalable/apps/io.github.bsauvajon.Zg01Control.svg
+Application icon.
+.SH SEE ALSO
+.BR zgctl (1),
+.BR amixer (1)
+.PP
+The hardware acceptance checklist and the GUI documentation are in the
+upstream repository:
+.I https://github.com/bsauvajon/snd-zg01

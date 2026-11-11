@@ -1,0 +1,758 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR Brice Sauvajon
+# This file is distributed under the same license as the ZG01 Control package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: ZG01 Control\n"
+"Report-Msgid-Bugs-To: https://github.com/bsauvajon/snd-zg01/issues\n"
+"POT-Creation-Date: 2026-11-08 12:48+0100\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: crates/zg01-gui/src/app.rs:97 crates/zg01-gui/src/ui/mixage.rs:153
+msgid "Mixage"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:98 crates/zg01-gui/src/ui/mic.rs:227
+msgid "Micro"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:99 crates/zg01-gui/src/ui/advanced.rs:407
+#: crates/zg01-gui/src/ui/mic.rs:416
+msgid "Advanced"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:106
+msgid "The three stream sends, the stream output and the meters."
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:107
+msgid "The microphone chain: GATE, COMP, EQ and LIMITER."
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:108
+msgid "Every ALSA control the curated screens do not cover."
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:584 crates/zg01-gui/src/app.rs:644
+#: crates/zg01-gui/src/app.rs:1020 crates/zg01-gui/src/app.rs:1047
+msgid "A state read is in progress; wait for it to finish"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:590
+msgid "Save queued until the preset finishes"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:595
+msgid "Cannot save: unknown values or no card"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:599 crates/zg01-gui/src/app.rs:663
+#: crates/zg01-gui/src/app.rs:750 crates/zg01-gui/src/app.rs:754
+#: crates/zg01-gui/src/app.rs:1006 crates/zg01-gui/src/app.rs:1051
+#: crates/zg01-gui/src/app.rs:1183
+msgid "No ZG01 connected"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:615
+msgid "Could not start the save"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:626
+msgid "Settings saved to the ZG01"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:630
+msgid "Save failed: {error}"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:656
+msgid "Reset queued until the preset finishes"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:672
+msgid "Resetting the ZG01…"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:719
+msgid "ZG01 reset — reading the MIC state…"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:723
+msgid "Reset failed: {error}"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:741 crates/zg01-gui/src/app.rs:1015
+#: crates/zg01-gui/src/app.rs:1042
+msgid "A reset is in progress; wait for it to finish"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:746
+msgid "A preset is being applied; wait for it to finish"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:760
+msgid "Reading the MIC state…"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:804
+msgid "Could not start the MIC state read"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:825
+msgid "MIC state read from the ZG01"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:830
+msgid "Could not read the MIC state: {error}"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:834
+msgid "Could not read the MIC state"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1010 crates/zg01-gui/src/app.rs:1037
+msgid "A preset is already being applied"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1097
+msgid "Could not load the preset"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1115
+msgid "Cancelling the preset…"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1168 crates/zg01-gui/src/ui/preset_dialog.rs:453
+msgid "Preset cancelled"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1295
+msgid "Could not write {name}: {error}"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1373
+msgid "ZG01 disconnected"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1388
+msgid "ZG01 connection lost — reconnecting"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1476
+msgid "ZG01 detected, but its controls cannot be read"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1559
+msgid "ZG01 connected"
+msgstr ""
+
+#: crates/zg01-gui/src/app.rs:1594
+msgid "Unnamed preset"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:130 crates/zg01-gui/src/window.rs:181
+#: crates/zg01-gui/src/window.rs:367
+msgid "ZG01"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:132
+msgid "Yamaha ZG01 · card {card} · {driver}"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:152
+msgid "MIC read · Mixage/Advanced cache"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:153
+msgid "Reading MIC state…"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:154
+msgid "MIC unknown · Mixage/Advanced cache"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:155 crates/zg01-gui/src/window.rs:580
+msgid "Driver values (cache)"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:163 crates/zg01-gui/src/window.rs:233
+#: crates/zg01-gui/src/window.rs:374
+msgid "Disconnected"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:164
+msgid "No ZG01 card detected"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:183 crates/zg01-gui/src/window.rs:434
+#: crates/zg01-gui/src/window.rs:561
+msgid "Reading the ZG01 controls…"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:220
+msgid "Last preset: {preset}"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:235 crates/zg01-gui/src/window.rs:424
+msgid "ZG01 disconnected — reconnect the card"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:303
+msgid "Save the settings to the ZG01"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:305
+msgid "Save unavailable: unknown values or no card"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:329
+msgid "not detected"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:331
+msgid ""
+"Driver: {driver}\n"
+"Firmware: {firmware}\n"
+"ALSA card: {card}"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:339
+msgid ""
+"Unofficial Yamaha ZG01 remote control.\n"
+"\n"
+"{versions}\n"
+"\n"
+"Not affiliated with Yamaha. ZG01 is a trademark of Yamaha."
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:366
+msgid "Connection status to the ZG01"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:374 crates/zg01-gui/src/window.rs:485
+msgid "ZG01 Control"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:377
+msgid "Reset"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:381
+msgid ""
+"Reloads the persisted ZG01 settings; the displayed values become unknown"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:387
+msgid "Save"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:395
+msgid "About"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:414
+msgid "Unknown state — load a preset"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:417
+msgid ""
+"The ZG01 reloaded its persisted settings: the displayed values no longer "
+"describe it."
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:427
+msgid "The last values stay displayed; reconnection is automatic."
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:437
+msgid "The window stays responsive while the card is read or reset."
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:444
+msgid "Reapply the last preset"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:446
+msgid "Reapply"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:566
+msgid "The window stays responsive while the card is read."
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:583
+msgid ""
+"Direct MIC fields come from the ZG01 state read; transformed MIC fields are "
+"shown unknown, and the Mixage/Advanced sections come from the driver cache."
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:624
+msgid "Screen in preparation."
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:646
+msgid "ZG01 not found"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:651
+msgid "Plug the card into USB and check that the driver module is loaded."
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:663
+msgid "Check the USB connection"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:667
+msgid "Load the driver module"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:671
+msgid "Read the kernel log"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:677
+msgid "Reconnection is automatic as soon as the card appears."
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:735
+msgid "unknown (module without a version)"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:741
+msgid "unavailable"
+msgstr ""
+
+#: crates/zg01-gui/src/window.rs:744 crates/zg01-gui/src/window.rs:753
+msgid "unreadable"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:230
+msgid "Enter the register value: the range is too wide for a slider."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:377
+msgid "{count} control"
+msgid_plural "{count} controls"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:413
+msgid ""
+"Every ALSA control that Mixage, Micro and the curated table do not cover."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:424
+msgid "Search for a control"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:426
+msgid "Filter controls by name"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:429
+msgid "All groups"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:433
+msgid "Filter by console section"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:442
+msgid "No control matches this filter."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:544
+msgid "Section"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:545
+msgid "Control"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:546
+msgid "Editor"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:547
+msgid "Value"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:548 crates/zg01-gui/src/ui/mic.rs:644
+msgid "Range"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:549
+msgid "Unit"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:550
+msgid "Type"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:551
+msgid "Address"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:588
+msgid ""
+"Raw parameter: the meaning of this control is not decoded. Check the value "
+"before writing it."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:647
+msgid "Read-only: the driver refuses writes to this control."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:665
+msgid "dB"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:666
+msgid "Hz"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:667
+#: crates/zg01-gui/src/ui/advanced.rs:680 crates/zg01-gui/src/ui/mic.rs:483
+msgid "Q"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:668
+msgid "steps"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:669
+msgid "%"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:670
+msgid "on/off"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:671
+msgid "raw"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:678
+msgid "gain"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:679
+msgid "frequency"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:681
+msgid "percentage"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:682
+msgid "integer"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/advanced.rs:683
+msgid "switch"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:231
+msgid "Processing chain: GATE › COMP › EQ › LIMITER."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:242
+msgid "Read from ZG01"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:400
+msgid "Level"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:438
+msgid "EQ"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:464
+msgid "BAND {number}"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:471
+msgid "Gain"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:479
+msgid "Frequency"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:489
+msgid "Low shape"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:491
+msgid "High shape"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:605 crates/zg01-gui/src/ui/mixage.rs:596
+msgid "Unavailable"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:642
+msgid "Output gain"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:643
+msgid "Threshold"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:645
+msgid "Attack"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:646
+msgid "Hold"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:647
+msgid "Decay"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:648
+msgid "Ratio"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:649
+msgid "Release"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mic.rs:650
+msgid "Knee"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:158
+msgid "Stream sends, stream output and meters."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:164
+msgid ""
+"The Mixage section shows the driver cache; the MIC state is read on the "
+"Micro screen."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:241
+msgid "{done} of {total} applied, {skipped} skipped"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:405
+msgid "Open the microphone chain"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:545
+msgid "Preset"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:549
+msgid "No preset loaded"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:566
+#: crates/zg01-gui/src/ui/preset_dialog.rs:218
+msgid "Cancel"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:569
+msgid "Stop applying the preset"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:574
+msgid "Recent"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:576
+msgid "The recent preset list comes later"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:579
+msgid "Load"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:583
+msgid "Load a .zgpreset preset and apply its settings"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/mixage.rs:585
+msgid "Loading a preset requires a connected ZG01"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:52
+#: crates/zg01-gui/src/ui/preset_dialog.rs:166
+msgid "Load a ZG01 preset"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:53
+msgid "Open"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:56
+msgid "ZG01 presets (*.zgpreset)"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:78
+msgid "The file could not be chosen: {error}"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:131
+#: crates/zg01-gui/src/ui/preset_dialog.rs:343
+msgid "The preset could not be read: {error}"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:151
+msgid "The preset parser stopped unexpectedly"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:180
+msgid "Block: {block}"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:186
+msgid "Unnamed"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:188
+msgid "Name: {name}"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:210
+msgid "Include raw parameters"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:212
+msgid ""
+"Raw parameters have no vendor model: their address and conversion are not "
+"verified by Yamaha."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:219
+msgid "Apply"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:307
+#: crates/zg01-gui/src/ui/preset_dialog.rs:411
+msgid "{address} · {name} → {value}"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:322
+msgid "{applied} applied, {skipped} skipped."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:339
+msgid ".zg01 backups are not supported; load a .zgpreset file instead"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:341
+msgid "The file is not a valid .zgpreset file"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:346
+msgid "The preset path contains a NUL byte"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:348
+msgid "The preset parser failed with code {code}"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:358
+msgid "unknown address"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:360
+msgid "{address} · {name} — {reason}"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:372
+msgid "control missing or unknown address"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:373
+msgid "read-only"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:374
+msgid "raw parameter (check to include)"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:375
+msgid "value out of range"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:381
+msgid "Unreadable preset"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:382
+#: crates/zg01-gui/src/ui/preset_dialog.rs:528
+msgid "Close"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:430
+msgid "{address} · {name} — {error}"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:455
+msgid "Preset applied"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:457
+msgid "Preset partly applied"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:481
+msgid ""
+"{label}\n"
+"{applied} applied, {skipped} skipped, {failed} failed."
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:502
+msgid "Applied:"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:503
+msgid "Skipped:"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:504
+msgid "Failed:"
+msgstr ""
+
+#: crates/zg01-gui/src/ui/preset_dialog.rs:521
+msgid "Nothing is saved on the ZG01: use “Save” to keep these settings."
+msgstr ""
+
+#: crates/zg01-gui/src/widgets/fader.rs:363
+msgid "{label}: {value}"
+msgstr ""
+
+#: crates/zg01-gui/src/widgets/fader.rs:369
+msgid "{label}: unknown value"
+msgstr ""
+
+#: crates/zg01-gui/src/widgets/fader.rs:380
+msgid "Control {name}"
+msgstr ""
+
+#: crates/zg01-gui/src/widgets/meter.rs:303
+msgid "{percent} %"
+msgstr ""
+
+#: crates/zg01-gui/src/widgets/meter.rs:307
+msgid "unknown"
+msgstr ""
+
+#: crates/zg01-gui/src/widgets/meter.rs:309
+msgid "Meter {name}"
+msgstr ""

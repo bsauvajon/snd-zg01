@@ -1,0 +1,64 @@
+# The curated layout table of the ZG01 GUI.
+#
+# It says where a control is shown: which screen, which group, which
+# widget, which label and which unit. The table is compiled into the
+# binary (zg01_core::layout::LAYOUT_TOML) and is written by hand.
+#
+# Two rules:
+#
+# * a control named here belongs to that screen only and never shows up
+#   in the advanced screen;
+# * a control the driver does not publish hides its widget, it is not an
+#   error: the GUI has to run with an older driver too.
+#
+# The units are the ones the driver uses: "db" is 0.1 dB, "hz" is hertz,
+# "q" is 0.01, "steps" is a raw device step.
+
+[[screen]]
+id = "mic"
+title = "Micro"
+
+[[screen.group]]
+id = "gate"
+title = "GATE"
+controls = [
+  { name = "Gate Capture Switch", widget = "toggle", label = "Gate on" },
+  { name = "Gate", widget = "fader", label = "Level", unit = "steps" },
+]
+
+[[screen.group]]
+id = "comp"
+title = "COMP"
+controls = [
+  { name = "Compressor Capture Switch", widget = "toggle", label = "Compressor on" },
+  { name = "Compressor", widget = "fader", label = "Level", unit = "steps" },
+]
+
+[[screen.group]]
+id = "limit"
+title = "LIMIT"
+controls = [
+  { name = "Limiter Capture Switch", widget = "toggle", label = "Limiter on" },
+  { name = "Limiter", widget = "fader", label = "Level", unit = "steps" },
+]
+
+[[screen.group]]
+id = "eq"
+title = "EQ"
+controls = [
+  { name = "EQ Capture Switch", widget = "toggle", label = "EQ on" },
+  { name = "EQ Low Shape", widget = "toggle", label = "Low shape" },
+  { name = "EQ High Shape", widget = "toggle", label = "High shape" },
+  { name = "EQ Band 1 Gain", widget = "fader", label = "Band 1", unit = "db" },
+  { name = "EQ Band 1 Frequency", widget = "number", label = "Band 1 frequency", unit = "hz" },
+  { name = "EQ Band 1 Q", widget = "number", label = "Band 1 Q", unit = "q" },
+  { name = "EQ Band 2 Gain", widget = "fader", label = "Band 2", unit = "db" },
+  { name = "EQ Band 2 Frequency", widget = "number", label = "Band 2 frequency", unit = "hz" },
+  { name = "EQ Band 2 Q", widget = "number", label = "Band 2 Q", unit = "q" },
+  { name = "EQ Band 3 Gain", widget = "fader", label = "Band 3", unit = "db" },
+  { name = "EQ Band 3 Frequency", widget = "number", label = "Band 3 frequency", unit = "hz" },
+  { name = "EQ Band 3 Q", widget = "number", label = "Band 3 Q", unit = "q" },
+  { name = "EQ Band 4 Gain", widget = "fader", label = "Band 4", unit = "db" },
+  { name = "EQ Band 4 Frequency", widget = "number", label = "Band 4 frequency", unit = "hz" },
+  { name = "EQ Band 4 Q", widget = "number", label = "Band 4 Q", unit = "q" },
+]

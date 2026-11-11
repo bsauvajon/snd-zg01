@@ -1,0 +1,6 @@
+gui/target/release/zg01-control usr/bin/
+gui/data/io.github.bsauvajon.Zg01Control.desktop usr/share/applications/
+gui/data/io.github.bsauvajon.Zg01Control.metainfo.xml usr/share/metainfo/
+gui/data/icons/io.github.bsauvajon.Zg01Control.svg usr/share/icons/hicolor/scalable/apps/
+gui/target/locale/fr/LC_MESSAGES/zg01-control.mo usr/share/locale/fr/LC_MESSAGES/
+debian/zg01-control.1 usr/share/man/man1/

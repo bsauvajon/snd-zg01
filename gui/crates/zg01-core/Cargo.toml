@@ -1,0 +1,26 @@
+[package]
+name = "zg01-core"
+description = "Device, model and preset logic for the Yamaha ZG01 control GUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "zgpreset"
+
+[features]
+default = ["pipewire"]
+pipewire = []
+
+[dependencies]
+alsa = "0.12"
+# The `alsa` crate does not wrap `snd_ctl_elem_info()`, which the control
+# metadata (type, range, read-only flag) needs, so the backend also uses the
+# FFI bindings the crate is built on.
+alsa-sys = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[build-dependencies]
+cc = "1"

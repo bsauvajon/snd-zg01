@@ -1,0 +1,402 @@
+/* ZG01 Control — dark theme C.
+ *
+ * The palette is dark-only for v1. The colours are the design tokens of
+ * the specification; the light theme is a follow-up that will reuse them.
+ */
+
+@define-color zg_bg #14161b;
+@define-color zg_panel #1b1e26;
+@define-color zg_border #272b35;
+@define-color zg_text #eef1f6;
+@define-color zg_accent #c9b8ff;
+@define-color zg_accent_strong #8b6ff0;
+@define-color zg_success #34c759;
+@define-color zg_warning #f0b429;
+@define-color zg_error #f0523b;
+@define-color zg_track #2a2f3a;
+@define-color zg_muted #8f96a3;
+
+window,
+.background {
+  background-color: @zg_bg;
+  color: @zg_text;
+}
+
+/* Header ------------------------------------------------------------------ */
+
+headerbar {
+  background-color: @zg_panel;
+  border-bottom: 1px solid @zg_border;
+  box-shadow: none;
+}
+
+button.suggested-action {
+  background-color: @zg_accent_strong;
+  border-color: @zg_accent_strong;
+  color: @zg_text;
+}
+
+button.suggested-action:hover {
+  background-color: @zg_accent;
+  border-color: @zg_accent;
+  color: @zg_bg;
+}
+
+button.suggested-action:disabled {
+  background-color: alpha(@zg_text, 0.10);
+  border-color: alpha(@zg_text, 0.10);
+  color: alpha(@zg_text, 0.45);
+}
+
+.device-name {
+  font-weight: 600;
+  color: @zg_text;
+}
+
+.status-dot {
+  color: @zg_success;
+  font-size: 11px;
+}
+
+.status-dot.offline {
+  color: @zg_error;
+}
+
+/* Sidebar ----------------------------------------------------------------- */
+
+.sidebar {
+  background-color: @zg_bg;
+  border-right: 1px solid @zg_border;
+}
+
+.sidebar-brand {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: @zg_accent;
+  text-transform: uppercase;
+}
+
+.sidebar-list {
+  background-color: transparent;
+}
+
+.sidebar-list row {
+  border-radius: 8px;
+  margin: 2px 8px;
+  color: alpha(@zg_text, 0.78);
+}
+
+.sidebar-list row:hover {
+  background-color: alpha(@zg_text, 0.06);
+}
+
+.sidebar-list row:selected {
+  background-color: alpha(@zg_accent_strong, 0.22);
+  color: @zg_accent;
+}
+
+.sidebar-list row:selected label {
+  font-weight: 600;
+}
+
+/* Pages ------------------------------------------------------------------- */
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: @zg_text;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.panel {
+  background-color: @zg_panel;
+  border: 1px solid @zg_border;
+  border-radius: 10px;
+}
+
+/* Connection view --------------------------------------------------------- */
+
+.connection-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: @zg_text;
+}
+
+.connection-hint {
+  font-size: 13px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.hint-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: alpha(@zg_text, 0.78);
+}
+
+.command {
+  font-family: monospace;
+  font-size: 12px;
+  color: @zg_accent;
+  background-color: @zg_bg;
+  border: 1px solid @zg_border;
+  border-radius: 6px;
+  padding: 5px 9px;
+}
+
+/* Faders and meters ------------------------------------------------------- */
+
+.fader-root,
+.meter-root {
+  padding: 2px;
+}
+
+.fader-value {
+  font-size: 12px;
+  font-weight: 600;
+  font-feature-settings: "tnum" 1;
+  color: @zg_accent;
+}
+
+.fader-value.unknown {
+  color: alpha(@zg_muted, 0.72);
+}
+
+/* A value the GUI no longer knows (after a Reset) stays writable: the
+ * control is dimmed, not disabled, so the user can set it again. */
+switch.unknown-value {
+  opacity: 0.55;
+}
+
+.fader-label,
+.meter-label {
+  font-size: 11px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.meter-label {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* Micro ------------------------------------------------------------------- */
+
+.mic-panel {
+  padding: 18px;
+}
+
+.mic-block {
+  background-color: alpha(@zg_text, 0.03);
+  border: 1px solid @zg_border;
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.mic-advanced {
+  margin-top: 4px;
+}
+
+.mic-eq {
+  border-top: 1px solid @zg_border;
+  padding-top: 12px;
+}
+
+.eq-band {
+  background-color: alpha(@zg_text, 0.02);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.mic-editor {
+  margin-top: 2px;
+}
+
+.mic-editor-scale trough {
+  min-height: 4px;
+}
+
+.mic-editor-scale highlight {
+  background-color: @zg_accent_strong;
+}
+
+/* Avancé ------------------------------------------------------------------ */
+
+.advanced-toolbar {
+  padding: 2px;
+}
+
+.advanced-panel {
+  padding: 0;
+}
+
+.advanced-header {
+  padding: 8px 14px;
+  border-bottom: 1px solid @zg_border;
+}
+
+.advanced-column {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: alpha(@zg_text, 0.52);
+}
+
+.advanced-list {
+  background-color: transparent;
+}
+
+.advanced-row {
+  background-color: transparent;
+  border-bottom: 1px solid alpha(@zg_border, 0.6);
+}
+
+.advanced-row:hover {
+  background-color: alpha(@zg_text, 0.03);
+}
+
+.advanced-line {
+  padding: 4px 14px;
+}
+
+.advanced-group {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: alpha(@zg_accent, 0.75);
+}
+
+.advanced-name {
+  font-size: 13px;
+  color: @zg_text;
+}
+
+.advanced-name.read-only {
+  color: alpha(@zg_text, 0.55);
+}
+
+.advanced-unit,
+.advanced-type,
+.advanced-count {
+  font-size: 11px;
+  color: alpha(@zg_text, 0.52);
+}
+
+.advanced-empty {
+  padding: 18px;
+  font-size: 13px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.raw-row .advanced-name {
+  color: @zg_warning;
+}
+
+.raw-badge {
+  color: @zg_warning;
+}
+
+.advanced-scale trough {
+  min-height: 4px;
+}
+
+.advanced-scale highlight {
+  background-color: @zg_accent_strong;
+}
+
+.advanced-number {
+  font-feature-settings: "tnum" 1;
+}
+
+/* Footer ------------------------------------------------------------------ */
+.footer {
+  background-color: @zg_panel;
+  border-top: 1px solid @zg_border;
+  padding: 6px 12px;
+}
+
+.cache-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: @zg_accent;
+  background-color: alpha(@zg_accent, 0.12);
+  border: 1px solid alpha(@zg_accent, 0.30);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.footer-version {
+  font-size: 11px;
+  color: alpha(@zg_text, 0.52);
+}
+
+/* Mixage ------------------------------------------------------------------ */
+
+.strip {
+  padding: 14px 16px;
+}
+
+.output-strip {
+  background-color: alpha(@zg_accent_strong, 0.06);
+}
+
+.strip-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: @zg_text;
+}
+
+.strip-title-button {
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+
+.strip-title-button:hover {
+  background-color: alpha(@zg_accent, 0.12);
+}
+
+.strip-subtitle {
+  font-size: 11px;
+  color: alpha(@zg_text, 0.52);
+}
+
+.tag-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.preset-bar {
+  padding: 10px 14px;
+}
+
+.preset-name {
+  font-size: 12px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.preset-block,
+.preset-preview-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.preset-summary {
+  font-size: 12px;
+  color: alpha(@zg_text, 0.72);
+}
+
+.preset-skips {
+  background: transparent;
+}
+
+.preset-skip {
+  font-size: 12px;
+  padding: 4px 8px;
+  color: alpha(@zg_text, 0.72);
+}

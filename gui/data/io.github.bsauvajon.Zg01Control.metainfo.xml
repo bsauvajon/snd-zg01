@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.bsauvajon.Zg01Control</id>
+
+  <name>ZG01 Control</name>
+  <name xml:lang="fr">ZG01 Control</name>
+  <summary>Control the Yamaha ZG01 audio interface</summary>
+  <summary xml:lang="fr">Contrôler l'interface audio Yamaha ZG01</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+
+  <description>
+    <p>
+      ZG01 Control is an unofficial GTK4 companion for the Yamaha ZG01
+      audio interface. It drives the controls exposed by the snd-zg01
+      kernel driver: the Mixage stream sends and output, the microphone
+      gate, compressor, equalizer and limiter, and every remaining ALSA
+      control in an advanced table.
+    </p>
+    <p xml:lang="fr">
+      ZG01 Control est un compagnon GTK4 non officiel pour l'interface
+      audio Yamaha ZG01. Il pilote les contrôles exposés par le pilote
+      noyau snd-zg01 : les départs et la sortie stream de Mixage, la
+      porte, le compresseur, l'égaliseur et le limiteur du micro, ainsi
+      que tous les autres contrôles ALSA dans une table avancée.
+    </p>
+    <p>
+      The driver reads the MIC state dump at probe; the application shows
+      the last successful read and offers “Read from ZG01” for a fresh
+      one. It displays the device's persisted gate, compressor, limiter
+      and EQ values. The Mixage section still comes from the driver cache;
+      the DSP-transformed MIC fields are shown unknown. Save persists the
+      current device settings on the ZG01.
+    </p>
+    <p xml:lang="fr">
+      Le pilote lit le dump d'état MIC au chargement ; l'application
+      affiche la dernière lecture réussie et propose « Lire depuis le
+      ZG01 » pour une lecture fraîche. Elle affiche les valeurs persistées
+      de la porte, du compresseur, du limiteur et de l'égaliseur. La
+      section Mixage vient encore du cache du pilote ; les champs MIC
+      transformés sont affichés comme inconnus. Sauvegarder conserve les
+      réglages courants de l'appareil.
+    </p>
+  </description>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/bsauvajon/snd-zg01/main/gui/data/screenshots/io.github.bsauvajon.Zg01Control-mixage.png</image>
+      <caption>Mixage screen: stream sends, stream output, meters and preset bar</caption>
+      <caption xml:lang="fr">Écran Mixage : départs stream, sortie stream, mètres et barre de presets</caption>
+    </screenshot>
+  </screenshots>
+
+  <launchable type="desktop-id">io.github.bsauvajon.Zg01Control.desktop</launchable>
+  <url type="homepage">https://github.com/bsauvajon/snd-zg01</url>
+  <url type="bugtracker">https://github.com/bsauvajon/snd-zg01/issues</url>
+
+  <developer id="io.github.bsauvajon">
+    <name>Brice Sauvajon</name>
+  </developer>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Mixer</category>
+  </categories>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2026-11-02">
+      <description>
+        <p>First release of the standalone ZG01 Control GUI.</p>
+        <p>MIC state readback: gate, compressor, limiter and direct EQ fields come from the device; the Mixage section and the transformed MIC fields remain cached. Live meters remain blocked on the test unit.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -337,29 +337,32 @@ asking whether a section of the device state changed; the fixed `00 00 00`
 
 The `04 f0 43 20` form makes the device push a **full state dump** on EP
 `0x83`: several 512-byte frames that mix parameter descriptors with DSP
-coefficient blocks (biquads), not a simple `id -> value` table.  The
-dump is not decoded: diffs between known states do not expose the UI
-values directly.
+coefficient blocks (biquads), not a simple `id -> value` table.  The MIC
+section (`04 00 00 03`) is decoded in `docs/STATE_DUMP_PROTOCOL.md`:
+gate, compressor, limiter and the direct EQ fields are readable; the
+transformed fields and the EQ biquads are not.
 
-## Reading values: current behaviour
+## Reading values: MIC state readback
 
-The device exposes no usable per-parameter read, and the state dump is
-not decoded, so the driver's kcontrol getters return the **last value the
-driver wrote** (a cache).  This is the official, documented behaviour.
-The cache is seeded with the vendor defaults, not with guesses.
+At probe and on `State Read`, the driver sends the type-20 request, collects
+the eight frames on the meter endpoint, parses the direct MIC fields and
+writes them into the address-keyed cache.  The getters then return the
+device state for those fields.  `State Read Status` reports 0 while a read
+is pending, 1 on success, or a negative errno (for example `-ETIMEDOUT`
+after two seconds); `State Read Known` is the parser field mask.  A failed
+or partial read leaves the cache untouched.  `Reset to ZG01` re-reads
+automatically after the reset frame.
 
-Consequences:
+Direct fields (gate switch/value/range, compressor
+switch/value/threshold/ratio/knee, limiter switch/value/threshold/knee,
+EQ switch/shapes/Q) come from the dump.  The transformed fields (gate
+threshold/attack/hold/decay, compressor/limiter attack/release/out gain,
+EQ gain/frequency) and the non-MIC sections still return the **write
+cache**, which is seeded with the vendor defaults.  The GUI must show
+those as unknown, not as device-read values.
 
-- After a fresh load the cache holds the vendor defaults (frequencies
-  100 Hz / 500 Hz / 2.5 kHz / 10 kHz, Q 1, gains 0 dB, shelf shapes on,
-  gate/comp/limiter levels 50, limiter switch on, everything else off),
-  not the device's current state.
-- Settings changed outside the driver (ZG Controller on Windows, or a
-  `Reset to ZG01`) are not reflected until the corresponding control is
-  written from Linux.
-- `Save to ZG01` / `Reset to ZG01` do not refresh the cache.
-
-Decoding the state dump, if ever wanted, is a separate investigation.
+The per-id `04 f0 43 30` reads remain statuses, not values.  `Save to
+ZG01` persists the device state; it does not refresh the cache by itself.
 
 ## Other observed frames
 
@@ -377,8 +380,9 @@ Decoding the state dump, if ever wanted, is a separate investigation.
   come from the map, the meaning of a threshold or a time in dB or ms does
   not.
 - The `f0 43 00` preset block layout and value encoding.
-- The full 512-byte state dump layout (mixed descriptors and DSP
-  coefficients).
+- The MIC state dump is decoded; the other sections and the transformed
+  fields (attack/release/out gain, gate threshold, EQ biquads) remain
+  open.  See `docs/STATE_DUMP_PROTOCOL.md`.
 - The exact frame the application sends at page 0 offsets `0x80`-`0xff`:
   the digit follows from the encoding and the space is in use, but no
   capture of such a write has been decoded yet

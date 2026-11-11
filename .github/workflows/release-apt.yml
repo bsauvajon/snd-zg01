@@ -20,17 +20,23 @@ jobs:
 
       - name: Create draft release
         run: |
-          gh release create ${GITHUB_REF_NAME} \
-            --draft \
-            --title ${GITHUB_REF_NAME} \
-            --generate-notes
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; keeping it."
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-debs:
     name: Build Debian packages
     needs: make-draft-release
-    runs-on: ubuntu-22.04
+    # The GUI needs GTK 4.22 / libadwaita 1.9; Ubuntu 22.04 only has older
+    # libraries. The DKMS and tools packages are version independent.
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -41,7 +47,9 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y devscripts debhelper fakeroot build-essential lintian dkms
+          sudo apt-get install -y devscripts debhelper fakeroot build-essential \
+            lintian dkms cargo rustc pkg-config libasound2-dev libgtk-4-dev \
+            libadwaita-1-dev gettext
 
       - name: Set Debian changelog version from tag (handle prereleases)
         run: |

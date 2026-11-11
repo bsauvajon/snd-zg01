@@ -52,6 +52,9 @@ jobs:
       - name: Capture parsing tests
         run: bash tests/test-param-frames.sh
 
+      - name: MIC state dump parser test
+        run: bash tests/test-state-parser.sh
+
       - name: Device map tests
         run: bash tests/test-device-map.sh
 

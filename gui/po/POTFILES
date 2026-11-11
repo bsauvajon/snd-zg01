@@ -1,0 +1,8 @@
+crates/zg01-gui/src/app.rs
+crates/zg01-gui/src/window.rs
+crates/zg01-gui/src/ui/advanced.rs
+crates/zg01-gui/src/ui/mic.rs
+crates/zg01-gui/src/ui/mixage.rs
+crates/zg01-gui/src/ui/preset_dialog.rs
+crates/zg01-gui/src/widgets/fader.rs
+crates/zg01-gui/src/widgets/meter.rs

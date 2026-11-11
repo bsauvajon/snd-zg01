@@ -1,0 +1,112 @@
+name: Release GUI
+
+on:
+  # Tag pushes only: every job derives the release name and the version from
+  # GITHUB_REF_NAME, so a manual run on a branch would create a release for
+  # that branch. Re-run the tagged workflow from the Actions UI instead.
+  push:
+    tags:
+      - 'gui-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  make-draft-release:
+    name: make draft release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Create draft release
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-debs:
+    name: Build Debian GUI package
+    needs: make-draft-release
+    # GTK 4.22 / libadwaita 1.9 are required by relm4's gnome_50 feature.
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y devscripts debhelper fakeroot build-essential \
+            cargo rustc pkg-config libasound2-dev libgtk-4-dev \
+            libadwaita-1-dev gettext dkms
+
+      - name: Set Debian changelog version from the GUI tag
+        run: |
+          raw=${GITHUB_REF_NAME#gui-v}
+          if echo "$raw" | grep -q "-"; then
+            upver=$(echo "$raw" | sed 's/-/~/')
+          else
+            upver=$raw
+          fi
+          dch --force-bad-version -v "${upver}-1" "GUI release ${GITHUB_REF_NAME}"
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
+      - name: Build packages
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Upload GUI deb to release
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" ../snd-zg01-gui_*.deb --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-arch-gui:
+    name: Build Arch GUI package
+    needs: make-draft-release
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install build dependencies
+        run: |
+          pacman-key --init
+          pacman -Syu --noconfirm --needed \
+            git base-devel sudo github-cli \
+            gtk4 libadwaita alsa-lib rust cargo pkgconf gettext
+
+      - name: Point PKGBUILD at the GUI release tag
+        run: |
+          sed -i "s|#branch=main|#tag=${GITHUB_REF_NAME}|" \
+            packaging/arch/zg01-control-git/PKGBUILD
+          grep '^source=' packaging/arch/zg01-control-git/PKGBUILD
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
+      - name: Build package (unprivileged user)
+        run: |
+          useradd -m build
+          echo 'build ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/build
+          chown -R build:build "$GITHUB_WORKSPACE"
+          su build -c "cd '$GITHUB_WORKSPACE/packaging/arch/zg01-control-git' && makepkg --syncdeps --cleanbuild --clean --noconfirm"
+        env:
+          HOME: /home/build
+
+      - name: Upload Arch GUI package to release
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            packaging/arch/zg01-control-git/zg01-control-git-*.pkg.tar.zst --clobber \
+            --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}

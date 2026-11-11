@@ -32,9 +32,12 @@ sinks without moving the mix into userspace.
 ### Arch Linux, CachyOS, Omarchy
 
 Prebuilt packages (`snd-zg01-dkms-git-*.pkg.tar.zst` and
-`zgctl-git-*.pkg.tar.zst`) are attached to each
+`zgctl-git-*.pkg.tar.zst`) are attached to each driver/tools
 [GitHub release](https://github.com/bsauvajon/snd-zg01/releases/latest);
-install the downloaded files with `sudo pacman -U <file>`.
+install the downloaded files with `sudo pacman -U <file>`. The driver,
+`zgctl` and GUI packages are attached to the same `vX.Y.Z` releases
+(v2.1.0 and later). A `gui-vX.Y.Z` tag remains available for a GUI-only
+build.
 
 To build it yourself instead, install the build tools, DKMS, and the headers
 for the running kernel:
@@ -73,13 +76,18 @@ sudo apt update
 sudo apt install snd-zg01-dkms snd-zg01-tools
 ```
 
-`snd-zg01-tools` is optional and ships `zgctl`; install only
-`snd-zg01-dkms` for the driver alone.
+`snd-zg01-tools` is optional and ships `zgctl`; `snd-zg01-gui` is the
+optional GTK4 GUI. Install only `snd-zg01-dkms` for the driver alone. The
+APT repository is refreshed by `v*` releases, which also attach the GUI
+`.deb` and the Arch GUI package. A `gui-vX.Y.Z` tag remains available for a
+GUI-only build.
 
-Or download the `.deb` from the latest release and install it manually:
+Or download the `.deb` files from the release that matches the version you
+want:
 
 ```bash
-sudo dpkg -i snd-zg01-dkms_*.deb snd-zg01-tools_*_amd64.deb
+sudo dpkg -i snd-zg01-dkms_*.deb snd-zg01-tools_*_amd64.deb \
+  snd-zg01-gui_*_amd64.deb
 sudo apt-get install -f   # only if dependencies are missing
 ```
 
@@ -168,6 +176,240 @@ with the built-in defaults at load).  Settings changed outside the driver
 the control is written again from Linux.  This is the documented
 behaviour; see `docs/MIC_CONTROL_PROTOCOL.md`.
 
+### Meters
+
+The card reports four live levels as read-only ALSA integer controls:
+
+- `Meter Mic In`: the mic before the gate.
+- `Meter Mic Out`: the mic after the gate.
+- `Meter PC In`: the Voice Out playback path.
+- `Meter Stream Mix`: the stream mix (mic after the gate, Voice Out and Game Out).
+
+Each value is 0–127 and linear in dB: 0 is −127 dB and 127 is 0 dBFS.
+The device sends a frame about every 50 ms (20 Hz); a read returns the
+latest valid frame. The controls are read-only and volatile, so
+`amixer` shows `r--v` and refuses writes. Until a valid frame arrives,
+or after the reader stops, a read returns an error rather than zero.
+
+```bash
+amixer -c zg01 cget 'name=Meter Stream Mix'
+```
+
+The GUI polls these four controls at 20 Hz on a worker thread and draws
+the card meters. It also draws a thin `PW` bar beside the card bar from
+the Linux PipeWire graph: `Voice In` for MIC, `Voice Out` for VOICE and
+`Game Out` for GAME. The two bars share the card dB scale, so a given
+height means the same level. STREAM OUT has no Linux source and stays
+card-only. When PipeWire or a node is unavailable, the `PW` bar is hidden;
+a source with no frames is drawn dashed, never as zero. GAME has no card
+meter in v1, so its strip shows only the `PW` bar. HDMI is not registered
+until its field is decoded. See `docs/METER_PROTOCOL.md` and the
+acceptance record in `docs/METER_TEST.md`.
+
+## GUI (ZG01 Control)
+
+The repository also ships `zg01-control`, a GTK4/libadwaita control GUI. It
+is a separate package: installing it never pulls the DKMS build
+dependencies, and installing the driver or `zgctl` never pulls GTK. The
+source lives in `gui/`; the binary needs the driver to expose the controls.
+
+### Install and launch
+
+Arch Linux:
+
+```bash
+cd packaging/arch/zg01-control-git
+makepkg --cleanbuild
+sudo pacman -U zg01-control-git-*.pkg.tar.zst
+```
+
+Debian/Ubuntu (after adding the APT repository described above):
+
+```bash
+sudo apt install snd-zg01-gui
+```
+
+From source:
+
+```bash
+make -C gui build
+sudo make -C gui install          # PREFIX=/usr/local by default
+```
+
+Launch it from the application menu or with `zg01-control`. The application
+ID is `io.github.bsauvajon.Zg01Control`. The GUI runs as the logged-in user
+and needs no root; it opens the ALSA control device directly.
+
+### Screens
+
+- **Mixage** is the landing screen: three stream sends (MIC, VOICE, GAME),
+  the STREAM OUT switches and meter, the card meters and the preset bar.
+- **Micro** is the microphone chain: GATE, COMP, LIMIT, the four-band EQ and
+  the per-block advanced expander.
+- **Avancé** lists every ALSA control the curated screens do not claim, with
+  a search field, a section filter and a type-aware editor.
+
+### Current feature set
+
+- Mixage: three stream sends, STREAM OUT routing switches, card and
+  PipeWire VU meters, and the preset bar.
+- Micro: gate, compressor, limiter and four-band EQ controls, plus
+  **Read from ZG01** for the direct MIC state dump.
+- Avancé: every remaining ALSA control, with search, section filtering and
+  type-aware editors.
+- Save/Reset, `.zgpreset` loading with a preview (per-block filtering is
+  available in `zgctl`), disconnect/reconnect recovery, keyboard-accessible
+  faders, French translation and desktop/packaging integration.
+
+**Sauvegarder** persists the current values with `Save to ZG01`.
+**Réinitialiser** reloads the persisted settings and starts a fresh MIC
+state read. Direct MIC fields (gate switch/value/range, compressor and
+limiter switches/levels, EQ switch/shapes/Q) are refreshed from the device;
+the transformed MIC fields and the non-MIC sections become unknown until a
+control is written or a preset is applied. The Micro screen also offers
+**Read from ZG01** for a fresh read without a reset. Presets are loaded from
+`.zgpreset` files through the same parser as `zgctl`; `.zg01` backups are
+rejected.
+
+### Mixage is a stream mixer, not a local monitor
+
+The MIC, VOICE and GAME faders are the **stream sends**
+(`Streaming Mic/Voice/Game Level Steps`). They set how much of each source
+goes to the ZG01's USB/stream mix, not the level in the local headphones or
+speakers. The local monitor is controlled by the physical knobs and the
+`Monitor *` controls; on this driver version those are in Avancé, and the
+dedicated **Casque** screen is not implemented yet.
+
+A fader or switch always writes the device parameter; the new value is
+visible with `amixer -c zg01 cget 'name=Streaming Mic Level Steps'`. Moving a
+Mixage fader can therefore have **no audible local effect** by design. The
+STREAM OUT USB/HDMI/MON switches route the stream output: MON toggles the
+stream-monitor path, USB and HDMI select the digital outputs. They do not set
+the local monitor volume.
+
+On the host side, this driver exposes only the **Voice In** capture device.
+The ZG01's separate USB **Streaming** virtual device, which carries the mix
+configured by the Mixage screen, is not implemented. OBS therefore cannot
+select the internal stream mix as one USB source; see the next section.
+
+### Capturing the stream in OBS
+
+Under Windows the ZG01 exposes two USB output devices: **Voice** (microphone
+and voice chat) and **Streaming** (the STREAMING OUTPUT MIXER). This driver
+exposes only the **Voice In** capture PCM; the **Streaming** capture device
+is missing. On Linux, build the stream in OBS instead:
+
+- Add an OBS **Audio Input Capture** and select **Yamaha ZG01 Voice In** for
+  the microphone/voice path.
+- Add OBS **Audio Output Capture** sources for **Yamaha ZG01 Game Out** and
+  **Yamaha ZG01 Voice Out** (their PipeWire/Pulse monitor), or route the game
+  and chat to the default sink and use OBS desktop audio.
+- Set the stream balance in OBS's own mixer. The GUI's Mixage faders and
+  STREAM OUT switches configure the device's internal Streaming output; they
+  do not drive the OBS sources above.
+- To capture the device's internal stream mix as a single source, use the
+  **HDMI OUT** jack with an HDMI capture device (enable `Streaming HDMI
+  Out`), or use the Windows ZG Controller with its USB Streaming device.
+  Exposing the USB Streaming capture is future driver work.
+
+### Keybindings
+
+The fader widgets are keyboard accessible:
+
+| Input | Action |
+|---|---|
+| Up / Right arrow | one device step up |
+| Down / Left arrow | one device step down |
+| Page Up / Page Down | ten steps |
+| Home / End | control minimum / maximum |
+| Scroll wheel | one step per notch |
+| Shift + drag | fine pointer movement |
+| Double-click | neutral value (bottom, or 0 dB for a gain) |
+
+### Cache caveat
+
+Direct MIC fields come from the MIC state dump read at probe, on
+**Read from ZG01**, and automatically after Reset. The transformed MIC
+fields, the Mixage section and the remaining controls come from the driver's
+write cache. A setting changed by ZG Controller on Windows or by a device
+reset is not visible for those cached fields until that control is written
+again from Linux. Writes through ALSA from other tools update the driver
+cache, but the GUI only re-reads the controls when the card is reloaded. The
+footer badge distinguishes `MIC read` from `Mixage/Avancé cache`, and its
+tooltip says which values are refreshed. Save is the only action that
+persists the current values on the ZG01.
+
+### Meters
+
+The card meters (MIC IN, MIC OUT, PC IN, STREAM) are read-only volatile
+controls. If the driver does not publish one, or a read fails, the bar is
+drawn dashed and the accessible value is "unknown" — never a fake zero.
+Beside each card bar, a thin `PW` bar shows the Linux PipeWire level:
+`Voice In` for MIC, `Voice Out` for VOICE and `Game Out` for GAME. STREAM
+OUT has no Linux source. GAME has no card meter, so it shows only its `PW`
+bar. HDMI is deferred until its field is decoded.
+
+### Known limitations and missing features
+
+- **Card meters can be unavailable.** When EP `0x83` does not stream (the
+  current test unit after a suspend), the four card controls answer
+  `-ENODATA` and the card bars stay dashed. The thin `PW` bars are then the
+  only live levels. `GAME` has no card meter in this version, and
+  `Meter HDMI In` is reserved but not decoded.
+- **PipeWire meters are runtime-optional.** They need `pw-dump` and
+  `pw-record`; if PipeWire, a tool or a ZG01 node is missing, the `PW` bars
+  are hidden. There is no enable/disable preference yet.
+- **The internal Streaming output is not exposed over USB.** The
+  MIC/VOICE/GAME faders and the STREAM OUT switches configure the device's
+  STREAMING OUTPUT MIXER. This driver exposes only the **Voice In** capture
+  device, not the separate USB **Streaming** virtual device. They therefore
+  do not drive the local headphone/speaker volume or the OBS sources: mix
+  Voice In + Game Out/Voice Out in OBS, or capture the HDMI OUT. The local
+  monitor is on the physical knobs and the `Monitor *` controls in Avancé
+  until the **Casque** screen exists.
+- **The curated screens are incomplete.** **Jeu**, **Casque** and
+  **Réglages** are not implemented. Their controls (game effect, binaural,
+  monitor EQ, HDMI select/4K/HDCP, LED, preferences) remain reachable in
+  Avancé when the driver exposes them; firmware/version information is not
+  exposed by this driver.
+- **MIC readback is partial.** Only the direct fields decoded from the state
+  dump are refreshed: gate switch/value/range, compressor and limiter
+  switch/value/threshold/ratio/knee, and EQ switch/shapes/Q. The
+  DSP-transformed fields (gate threshold/attack/hold/decay,
+  compressor/limiter attack/release/out gain, EQ gain/frequency) stay
+  unknown. A state read that times out also leaves the direct fields
+  unknown; Mixage and the non-MIC sections always come from the driver
+  cache.
+- **Presets cover the exposed controls only.** Only `.zgpreset` files load;
+  `.zg01` backups are rejected. Applying a preset writes the controls the
+  driver publishes and reports read-only/unsupported rows as skipped. The
+  vendor application's preset-selection traffic is not mapped.
+- **The window is a snapshot.** Controls are read when the card is loaded.
+  Writes through ALSA from another tool update the driver cache, but the
+  window does not live-refresh; a Windows-side change or a device reset is
+  invisible for cached fields until they are written again or the card is
+  reloaded.
+- **No compact/pinned meters and no GUI preferences yet.** Compact meters,
+  a settings screen and persisted window/preferences are v1.1 work.
+- **The driver is required.** The GUI needs the `snd-zg01` ALSA card; it
+  does not work with the generic `snd-usb-audio` driver. It never runs as
+  root.
+
+### Translations
+
+The source strings are English; French ships in v1. The catalogue is
+`gui/po/fr.po`, compiled by `make -C gui locale` and installed to
+`$(PREFIX)/share/locale/fr/LC_MESSAGES/zg01-control.mo`. Set `LANG=fr_FR.UTF-8`
+to use it. A source-tree run finds the catalogue built by
+`make -C gui locale`; `ZG01_LOCALEDIR` overrides the lookup directory.
+
+Screenshot of the Mixage screen, captured from the real application on a
+ZG01 card:
+
+![ZG01 Control, Mixage screen](gui/data/screenshots/io.github.bsauvajon.Zg01Control-mixage.png)
+
+The hardware acceptance checklist is in `docs/GUI_TEST.md`.
+
 ## Presets
 
 `zgctl` reads Yamaha `.zgpreset` files and loads their mixer values through
@@ -240,7 +482,9 @@ install. If a pre-2026 package left broken DKMS state, remove
 - `docs/DEVICE_PARAMETER_MAP.md`: the address of every parameter the device registers
 - `docs/PRESET_FORMAT.md`: the `.zgpreset` container, components and value layout
 - `docs/FEATURE_PARITY.md`: what is left to reach ZG Controller parity
-- `packaging/arch/README.md`: Arch packaging, verification, rollback
+- `docs/GUI_TEST.md`: hardware acceptance checklist for the GUI
+- `packaging/arch/README.md`: Arch driver packaging, verification, rollback
+- `packaging/arch/zg01-control-git/README.md`: Arch GUI package
 
 ## Scope and status
 

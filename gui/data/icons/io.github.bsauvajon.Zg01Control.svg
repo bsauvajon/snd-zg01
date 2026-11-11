@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>ZG01 Control</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f3b52"/>
+      <stop offset="1" stop-color="#1b2233"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6ed0ff"/>
+      <stop offset="1" stop-color="#8b7bff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- An original mixing-console motif: three channel strips, no vendor art. -->
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="url(#bg)"/>
+  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="23.25"
+        fill="none" stroke="#41506d" stroke-width="1.5"/>
+
+  <g stroke-linecap="round">
+    <!-- Left channel: microphone strip. -->
+    <line x1="32" y1="28" x2="32" y2="100" stroke="#3a465f" stroke-width="6"/>
+    <circle cx="32" cy="42" r="8" fill="url(#accent)"/>
+    <rect x="20" y="88" width="24" height="9" rx="4.5" fill="#3a465f"/>
+
+    <!-- Middle channel: stream send. -->
+    <line x1="64" y1="24" x2="64" y2="104" stroke="#3a465f" stroke-width="6"/>
+    <circle cx="64" cy="72" r="8" fill="url(#accent)"/>
+    <rect x="52" y="36" width="24" height="9" rx="4.5" fill="#3a465f"/>
+    <rect x="52" y="90" width="24" height="9" rx="4.5" fill="#3a465f"/>
+
+    <!-- Right channel: output level. -->
+    <line x1="96" y1="28" x2="96" y2="100" stroke="#3a465f" stroke-width="6"/>
+    <circle cx="96" cy="86" r="8" fill="url(#accent)"/>
+    <rect x="84" y="34" width="24" height="9" rx="4.5" fill="#3a465f"/>
+  </g>
+
+  <!-- A small level gauge under the strips. -->
+  <rect x="22" y="110" width="22" height="4" rx="2" fill="#6ed0ff"/>
+  <rect x="48" y="110" width="32" height="4" rx="2" fill="#8b7bff"/>
+  <rect x="84" y="110" width="22" height="4" rx="2" fill="#41506d"/>
+</svg>

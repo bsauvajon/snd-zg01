@@ -14,6 +14,7 @@
  */
 
 #include <linux/bitops.h>
+#include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/usb.h>
@@ -24,6 +25,7 @@
 #include "zg01_addr.h"
 #include "zg01_codec.h"
 #include "zg01_control.h"
+#include "zg01_state.h"
 
 int zg01_init_control(struct zg01_dev *dev)
 {
@@ -105,6 +107,52 @@ static int zg01_bulk_out_locked(struct zg01_dev *dev, const u8 *buf,
 }
 
 /*
+ * Status poll on EP0.  The app sends vendor request 7 (3-byte answer
+ * 80bb00) and then request 4 (1-byte answer) about every 250 ms, from
+ * app start through the whole meter session (Windows capture
+ * 00-mic-baseline).  The driver sent request 7 only once at probe and
+ * the device then kept returning zero-length meter packets.
+ */
+int zg01_status_poll(struct zg01_dev *dev)
+{
+    unsigned char *buf;
+    int ret;
+
+    /* The USB core needs a DMA-mappable buffer, not a stack one. */
+    buf = kmalloc(4, GFP_KERNEL);
+    if (!buf)
+        return -ENOMEM;
+
+    ret = usb_control_msg(dev->udev,
+                           usb_rcvctrlpipe(dev->udev, 0),
+                           7,      /* bRequest */
+                           0xc0,   /* bmRequestType: vendor, device-to-host */
+                           0x0000, /* wValue */
+                           0,      /* wIndex */
+                           buf, 3, /* expect 3 bytes response (80bb00) */
+                           1000);
+    if (ret < 0)
+        goto out;
+
+    ret = usb_control_msg(dev->udev,
+                           usb_rcvctrlpipe(dev->udev, 0),
+                           4,      /* bRequest */
+                           0xc0,   /* bmRequestType: vendor, device-to-host */
+                           0x0000, /* wValue */
+                           0,      /* wIndex */
+                           buf, 1, /* expect 1 byte response */
+                           1000);
+    if (ret < 0)
+        goto out;
+
+    ret = 0;
+
+out:
+    kfree(buf);
+    return ret;
+}
+
+/*
  * The app polls the channel; a keepalive precedes each write.  Called with
  * param_mutex held.
  */
@@ -129,11 +177,55 @@ static int zg01_param_keepalive_locked(struct zg01_dev *dev)
     return ret;
 }
 
+int zg01_param_keepalive(struct zg01_dev *dev)
+{
+    int ret;
+
+    mutex_lock(&dev->param_mutex);
+    ret = zg01_param_keepalive_locked(dev);
+    mutex_unlock(&dev->param_mutex);
+    return ret;
+}
+
 /*
- * The two bytes the frame carries are the base-128 digits of the address
- * (docs/DEVICE_PARAMETER_MAP.md), defined in zg01_addr.h so the host test
- * exercises the same macros as the driver.
+ * Locking wrapper for the meter session init; the meter work does not hold
+ * param_mutex.
  */
+static int zg01_bulk_out(struct zg01_dev *dev, const u8 *buf,
+                         unsigned int len)
+{
+    int ret;
+
+    mutex_lock(&dev->param_mutex);
+    ret = zg01_bulk_out_locked(dev, buf, len);
+    mutex_unlock(&dev->param_mutex);
+    return ret;
+}
+
+/*
+ * One-shot state read that starts the meter session.  The app sends it
+ * before the first keepalive (Windows capture 00-mic-baseline, -1.1 s).
+ */
+int zg01_param_meter_init(struct zg01_dev *dev)
+{
+    unsigned char *buf;
+    int ret;
+
+    buf = kzalloc(ZG01_PARAM_FRAME, GFP_KERNEL);
+    if (!buf)
+        return -ENOMEM;
+
+    zg01_put_word(buf, 0, 0xf0, 0x43, 0x20);
+    zg01_put_word(buf, 1, 0x3e, 0x14, 0x01);
+    zg01_put_word(buf, 2, 0x01, 0x00, 0x00);
+    zg01_put_word(buf, 3, 0x00, 0x00, 0x03);
+    buf[16] = 0x05;
+    buf[17] = 0xf7;
+
+    ret = zg01_bulk_out(dev, buf, ZG01_PARAM_FRAME);
+    kfree(buf);
+    return ret;
+}
 
 /*
  * Write one parameter.  Layout (docs/MIC_CONTROL_PROTOCOL.md):
@@ -930,6 +1022,65 @@ static u32 *zg01_cache(struct zg01_dev *dev, u16 addr)
                             [addr % ZG01_PARAM_PAGE_SIZE];
 }
 
+/*
+ * Apply the direct fields of a parsed MIC state dump to the write cache.
+ * The transformed fields (attack/release/out gain, gate threshold, EQ
+ * biquad gain/frequency) are absent from the parser's table on purpose:
+ * their payload bytes are device coefficients, not the values the ALSA
+ * controls expose.
+ */
+void zg01_control_apply_state(struct zg01_dev *dev,
+                              const struct zg01_state_values *values)
+{
+    static const struct {
+        u8 field;
+        u16 addr;
+        u16 max;
+    } map[] = {
+        { ZG01_SF_GATE_SWITCH, ZG01_PARAM_GATE_ENABLE, 1 },
+        { ZG01_SF_GATE_VALUE, ZG01_PARAM_GATE_VALUE, 100 },
+        { ZG01_SF_GATE_RANGE, ZG01_PARAM_GATE_RANGE, 73 },
+        { ZG01_SF_GATE_ATTACK, ZG01_PARAM_GATE_ATTACK, 283 },
+        { ZG01_SF_GATE_HOLD, ZG01_PARAM_GATE_HOLD, 213 },
+        { ZG01_SF_GATE_DECAY, ZG01_PARAM_GATE_DECAY, 300 },
+        { ZG01_SF_COMP_SWITCH, ZG01_PARAM_COMP_ENABLE, 1 },
+        { ZG01_SF_COMP_VALUE, ZG01_PARAM_COMP_VALUE, 100 },
+        { ZG01_SF_COMP_THRESHOLD, ZG01_PARAM_COMP_THRESHOLD, 73 },
+        { ZG01_SF_COMP_RATIO, ZG01_PARAM_COMP_RATIO, 120 },
+        { ZG01_SF_COMP_KNEE, ZG01_PARAM_COMP_KNEE, 2 },
+        { ZG01_SF_LIM_SWITCH, ZG01_PARAM_LIMITER_ENABLE, 1 },
+        { ZG01_SF_LIM_VALUE, ZG01_PARAM_LIMITER_VALUE, 100 },
+        { ZG01_SF_LIM_THRESHOLD, ZG01_PARAM_LIMITER_THRESHOLD, 73 },
+        { ZG01_SF_LIM_KNEE, ZG01_PARAM_LIMITER_KNEE, 2 },
+        { ZG01_SF_EQ_SWITCH, ZG01_PARAM_EQ_ENABLE, 1 },
+        { ZG01_SF_EQ_LOW_SHAPE, ZG01_PARAM_LOW_SHAPE, 1 },
+        { ZG01_SF_EQ_HIGH_SHAPE, ZG01_PARAM_HIGH_SHAPE, 1 },
+        { ZG01_SF_EQ_Q1, ZG01_PARAM_EQ_Q(0), 60 },
+        { ZG01_SF_EQ_Q2, ZG01_PARAM_EQ_Q(1), 60 },
+        { ZG01_SF_EQ_Q3, ZG01_PARAM_EQ_Q(2), 60 },
+        { ZG01_SF_EQ_Q4, ZG01_PARAM_EQ_Q(3), 60 },
+    };
+    unsigned int i;
+
+    if (!dev || !values)
+        return;
+
+    mutex_lock(&dev->param_mutex);
+    for (i = 0; i < ARRAY_SIZE(map); i++) {
+        if (!(values->known & ZG01_STATE_KNOWN(map[i].field)))
+            continue;
+        /*
+         * The state dump may carry the device's wider raw range (0..120
+         * for Compressor/Limiter) while the ALSA control is 0..100.  Do
+         * not seed the cache with a value the control cannot report.
+         */
+        if (values->value[map[i].field] > map[i].max)
+            continue;
+        *zg01_cache(dev, map[i].addr) = values->value[map[i].field];
+    }
+    mutex_unlock(&dev->param_mutex);
+}
+
 static int zg01_ctl_info(struct snd_kcontrol *kcontrol,
                          struct snd_ctl_elem_info *uinfo)
 {
@@ -943,11 +1094,12 @@ static int zg01_ctl_info(struct snd_kcontrol *kcontrol,
 }
 
 /*
- * The getters return the driver cache: the device exposes no usable
- * per-parameter read (its replies are statuses) and the state dump is
- * not decoded, so the cache is the source of truth.  It is seeded with
- * the built-in defaults at load and updated on every successful write;
- * settings changed outside the driver are not reflected.
+ * Direct MIC fields come from the state dump read at probe, State Read
+ * or Reset; the transformed MIC fields and the non-MIC sections return
+ * the write cache, seeded with the built-in defaults and updated on every
+ * successful write.  Settings changed outside the driver are therefore
+ * reflected for the direct MIC fields after a read, and remain invisible
+ * for the cached fields.
  */
 static int zg01_ctl_get(struct snd_kcontrol *kcontrol,
                         struct snd_ctl_elem_value *ucontrol)
@@ -1054,11 +1206,143 @@ static int zg01_reset_put(struct snd_kcontrol *kcontrol,
                           struct snd_ctl_elem_value *ucontrol)
 {
     struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+    int ret;
 
     if (!ucontrol->value.integer.value[0])
         return 0;
 
-    return zg01_param_reset(dev);
+    ret = zg01_param_reset(dev);
+    if (!ret) {
+        int sret = -EBUSY;
+        int attempt;
+
+        /*
+         * Do not adopt a read that started before the reset.  Wait for
+         * the active read to finish (or time out) and then issue a fresh
+         * post-reset request; at most the driver's 2 s timeout.
+         */
+        for (attempt = 0; attempt < 100; attempt++) {
+            sret = zg01_state_request(dev);
+            if (sret != -EBUSY)
+                break;
+            msleep(20);
+        }
+        if (sret && sret != -EBUSY)
+            dev_dbg(&dev->interface->dev,
+                    "state read after reset failed: %d\n", sret);
+    }
+    return ret;
+}
+
+/* Write-only action: writing 1 re-reads the MIC state from the device. */
+static int zg01_state_read_info(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_info *uinfo)
+{
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    uinfo->count = 1;
+    uinfo->value.integer.min = 0;
+    uinfo->value.integer.max = 1;
+    return 0;
+}
+
+static int zg01_state_read_get(struct snd_kcontrol *kcontrol,
+                               struct snd_ctl_elem_value *ucontrol)
+{
+    ucontrol->value.integer.value[0] = 0;
+    return 0;
+}
+
+static int zg01_state_read_put(struct snd_kcontrol *kcontrol,
+                               struct snd_ctl_elem_value *ucontrol)
+{
+    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+
+    if (!ucontrol->value.integer.value[0])
+        return 0;
+    return zg01_state_request(dev);
+}
+
+/*
+ * Last state read result: 0 pending/never, 1 success, negative errno.
+ * The GUI polls this after writing State Read and after Reset, then reads
+ * State Read Known to distinguish direct fields from transformed ones.
+ */
+static int zg01_state_status_info(struct snd_kcontrol *kcontrol,
+                                  struct snd_ctl_elem_info *uinfo)
+{
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    uinfo->count = 1;
+    uinfo->value.integer.min = -4095;
+    uinfo->value.integer.max = 1;
+    return 0;
+}
+
+static int zg01_state_status_get(struct snd_kcontrol *kcontrol,
+                                 struct snd_ctl_elem_value *ucontrol)
+{
+    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+
+    ucontrol->value.integer.value[0] = READ_ONCE(dev->state_status);
+    return 0;
+}
+
+static int zg01_state_known_info(struct snd_kcontrol *kcontrol,
+                                 struct snd_ctl_elem_info *uinfo)
+{
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    uinfo->count = 1;
+    uinfo->value.integer.min = 0;
+    uinfo->value.integer.max = 0x7fffffff;
+    return 0;
+}
+
+static int zg01_state_known_get(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_value *ucontrol)
+{
+    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+
+    ucontrol->value.integer.value[0] = READ_ONCE(dev->state_known);
+    return 0;
+}
+
+/*
+ * Read-only meter levels, fed by the 0x83 reader (zg01_meters.c).  Game
+ * and HDMI are reserved and not registered until their fields decode.
+ */
+struct zg01_meter_ctl {
+    const char *name;
+    enum zg01_meter_index index;
+};
+
+static const struct zg01_meter_ctl zg01_meter_ctls[] = {
+    { "Meter Mic In", ZG01_METER_MIC_IN },
+    { "Meter Mic Out", ZG01_METER_MIC_OUT },
+    { "Meter PC In", ZG01_METER_PC_IN },
+    { "Meter Stream Mix", ZG01_METER_STREAM_MIX },
+};
+
+static int zg01_meter_info(struct snd_kcontrol *kcontrol,
+                           struct snd_ctl_elem_info *uinfo)
+{
+    uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+    uinfo->count = 1;
+    uinfo->value.integer.min = 0;
+    uinfo->value.integer.max = 127;
+    return 0;
+}
+
+static int zg01_meter_ctl_get(struct snd_kcontrol *kcontrol,
+                              struct snd_ctl_elem_value *ucontrol)
+{
+    struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
+    const struct zg01_meter_ctl *c =
+        (const struct zg01_meter_ctl *)kcontrol->private_value;
+    int level = zg01_meters_value(dev, c->index);
+
+    if (level < 0)
+        return level;
+    ucontrol->value.integer.value[0] = level;
+    return 0;
 }
 
 static int zg01_add_param_control(struct zg01_dev *dev,
@@ -1100,6 +1384,7 @@ static int zg01_add_param_controls(struct zg01_dev *dev,
 int zg01_create_controls(struct zg01_dev *dev)
 {
     int ret;
+    unsigned int i;
 
     if (!dev || !dev->card)
         return -ENODEV;
@@ -1155,6 +1440,82 @@ int zg01_create_controls(struct zg01_dev *dev)
             .info = zg01_reset_info,
             .get = zg01_reset_get,
             .put = zg01_reset_put,
+        };
+        struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
+        int ret;
+
+        if (!kctl)
+            return -ENOMEM;
+        ret = snd_ctl_add(dev->card, kctl);
+        if (ret)
+            return ret;
+    }
+
+    {
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = "State Read",
+            .info = zg01_state_read_info,
+            .get = zg01_state_read_get,
+            .put = zg01_state_read_put,
+        };
+        struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
+        int ret;
+
+        if (!kctl)
+            return -ENOMEM;
+        ret = snd_ctl_add(dev->card, kctl);
+        if (ret)
+            return ret;
+    }
+
+    {
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = "State Read Status",
+            .access = SNDRV_CTL_ELEM_ACCESS_READ |
+                      SNDRV_CTL_ELEM_ACCESS_VOLATILE,
+            .info = zg01_state_status_info,
+            .get = zg01_state_status_get,
+        };
+        struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
+        int ret;
+
+        if (!kctl)
+            return -ENOMEM;
+        ret = snd_ctl_add(dev->card, kctl);
+        if (ret)
+            return ret;
+    }
+
+    {
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = "State Read Known",
+            .access = SNDRV_CTL_ELEM_ACCESS_READ |
+                      SNDRV_CTL_ELEM_ACCESS_VOLATILE,
+            .info = zg01_state_known_info,
+            .get = zg01_state_known_get,
+        };
+        struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
+        int ret;
+
+        if (!kctl)
+            return -ENOMEM;
+        ret = snd_ctl_add(dev->card, kctl);
+        if (ret)
+            return ret;
+    }
+
+    for (i = 0; i < ARRAY_SIZE(zg01_meter_ctls); i++) {
+        struct snd_kcontrol_new tmpl = {
+            .iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+            .name = zg01_meter_ctls[i].name,
+            .access = SNDRV_CTL_ELEM_ACCESS_READ |
+                      SNDRV_CTL_ELEM_ACCESS_VOLATILE,
+            .info = zg01_meter_info,
+            .get = zg01_meter_ctl_get,
+            .private_value = (unsigned long)&zg01_meter_ctls[i],
         };
         struct snd_kcontrol *kctl = snd_ctl_new1(&tmpl, dev);
         int ret;

@@ -1,0 +1,43 @@
+# Maintainer: Yamaha ZG01 Driver Contributors
+
+# The GUI owns its release train: this recipe builds the standalone
+# zg01-control binary, its desktop entry, AppStream metadata, icon and
+# French catalogue. It does not install the driver or zgctl.
+_pkgname=snd-zg01
+pkgname=zg01-control-git
+pkgver=r94.5b4ac9f
+pkgrel=1
+pkgdesc="GTK4 control GUI for the Yamaha ZG01 audio interface (git)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/bsauvajon/snd-zg01"
+license=('GPL-2.0-or-later')
+depends=('gtk4' 'libadwaita' 'alsa-lib')
+makedepends=('git' 'rust' 'cargo' 'pkgconf' 'gettext')
+optdepends=(
+  'pipewire: Linux-side meter levels'
+  'snd-zg01-dkms-git: the driver exposing the controls'
+)
+provides=('zg01-control')
+conflicts=('zg01-control')
+
+# Sources come from the main branch. ZG01_SOURCE overrides that, so a fork,
+# a branch, a tag or a local checkout can be packaged. The release workflow
+# rewrites #branch=main to #tag=gui-vX.Y.Z.
+source=("${_pkgname}::${ZG01_SOURCE:-git+${url}.git#branch=main}")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${_pkgname}"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  # Arch enables LTO in CFLAGS. The C `zgpreset` archive is linked by lld
+  # through Rust; without the GCC LTO plugin its bytecode members leave the
+  # symbols undefined. Build the small C file as plain objects.
+  CFLAGS="${CFLAGS:-} -fno-lto" make -C "${_pkgname}/gui" build
+}
+
+package() {
+  make -C "${_pkgname}/gui" install DESTDIR="${pkgdir}" PREFIX=/usr
+}
