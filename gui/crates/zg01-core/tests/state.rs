@@ -13,7 +13,7 @@ fn readback_control(name: &str, value: i64, writable: bool) -> zg01_core::model:
 }
 
 #[test]
-fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
+fn a_successful_read_marks_direct_fields_and_keeps_transformed_cache() {
     let mut state = state_with(&[]);
     state.controls = controls_with_mic();
     state.control_mut("Gate").expect("Gate is present").value = ControlValue::Known(60);
@@ -21,6 +21,10 @@ fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
         .control_mut("Gate Threshold")
         .expect("Gate Threshold is present")
         .value = ControlValue::Known(50);
+    state
+        .control_mut("EQ Band 1 Gain")
+        .expect("EQ Band 1 Gain is present")
+        .value = ControlValue::Known(30);
     state
         .controls
         .push(readback_control(STATE_READ_STATUS, 1, false));
@@ -38,17 +42,17 @@ fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
     );
     assert_eq!(
         state.control("Gate Threshold").map(|control| control.value),
-        Some(ControlValue::Unknown)
+        Some(ControlValue::Known(50))
     );
     assert_eq!(
         state.control("Gate Attack").map(|control| control.value),
-        Some(ControlValue::Unknown)
+        Some(ControlValue::Known(0))
     );
     assert_eq!(
         state
             .control("Compressor Attack")
             .map(|control| control.value),
-        Some(ControlValue::Unknown)
+        Some(ControlValue::Known(0))
     );
     assert_eq!(
         state
@@ -62,7 +66,7 @@ fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
     );
     assert_eq!(
         state.control("EQ Band 1 Gain").map(|control| control.value),
-        Some(ControlValue::Unknown)
+        Some(ControlValue::Known(30))
     );
 }
 
@@ -103,7 +107,7 @@ fn a_partial_known_mask_leaves_the_missing_direct_field_unknown() {
 }
 
 #[test]
-fn a_failed_read_marks_the_mic_chain_unknown_and_blocks_save() {
+fn a_failed_read_marks_the_direct_mic_chain_unknown_and_keeps_the_cache() {
     let mut state = state_with(&[]);
     state.controls = controls_with_mic();
     state
@@ -117,10 +121,17 @@ fn a_failed_read_marks_the_mic_chain_unknown_and_blocks_save() {
 
     assert_eq!(state.state_read, StateRead::Failed);
     assert!(!state.can_save());
-    for name in ["Gate", "Gate Threshold", "EQ Band 1 Q", "EQ Band 1 Gain"] {
+    for name in ["Gate", "Gate Range", "EQ Band 1 Q"] {
         assert_eq!(
             state.control(name).map(|control| control.value),
             Some(ControlValue::Unknown),
+            "{name}"
+        );
+    }
+    for name in ["Gate Threshold", "EQ Band 1 Gain"] {
+        assert_eq!(
+            state.control(name).map(|control| control.value),
+            Some(ControlValue::Known(0)),
             "{name}"
         );
     }

@@ -75,33 +75,6 @@ const DIRECT_MIC: [(&str, u32); 19] = [
     ("EQ Band 4 Q", 1 << 21),
 ];
 
-/// The MIC fields the state dump stores as DSP values, not as UI values.
-///
-/// They cannot be populated from the dump; the GUI shows them unknown
-/// rather than caching a plausible but wrong number.  Gate Attack, Hold
-/// and Decay are here because their ALSA ranges (57..283, 0..213 and
-/// 24..300) do not fit one 7-bit payload byte.
-const TRANSFORMED_MIC: [&str; 18] = [
-    "Gate Threshold",
-    "Gate Attack",
-    "Gate Hold",
-    "Gate Decay",
-    "Compressor Attack",
-    "Compressor Release",
-    "Compressor Out Gain",
-    "Limiter Attack",
-    "Limiter Release",
-    "Limiter Out Gain",
-    "EQ Band 1 Gain",
-    "EQ Band 2 Gain",
-    "EQ Band 3 Gain",
-    "EQ Band 4 Gain",
-    "EQ Band 1 Frequency",
-    "EQ Band 2 Frequency",
-    "EQ Band 3 Frequency",
-    "EQ Band 4 Frequency",
-];
-
 /// The result of the last MIC state read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateRead {
@@ -308,10 +281,11 @@ impl AppState {
     ///
     /// Save is blocked while the device is disconnected. It is allowed
     /// after a successful MIC state read, even though the transformed MIC
-    /// fields and the non-MIC sections remain unknown: Save persists the
-    /// device state and does not write those cached values. Before a read,
-    /// the old all-known rule still applies, so a Reset cannot save the
-    /// cache defaults and a fully applied preset can still be saved.
+    /// fields and the non-MIC sections come from the driver cache: Save
+    /// persists the device state and does not write those cached values.
+    /// Before a read, the old all-known rule still applies, so a Reset
+    /// cannot save the cache defaults and a fully applied preset can still
+    /// be saved.
     pub fn can_save(&self) -> bool {
         self.device.is_connected()
             && (self.state_read.is_known()
@@ -370,15 +344,13 @@ impl AppState {
         }
     }
 
-    /// Forgets the whole MIC chain.
+    /// Forgets the direct MIC fields.
     ///
-    /// Used when a Read failed or timed out: the direct fields and the
-    /// transformed fields no longer describe the device.
+    /// Used when a Read failed or timed out: the values that came from the
+    /// dump no longer describe the device. The transformed fields keep the
+    /// driver cache, which a failed read does not invalidate.
     pub fn mark_mic_unknown(&mut self) {
         for (name, _) in DIRECT_MIC {
-            self.mark_unknown(name);
-        }
-        for name in TRANSFORMED_MIC {
             self.mark_unknown(name);
         }
     }
@@ -387,10 +359,10 @@ impl AppState {
     ///
     /// A successful read (`State Read Status == 1`) makes the direct MIC
     /// fields known from the values the driver just read; the fields the
-    /// dump stores as DSP values are marked unknown, never shown as if they
-    /// came from the device. A failed or pending read marks the whole MIC
-    /// chain unknown. The Mixage and Avancé sections are outside this
-    /// scope and keep their cached values; the Mixage screen carries a
+    /// dump stores as DSP values keep the driver cache, never shown as if
+    /// they came from the device. A failed or pending read marks only the
+    /// direct MIC chain unknown. The Mixage and Avancé sections are outside
+    /// this scope and keep their cached values; the Mixage screen carries a
     /// notice.
     pub fn apply_readback(&mut self) {
         let status = self
@@ -414,9 +386,6 @@ impl AppState {
                     }
                     None => self.mark_unknown(name),
                 }
-            }
-            for name in TRANSFORMED_MIC {
-                self.mark_unknown(name);
             }
             self.state_read = StateRead::Known { known };
         } else {
