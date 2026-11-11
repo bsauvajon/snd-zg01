@@ -287,6 +287,31 @@ STREAM OUT USB/HDMI/MON switches route the stream output: MON toggles the
 stream-monitor path, USB and HDMI select the digital outputs. They do not set
 the local monitor volume.
 
+On the host side, this driver exposes only the **Voice In** capture device.
+The ZG01's separate USB **Streaming** virtual device, which carries the mix
+configured by the Mixage screen, is not implemented. OBS therefore cannot
+select the internal stream mix as one USB source; see the next section.
+
+### Capturing the stream in OBS
+
+Under Windows the ZG01 exposes two USB output devices: **Voice** (microphone
+and voice chat) and **Streaming** (the STREAMING OUTPUT MIXER). This driver
+exposes only the **Voice In** capture PCM; the **Streaming** capture device
+is missing. On Linux, build the stream in OBS instead:
+
+- Add an OBS **Audio Input Capture** and select **Yamaha ZG01 Voice In** for
+  the microphone/voice path.
+- Add OBS **Audio Output Capture** sources for **Yamaha ZG01 Game Out** and
+  **Yamaha ZG01 Voice Out** (their PipeWire/Pulse monitor), or route the game
+  and chat to the default sink and use OBS desktop audio.
+- Set the stream balance in OBS's own mixer. The GUI's Mixage faders and
+  STREAM OUT switches configure the device's internal Streaming output; they
+  do not drive the OBS sources above.
+- To capture the device's internal stream mix as a single source, use the
+  **HDMI OUT** jack with an HDMI capture device (enable `Streaming HDMI
+  Out`), or use the Windows ZG Controller with its USB Streaming device.
+  Exposing the USB Streaming capture is future driver work.
+
 ### Keybindings
 
 The fader widgets are keyboard accessible:
@@ -334,12 +359,14 @@ bar. HDMI is deferred until its field is decoded.
 - **PipeWire meters are runtime-optional.** They need `pw-dump` and
   `pw-record`; if PipeWire, a tool or a ZG01 node is missing, the `PW` bars
   are hidden. There is no enable/disable preference yet.
-- **Mixage is a stream mixer, not a local monitor.** The MIC/VOICE/GAME
-  faders and the STREAM OUT switches change the USB/stream mix and routing.
-  They do not set the local headphone/speaker volume, so moving them can
-  have no audible local effect. The local monitor path is on the physical
-  knobs and the `Monitor *` controls, which are only in Avancé until the
-  **Casque** screen exists.
+- **The internal Streaming output is not exposed over USB.** The
+  MIC/VOICE/GAME faders and the STREAM OUT switches configure the device's
+  STREAMING OUTPUT MIXER. This driver exposes only the **Voice In** capture
+  device, not the separate USB **Streaming** virtual device. They therefore
+  do not drive the local headphone/speaker volume or the OBS sources: mix
+  Voice In + Game Out/Voice Out in OBS, or capture the HDMI OUT. The local
+  monitor is on the physical knobs and the `Monitor *` controls in Avancé
+  until the **Casque** screen exists.
 - **The curated screens are incomplete.** **Jeu**, **Casque** and
   **Réglages** are not implemented. Their controls (game effect, binaural,
   monitor EQ, HDMI select/4K/HDCP, LED, preferences) remain reachable in
