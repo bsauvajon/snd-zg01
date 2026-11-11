@@ -44,9 +44,9 @@ fn stream_output_uses_the_three_switches() {
 }
 
 #[test]
-fn game_strip_has_no_card_meter_in_v1() {
+fn game_strip_has_its_card_meter() {
     let model = MixageModel::from_controls(&controls_with_mixage());
-    assert_eq!(model.strips[2].meter, None);
+    assert_eq!(model.strips[2].meter, Some(MeterId::GameMix));
     assert_eq!(model.output.meter, Some(MeterId::StreamMix));
 }
 

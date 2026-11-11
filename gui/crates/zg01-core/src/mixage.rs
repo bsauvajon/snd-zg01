@@ -12,9 +12,9 @@
 use crate::meters::METER_CONTROLS;
 use crate::model::Control;
 
-/// One of the four meters the driver registers.
+/// One of the six meters the driver registers.
 ///
-/// The variants are the four decoded meter controls of
+/// The variants are the six decoded meter controls of
 /// [`crate::meters::METER_CONTROLS`]; `index` is the slot of the readings
 /// in a [`crate::meters::MeterSnapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,18 +25,42 @@ pub enum MeterId {
     MicOut,
     /// `Meter PC In`.
     PcIn,
+    /// `Meter HDMI In`.
+    HdmiIn,
+    /// `Meter Game Mix`.
+    GameMix,
     /// `Meter Stream Mix`.
     StreamMix,
 }
 
 impl MeterId {
+    /// Every meter, in snapshot-slot order.
+    pub const ALL: [MeterId; 6] = [
+        MeterId::MicIn,
+        MeterId::MicOut,
+        MeterId::PcIn,
+        MeterId::HdmiIn,
+        MeterId::GameMix,
+        MeterId::StreamMix,
+    ];
+
     /// The slot of this meter in a [`crate::meters::MeterSnapshot`].
     pub const fn index(self) -> usize {
         match self {
             MeterId::MicIn => 0,
             MeterId::MicOut => 1,
             MeterId::PcIn => 2,
-            MeterId::StreamMix => 3,
+            MeterId::HdmiIn => 3,
+            MeterId::GameMix => 4,
+            MeterId::StreamMix => 5,
+        }
+    }
+
+    /// How many channels the group publishes.
+    pub const fn channel_count(self) -> usize {
+        match self {
+            MeterId::MicIn | MeterId::MicOut => 1,
+            MeterId::PcIn | MeterId::HdmiIn | MeterId::GameMix | MeterId::StreamMix => 8,
         }
     }
 
@@ -169,7 +193,7 @@ impl MixageModel {
                     level: find(controls, &["Streaming Game Level Steps"]),
                     mute: find(controls, &["Streaming Game Mute Steps"]),
                     fx: find(controls, &["Streaming Game FX Steps"]),
-                    meter: None,
+                    meter: Some(MeterId::GameMix),
                     linux_meter: Some(LinuxMeterId::GameOut),
                 },
             ],
@@ -208,12 +232,7 @@ mod tests {
 
     #[test]
     fn the_meter_ids_match_the_snapshot_slots() {
-        for meter in [
-            MeterId::MicIn,
-            MeterId::MicOut,
-            MeterId::PcIn,
-            MeterId::StreamMix,
-        ] {
+        for meter in MeterId::ALL {
             assert_eq!(meter.control(), METER_CONTROLS[meter.index()]);
         }
     }

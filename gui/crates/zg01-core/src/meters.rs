@@ -1,40 +1,55 @@
 //! The meter poller.
 //!
-//! The driver publishes the levels of the four decoded meters as read-only
-//! ALSA controls. Userspace reads them at 20 Hz and hands the readings to
-//! the GUI, which computes the peak hold and the clip indicators.
+//! The driver publishes the levels of the six card meter groups as
+//! read-only ALSA controls. The mic groups carry one value; the PC, HDMI,
+//! game and stream groups carry eight. Userspace reads them at 20 Hz and
+//! hands the readings to the GUI, which computes the peak hold and the clip
+//! indicators.
 //!
 //! A meter that cannot be read is *not* a meter that reads zero: a control
-//! that does not exist, and a control that has no value because the device
-//! does not stream, are both reported as [`None`].
+//! that does not exist, a control that has no value because the device does
+//! not stream, and a channel the old driver does not publish are all
+//! reported as [`None`].
 
 use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::alsa::{AlsaBackend, AlsaError};
+use crate::mixage::MeterId;
 
-/// The four meter controls the driver registers.
-///
-/// `Meter Game Mix` and `Meter HDMI In` are reserved names and are not
-/// registered by the driver.
-pub const METER_CONTROLS: [&str; 4] = [
+/// The six meter controls the driver registers.
+pub const METER_CONTROLS: [&str; 6] = [
     "Meter Mic In",
     "Meter Mic Out",
     "Meter PC In",
+    "Meter HDMI In",
+    "Meter Game Mix",
     "Meter Stream Mix",
 ];
 
 /// How often the meters are read by default.
 pub const METER_INTERVAL: Duration = Duration::from_millis(50);
 
-/// The readings of the four meters, taken at one moment.
+/// Which contract produced a snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeterLayout {
+    /// Six controls; the surround groups carry eight values.
+    V2,
+    /// The four one-value controls of the old driver.
+    Legacy,
+}
+
+/// The readings of the six meter groups, taken at one moment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeterSnapshot {
-    /// The value of each meter of [`METER_CONTROLS`].
+    /// The channels of each group, in [`MeterId`] slot order.
     ///
-    /// `None` means the meter could not be read, not that it reads zero.
-    pub values: [Option<i64>; 4],
+    /// Only channel 0 is used for the mic groups. `None` means the channel
+    /// could not be read, not that it reads zero.
+    pub values: [[Option<i64>; 8]; 6],
+    /// Which control layout produced the snapshot.
+    pub layout: MeterLayout,
     /// When the readings were taken.
     pub at: Instant,
     /// Whether a read failed because the card went away.
@@ -50,40 +65,70 @@ pub struct MeterSnapshot {
 }
 
 impl MeterSnapshot {
-    /// The value of the meter at `index`, when it could be read.
-    pub fn value(&self, index: usize) -> Option<i64> {
-        self.values.get(index).copied().flatten()
+    /// The value of one channel of `id`, when it could be read.
+    pub fn value(&self, id: MeterId, channel: usize) -> Option<i64> {
+        self.values[id.index()].get(channel).copied().flatten()
+    }
+
+    /// The loudest readable channel of `id`.
+    pub fn max(&self, id: MeterId) -> Option<i64> {
+        self.values[id.index()].iter().flatten().copied().max()
     }
 }
 
-/// Reads the four meters once.
-///
-/// A control that does not exist and a control that has no value are
-/// reported as [`None`]; any other failure is logged and reported the
-/// same way, so one broken meter never hides the others.
+/// Reads the meters once.
 pub fn poll_meters(backend: &dyn AlsaBackend) -> MeterSnapshot {
     poll_meters_with_generation(backend, 0)
 }
 
-/// Reads the four meters once for one backend generation.
+/// Reads the meters once for one backend generation.
+///
+/// A control that does not exist and a control that has no value are
+/// reported as [`None`]; any other failure is logged and reported the same
+/// way, so one broken meter never hides the others.
 pub fn poll_meters_with_generation(backend: &dyn AlsaBackend, generation: u64) -> MeterSnapshot {
-    let mut values = [None; 4];
+    let mut values = [[None; 8]; 6];
+    let mut present = [false; 6];
+    let mut counts = [0_usize; 6];
     let mut lost = false;
-    for (slot, name) in values.iter_mut().zip(METER_CONTROLS) {
-        *slot = match backend.read(name) {
-            Ok(value) => Some(value),
-            Err(AlsaError::Unknown(_)) | Err(AlsaError::NoData(_)) => None,
+
+    for (id, name) in MeterId::ALL.iter().zip(METER_CONTROLS) {
+        match backend.read_values(name) {
+            Ok(readings) => {
+                present[id.index()] = true;
+                counts[id.index()] = readings.len();
+                for (slot, value) in values[id.index()].iter_mut().zip(readings) {
+                    *slot = Some(value);
+                }
+            }
+            Err(AlsaError::Unknown(_)) => {}
+            Err(AlsaError::NoData(_)) => {
+                // The control exists but the device has no reading yet.
+                // It still tells us the driver generation.
+                present[id.index()] = true;
+            }
             Err(err) => {
+                present[id.index()] = true;
                 if err.is_liveness() {
                     lost = true;
                 }
                 tracing::warn!("could not read the meter {name}: {err}");
-                None
             }
-        };
+        }
     }
+
+    let has_new = present[MeterId::GameMix.index()] && present[MeterId::HdmiIn.index()];
+    let layout = if has_new {
+        MeterLayout::V2
+    } else if present[MeterId::PcIn.index()] && counts[MeterId::PcIn.index()] == 1 {
+        MeterLayout::Legacy
+    } else {
+        MeterLayout::V2
+    };
+
     MeterSnapshot {
         values,
+        layout,
         at: Instant::now(),
         lost,
         generation,
@@ -121,25 +166,142 @@ pub fn spawn_poller_with_generation(
 
 #[cfg(test)]
 mod tests {
-    use super::{MeterSnapshot, METER_CONTROLS};
+    use std::time::Instant;
 
-    #[test]
-    fn the_meter_order_follows_the_controls() {
-        assert_eq!(METER_CONTROLS.len(), 4);
-        assert_eq!(METER_CONTROLS[0], "Meter Mic In");
-        assert_eq!(METER_CONTROLS[3], "Meter Stream Mix");
+    use super::{poll_meters_with_generation, MeterLayout, MeterSnapshot, METER_CONTROLS};
+    use crate::alsa::{ControlInfo, ControlKind, FakeAlsa, FakeError};
+    use crate::mixage::MeterId;
+
+    fn control(name: &str, count: u32) -> ControlInfo {
+        ControlInfo {
+            name: name.to_string(),
+            kind: ControlKind::Integer,
+            min: 0,
+            max: 127,
+            step: 0,
+            count,
+            writable: false,
+        }
+    }
+
+    fn fake_v2() -> FakeAlsa {
+        let fake = FakeAlsa::new(vec![
+            control("Meter Mic In", 1),
+            control("Meter Mic Out", 1),
+            control("Meter PC In", 8),
+            control("Meter HDMI In", 8),
+            control("Meter Game Mix", 8),
+            control("Meter Stream Mix", 8),
+        ]);
+        fake.set_value("Meter Mic In", 10);
+        fake.set_value("Meter Mic Out", 11);
+        fake.set_values("Meter PC In", vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        fake.set_values("Meter HDMI In", vec![9; 8]);
+        fake.set_values("Meter Game Mix", vec![20; 8]);
+        fake.set_values("Meter Stream Mix", vec![30; 8]);
+        fake
     }
 
     #[test]
-    fn a_snapshot_knows_its_values() {
+    fn the_six_meter_ids_have_stable_slots_and_counts() {
+        assert_eq!(MeterId::MicIn.index(), 0);
+        assert_eq!(MeterId::MicOut.index(), 1);
+        assert_eq!(MeterId::PcIn.index(), 2);
+        assert_eq!(MeterId::HdmiIn.index(), 3);
+        assert_eq!(MeterId::GameMix.index(), 4);
+        assert_eq!(MeterId::StreamMix.index(), 5);
+        assert_eq!(MeterId::MicIn.channel_count(), 1);
+        assert_eq!(MeterId::PcIn.channel_count(), 8);
+        assert_eq!(MeterId::PcIn.control(), "Meter PC In");
+        assert_eq!(METER_CONTROLS.len(), 6);
+    }
+
+    #[test]
+    fn a_v2_snapshot_reads_by_group_and_channel() {
+        let snapshot = poll_meters_with_generation(&fake_v2(), 3);
+        assert_eq!(snapshot.layout, MeterLayout::V2);
+        assert_eq!(snapshot.value(MeterId::MicIn, 0), Some(10));
+        assert_eq!(snapshot.value(MeterId::MicIn, 1), None);
+        assert_eq!(snapshot.value(MeterId::PcIn, 0), Some(1));
+        assert_eq!(snapshot.value(MeterId::PcIn, 7), Some(8));
+        assert_eq!(snapshot.value(MeterId::PcIn, 8), None);
+        assert_eq!(snapshot.max(MeterId::PcIn), Some(8));
+        assert_eq!(snapshot.value(MeterId::GameMix, 0), Some(20));
+        assert_eq!(snapshot.generation, 3);
+    }
+
+    #[test]
+    fn a_legacy_driver_keeps_its_own_layout() {
+        let fake = FakeAlsa::new(vec![
+            control("Meter Mic In", 1),
+            control("Meter Mic Out", 1),
+            control("Meter PC In", 1),
+            control("Meter Stream Mix", 1),
+        ]);
+        fake.set_value("Meter Mic In", 52);
+        fake.set_value("Meter Mic Out", 0);
+        fake.set_value("Meter PC In", 38);
+        fake.set_value("Meter Stream Mix", 126);
+
+        let snapshot = poll_meters_with_generation(&fake, 0);
+        assert_eq!(snapshot.layout, MeterLayout::Legacy);
+        assert_eq!(snapshot.value(MeterId::PcIn, 0), Some(38));
+        assert_eq!(snapshot.value(MeterId::StreamMix, 0), Some(126));
+        assert_eq!(snapshot.value(MeterId::GameMix, 0), None);
+        assert_eq!(snapshot.value(MeterId::HdmiIn, 0), None);
+    }
+
+    #[test]
+    fn a_short_v2_array_leaves_the_rest_unknown() {
+        let fake = FakeAlsa::new(vec![
+            control("Meter Mic In", 1),
+            control("Meter PC In", 1),
+            control("Meter HDMI In", 8),
+            control("Meter Game Mix", 8),
+            control("Meter Stream Mix", 8),
+        ]);
+        fake.set_value("Meter PC In", 38);
+
+        let snapshot = poll_meters_with_generation(&fake, 0);
+        assert_eq!(snapshot.layout, MeterLayout::V2);
+        assert_eq!(snapshot.value(MeterId::PcIn, 0), Some(38));
+        assert_eq!(snapshot.value(MeterId::PcIn, 1), None);
+    }
+
+    #[test]
+    fn a_lost_card_is_marked_and_reads_nothing() {
+        let fake = fake_v2();
+        for name in METER_CONTROLS {
+            fake.set_error(name, FakeError::DeviceLost);
+        }
+        let snapshot = poll_meters_with_generation(&fake, 0);
+        assert!(snapshot.lost);
+        assert!(snapshot
+            .values
+            .iter()
+            .all(|group| group.iter().all(Option::is_none)));
+    }
+
+    #[test]
+    fn a_snapshot_with_no_readings_is_all_none() {
         let snapshot = MeterSnapshot {
-            values: [Some(1), None, Some(3), None],
-            at: std::time::Instant::now(),
+            values: [[None; 8]; 6],
+            layout: MeterLayout::V2,
+            at: Instant::now(),
             lost: false,
             generation: 0,
         };
-        assert_eq!(snapshot.value(0), Some(1));
-        assert_eq!(snapshot.value(1), None);
-        assert_eq!(snapshot.value(9), None);
+        assert_eq!(snapshot.value(MeterId::PcIn, 0), None);
+        assert_eq!(snapshot.max(MeterId::PcIn), None);
+        assert!(!snapshot.lost);
+    }
+
+    #[test]
+    fn an_unknown_meter_is_not_zero() {
+        let fake = FakeAlsa::new(vec![control("Meter PC In", 8)]);
+        fake.set_error("Meter PC In", FakeError::Unknown);
+        let snapshot = poll_meters_with_generation(&fake, 0);
+        assert_eq!(snapshot.value(MeterId::PcIn, 0), None);
+        assert!(!snapshot.lost);
     }
 }
