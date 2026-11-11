@@ -88,27 +88,17 @@ pub fn poll_meters(backend: &dyn AlsaBackend) -> MeterSnapshot {
 /// way, so one broken meter never hides the others.
 pub fn poll_meters_with_generation(backend: &dyn AlsaBackend, generation: u64) -> MeterSnapshot {
     let mut values = [[None; 8]; 6];
-    let mut present = [false; 6];
-    let mut counts = [0_usize; 6];
     let mut lost = false;
 
     for (id, name) in MeterId::ALL.iter().zip(METER_CONTROLS) {
         match backend.read_values(name) {
             Ok(readings) => {
-                present[id.index()] = true;
-                counts[id.index()] = readings.len();
                 for (slot, value) in values[id.index()].iter_mut().zip(readings) {
                     *slot = Some(value);
                 }
             }
-            Err(AlsaError::Unknown(_)) => {}
-            Err(AlsaError::NoData(_)) => {
-                // The control exists but the device has no reading yet.
-                // It still tells us the driver generation.
-                present[id.index()] = true;
-            }
+            Err(AlsaError::Unknown(_)) | Err(AlsaError::NoData(_)) => {}
             Err(err) => {
-                present[id.index()] = true;
                 if err.is_liveness() {
                     lost = true;
                 }
@@ -117,10 +107,17 @@ pub fn poll_meters_with_generation(backend: &dyn AlsaBackend, generation: u64) -
         }
     }
 
-    let has_new = present[MeterId::GameMix.index()] && present[MeterId::HdmiIn.index()];
-    let layout = if has_new {
-        MeterLayout::V2
-    } else if present[MeterId::PcIn.index()] && counts[MeterId::PcIn.index()] == 1 {
+    // The layout comes from the declared control counts, never from a
+    // reading: a legacy driver with no meter data must stay legacy, and a
+    // driver that publishes either new control must be treated as v2 even
+    // when its arrays are short.
+    let has_game = backend.control_count("Meter Game Mix").is_some();
+    let has_hdmi = backend.control_count("Meter HDMI In").is_some();
+    let legacy = !has_game
+        && !has_hdmi
+        && backend.control_count("Meter PC In") == Some(1)
+        && backend.control_count("Meter Stream Mix") == Some(1);
+    let layout = if legacy {
         MeterLayout::Legacy
     } else {
         MeterLayout::V2
@@ -249,6 +246,45 @@ mod tests {
         assert_eq!(snapshot.value(MeterId::StreamMix, 0), Some(126));
         assert_eq!(snapshot.value(MeterId::GameMix, 0), None);
         assert_eq!(snapshot.value(MeterId::HdmiIn, 0), None);
+    }
+
+    #[test]
+    fn a_legacy_driver_without_readings_remains_legacy() {
+        let fake = FakeAlsa::new(vec![
+            control("Meter Mic In", 1),
+            control("Meter Mic Out", 1),
+            control("Meter PC In", 1),
+            control("Meter Stream Mix", 1),
+        ]);
+        for name in [
+            "Meter Mic In",
+            "Meter Mic Out",
+            "Meter PC In",
+            "Meter Stream Mix",
+        ] {
+            fake.set_error(name, FakeError::NoData);
+        }
+
+        let snapshot = poll_meters_with_generation(&fake, 0);
+        assert_eq!(snapshot.layout, MeterLayout::Legacy);
+        assert!(snapshot
+            .values
+            .iter()
+            .all(|group| group.iter().all(Option::is_none)));
+    }
+
+    #[test]
+    fn one_new_control_prevents_legacy_detection() {
+        let fake = FakeAlsa::new(vec![
+            control("Meter PC In", 1),
+            control("Meter Stream Mix", 1),
+            control("Meter Game Mix", 8),
+        ]);
+        fake.set_value("Meter PC In", 38);
+
+        let snapshot = poll_meters_with_generation(&fake, 0);
+        assert_eq!(snapshot.layout, MeterLayout::V2);
+        assert_eq!(snapshot.value(MeterId::PcIn, 0), Some(38));
     }
 
     #[test]

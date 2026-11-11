@@ -268,6 +268,18 @@ impl MixageScreen {
         }
     }
 
+    /// Keeps the old four-meter presentation for a legacy driver.
+    ///
+    /// The GAME strip had no card bar in that layout; its `PW` bar stays.
+    pub(crate) fn set_legacy(&self, legacy: bool) {
+        for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {
+            if metered.card == Some(MeterId::GameMix) {
+                metered.meter.set_card_present(!legacy);
+                metered.meter.set_label(if legacy { "PW" } else { "CARD" });
+            }
+        }
+    }
+
     /// Installs one Linux reading.
     pub(crate) fn set_linux_meter(&self, id: LinuxMeterId, available: bool, level: Option<f64>) {
         for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {

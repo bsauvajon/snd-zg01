@@ -86,7 +86,14 @@ impl MetersScreen {
             }
             content.append(&row);
         }
-        root.append(&content);
+
+        let scrolled = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .vexpand(true)
+            .child(&content)
+            .build();
+        root.append(&scrolled);
 
         MetersScreen {
             root,
@@ -117,5 +124,37 @@ impl MetersScreen {
                     .set_card_mono(level.map(|steps| (steps as f64 / 127.0).clamp(0.0, 1.0)));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gtk4 as gtk;
+    use gtk4::prelude::*;
+
+    use zg01_core::layout::Layout;
+    use zg01_core::model::{AppState, DeviceState};
+
+    use super::MetersScreen;
+
+    #[test]
+    #[ignore = "needs a GTK display; run under Xvfb with --ignored"]
+    fn the_page_fits_a_default_window() {
+        gtk::init().expect("a GTK display, e.g. Xvfb");
+        let state = AppState::new(
+            DeviceState::Disconnected,
+            Vec::new(),
+            Layout {
+                screens: Vec::new(),
+            },
+        );
+        let screen = MetersScreen::new(&state);
+        let root = screen.widget();
+        let (_, natural) = root.preferred_size();
+        assert!(
+            natural.height() <= 680,
+            "the Meters page must scroll: natural height {}",
+            natural.height()
+        );
     }
 }

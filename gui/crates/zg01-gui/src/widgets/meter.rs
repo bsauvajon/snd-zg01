@@ -154,6 +154,7 @@ struct MeterInner {
 pub(crate) struct Meter {
     root: gtk::Box,
     area: gtk::DrawingArea,
+    label: gtk::Label,
     inner: Rc<MeterInner>,
 }
 
@@ -207,7 +208,12 @@ impl Meter {
             draw(context, width, height, &draw_inner);
         });
 
-        Meter { root, area, inner }
+        Meter {
+            root,
+            area,
+            label,
+            inner,
+        }
     }
 
     /// The widget to put in a layout.
@@ -223,6 +229,23 @@ impl Meter {
     /// Installs one card reading; the Linux bar is untouched.
     pub(crate) fn set_card_mono(&self, card: Option<f64>) {
         self.set_card(&[card]);
+    }
+
+    /// Changes the label under the bars.
+    pub(crate) fn set_label(&self, text: &str) {
+        self.label.set_text(text);
+    }
+
+    /// Shows or hides the card track, keeping the Linux bar.
+    pub(crate) fn set_card_present(&self, present: bool) {
+        let (count, linux) = {
+            let mut spec = self.inner.spec.borrow_mut();
+            spec.card_present = present;
+            (spec.card_count, spec.linux_present)
+        };
+        self.area
+            .set_content_width(meter_width(present, count, linux));
+        self.area.queue_draw();
     }
 
     /// Installs a Linux source and its reading; the card bar is untouched.

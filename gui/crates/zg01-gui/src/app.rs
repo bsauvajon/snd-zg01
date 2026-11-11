@@ -1369,11 +1369,15 @@ impl App {
                 screen.set_control(id.control(), value);
             }
         }
+        let legacy = snapshot.layout == MeterLayout::Legacy;
         if let Some(screen) = &self.meters {
-            let legacy = snapshot.layout == MeterLayout::Legacy;
             screen.set_legacy(legacy);
             self.shell.set_page_enabled(Page::Meters, !legacy);
         }
+        if let Some(screen) = &self.mixage {
+            screen.set_legacy(legacy);
+        }
+        self.shell.set_meter_legacy(legacy);
     }
 
     /// Installs the Linux readings on the screens.

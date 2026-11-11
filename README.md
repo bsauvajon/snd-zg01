@@ -184,11 +184,15 @@ values, one per channel:
 
 - `Meter Mic In` (1 value): the mic before the gate.
 - `Meter Mic Out` (1 value): the mic after the gate.
-- `Meter PC In` (8 values): the USB PC playback; Voice Out is on L/R and
-  Game Out on the centre/surround channels.
-- `Meter HDMI In` (8 values): the HDMI input.
-- `Meter Game Mix` (8 values): the game mix; HDMI is the measured source.
-- `Meter Stream Mix` (8 values): the streaming output mix.
+- `Meter PC In` (8 values): the USB PC playback; Game Out is on L/R in
+  the measured captures.
+- `Meter HDMI In` (8 values): the HDMI input, on L/R in the measured
+  captures.
+- `Meter Game Mix` (8 values): the game mix; HDMI and Game Out are on L/R
+  in the measured captures.
+- `Meter Stream Mix` (8 values): the streaming output mix; Voice playback
+  is on L/R in the measured captures. The exact VOICE strip mapping is
+  still open.
 
 Each value is 0–127 and linear in dB: 0 is −127 dB and 127 is 0 dBFS.
 The device sends a frame about every 50 ms (20 Hz); a read returns the

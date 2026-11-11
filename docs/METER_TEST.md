@@ -42,24 +42,23 @@ the min values include the decay.
 
 | # | Check | Result |
 |---|---|---|
-| 1 | Four controls registered, `access=r--v----`, `min=0 max=127`, no GAME/HDMI control | PASS |
-| 2 | Game Out playback moves `stream_mix` and not `pc_in` | PASS |
-| 3 | Voice Out playback moves `pc_in` and `stream_mix`, and tracks the sine level | PASS |
+| 1 | Six controls registered, `access=r--v----`, `min=0 max=127`, counts 1/1/8/8/8/8 | **NOT RUN (v2)**; the PASS rows below are the v1 four-control session |
+| 2 | v1: Game Out playback moves the two stream channels and not the old `pc_in` pair | PASS (v1) |
+| 3 | v1: Voice playback moves the old `pc_in` pair and the stream pair | PASS (v1) |
 | 4 | Silence reads the floor (see note) | PASS, with tolerance |
 | 5 | Mic In / Mic Out track a deliberate mic input | NOT RUN (see note) |
 | 6 | Disconnect while streaming: no crash, stream ends cleanly | PASS |
-| 7 | Replug recreates the card and the six controls, and values resume | PASS in the earlier session; **BLOCKED now** (controls reappear, reads are `-ENODATA`) |
+| 7 | v2: replug recreates the card and the six controls, with arrays | **NOT RUN / BLOCKED** (the v1 session only had four controls) |
 | 8 | Suspend/resume restarts the reader and the keepalive | PASS for the reader/keepalive in `freeze` (s2idle); **frames never resumed** in the latest session; `reset_resume` not exercised |
-| 9 | `alsactl store` and `restore` succeed; meters are not restored | PASS |
+| 9 | v2: `alsactl store` and `restore` succeed; the six controls are not restored | **NOT RUN / BLOCKED** (v1 PASS) |
 | 10 | No oops, BUG, WARNING or lockdep splat in the log | PASS |
 
-### Results
+### Historical v1 results (four controls)
 
-**1. Registration.** `amixer -c zg01 controls` lists the six names.
-`Meter Mic In` and `Meter Mic Out` report `values=1`; `Meter PC In`,
-`Meter HDMI In`, `Meter Game Mix` and `Meter Stream Mix` report
-`values=8`. Each `cget` reports `type=INTEGER,access=r--v----,min=0,
-max=127`.
+**1. Registration (v1).** The earlier session listed the four controls
+`Meter Mic In`, `Meter Mic Out`, `Meter PC In` and `Meter Stream Mix`,
+each `values=1`, `type=INTEGER,access=r--v----,min=0,max=127`. The v2
+six-control registration and array counts are **NOT RUN** (see below).
 
 **2 and 3. Playback tracks the documented table.** Measured medians from
 the earlier decode, with the observed values. The `pc_in`/`stream_mix`
@@ -167,17 +166,33 @@ message, not a fault.
   `pc_in`/`game_mix` 0/1 and HDMI on `hdmi_in`/`game_mix` 0/1; the
   surround channels 2–7 are not measured yet.
 
+### v2 checks (NOT RUN)
+
+- Six controls and counts: **NOT RUN**. The controls cannot be inspected
+  while the ZG01 is attached to the Windows VM and the host runs the old
+  DKMS module. `tests/test-zg01-meter-controls.sh` is the check to run
+  with the new module.
+- Replug with the six controls and eight-value arrays: **NOT RUN**.
+- `alsactl store`/`restore` with the six controls: **NOT RUN**; the v1
+  four-control result is the only evidence, and the controls are still
+  read-only and volatile.
+
 ## Reproducing
 
 Generate a −20 dBFS sine (6 s, stereo S32_LE, 48 kHz) with any tool, for
-example Python's `wave` module, and play it on Voice Out. Then read the
-meter during playback:
+example Python's `wave` module. The v2 map makes each surround control an
+eight-value array; read the whole array, not one value.
+
+Game Out on the Linux card (`hw:zg01,0`) is the measured path:
 
 ```bash
-aplay -q -D hw:zg01,1 sine-m20.wav &   # Voice Out
+aplay -q -D hw:zg01,0 sine-m20.wav &
 sleep 2
-amixer -c zg01 cget 'name=Meter PC In'  # expect about 107 (−20 dB)
+amixer -c zg01 cget 'name=Meter PC In'    # channels 0/1 around 107
+amixer -c zg01 cget 'name=Meter Game Mix' # channels 0/1 around 107
 ```
 
-Use `hw:zg01,0` for Game Out, and read `Meter Stream Mix` instead. Raw
-captures are not committed. They stay on the test machine.
+The current captures put Game Out and HDMI on the L/R channels of their
+groups; Voice playback was observed on `Meter Stream Mix` 0/1. The exact
+Linux PCM-to-VOICE-strip mapping is still open. Raw captures are not
+committed. They stay on the test machine.

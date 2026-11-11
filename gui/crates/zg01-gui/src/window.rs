@@ -56,6 +56,8 @@ pub(crate) struct Shell {
     /// The banner shown while the driver cache no longer describes the
     /// device, i.e. after a Reset.
     unknown_banner: adw::Banner,
+    /// The banner shown when the driver only publishes the old meter set.
+    legacy_banner: adw::Banner,
     /// The banner shown when the card disappears while the app runs.
     device_banner: adw::Banner,
     /// The banner shown while startup reads or a reset runs.
@@ -80,6 +82,7 @@ impl Shell {
         let (sidebar_box, sidebar) = build_sidebar(&sender);
         let stack = build_stack();
         let unknown_banner = build_unknown_banner();
+        let legacy_banner = build_legacy_banner();
         let device_banner = build_device_banner();
         let busy_banner = build_busy_banner();
         let reapply_banner = build_reapply_banner(&sender);
@@ -95,6 +98,7 @@ impl Shell {
         toolbar.add_top_bar(&header);
         toolbar.add_top_bar(&busy_banner);
         toolbar.add_top_bar(&unknown_banner);
+        toolbar.add_top_bar(&legacy_banner);
         toolbar.add_top_bar(&reapply_banner);
         toolbar.add_top_bar(&device_banner);
         toolbar.set_content(Some(&main));
@@ -119,6 +123,7 @@ impl Shell {
             save_button,
             reset_button,
             unknown_banner,
+            legacy_banner,
             device_banner,
             busy_banner,
             read_badge,
@@ -251,6 +256,11 @@ impl Shell {
         if unknown {
             self.device_banner.set_revealed(false);
         }
+    }
+
+    /// Shows or hides the legacy-meter banner.
+    pub fn set_meter_legacy(&self, legacy: bool) {
+        self.legacy_banner.set_revealed(legacy);
     }
 
     /// Shows or hides the reconnect banner.
@@ -432,6 +442,16 @@ fn build_unknown_banner() -> adw::Banner {
     banner.set_revealed(false);
     banner.set_tooltip_text(Some(&t(
         "The ZG01 reloaded its persisted settings: the displayed values no longer describe it.",
+    )));
+    banner
+}
+
+/// The banner shown when the driver only publishes the old meter controls.
+fn build_legacy_banner() -> adw::Banner {
+    let banner = adw::Banner::new(&t("Legacy driver — card meters use the four-meter view"));
+    banner.set_revealed(false);
+    banner.set_tooltip_text(Some(&t(
+        "Update the snd-zg01 module to get the PC, HDMI, game and stream channels.",
     )));
     banner
 }

@@ -135,6 +135,14 @@ pub trait AlsaBackend: Send + Sync {
     /// Every control the device publishes.
     fn list_controls(&self) -> Result<Vec<ControlInfo>, AlsaError>;
 
+    /// How many values a control declares, when the backend knows it.
+    ///
+    /// The meter poller uses this to tell the legacy four-value driver from
+    /// the v2 arrays without reading a frame first. The default is unknown.
+    fn control_count(&self, _name: &str) -> Option<u32> {
+        None
+    }
+
     /// The current value of a control.
     fn read(&self, name: &str) -> Result<i64, AlsaError>;
 
@@ -310,6 +318,13 @@ impl AlsaBackend for RealAlsa {
         let mut cache = self.lock_cache();
         let (id, meta) = find_cached(&mut cache, name, || ctl.find(name))?;
         ctl.read_values(id, meta)
+    }
+
+    fn control_count(&self, name: &str) -> Option<u32> {
+        let ctl = self.lock();
+        let mut cache = self.lock_cache();
+        let (_, meta) = find_cached(&mut cache, name, || ctl.find(name)).ok()?;
+        Some(meta.count as u32)
     }
 
     fn write(&self, name: &str, value: i64) -> Result<(), AlsaError> {
@@ -731,6 +746,8 @@ fn kind_of(elem_type: u32) -> Option<ControlKind> {
 pub enum FakeError {
     /// The control does not exist.
     Unknown,
+    /// The control exists but has no value.
+    NoData,
     /// The control exists but does not accept writes.
     ReadOnly,
     /// The control kind cannot be handled as a number.
@@ -815,6 +832,14 @@ impl AlsaBackend for FakeAlsa {
         Ok(self.lock().controls.clone())
     }
 
+    fn control_count(&self, name: &str) -> Option<u32> {
+        self.lock()
+            .controls
+            .iter()
+            .find(|control| control.name == name)
+            .map(|control| control.count)
+    }
+
     fn read(&self, name: &str) -> Result<i64, AlsaError> {
         self.read_values(name)?
             .into_iter()
@@ -860,6 +885,7 @@ impl AlsaBackend for FakeAlsa {
 fn fake_error(error: &FakeError, name: &str) -> AlsaError {
     match error {
         FakeError::Unknown => AlsaError::Unknown(name.to_string()),
+        FakeError::NoData => AlsaError::NoData(name.to_string()),
         FakeError::ReadOnly => AlsaError::ReadOnly(name.to_string()),
         FakeError::Unsupported => AlsaError::Unsupported(name.to_string()),
         FakeError::DeviceLost => AlsaError::Alsa(alsa::Error::new("fake", ENODEV)),
