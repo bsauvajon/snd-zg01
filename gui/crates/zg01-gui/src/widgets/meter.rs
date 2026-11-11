@@ -105,19 +105,6 @@ impl MeterSpec {
             linux_present,
         }
     }
-
-    /// An eight-channel bank, used by the Meters page.
-    pub(crate) fn bank(label: &str, card: [Option<f64>; 8], card_present: bool) -> Self {
-        MeterSpec {
-            label: label.to_string(),
-            card,
-            card_count: 8,
-            card_present,
-            linux: None,
-            peak: 0.0,
-            linux_present: false,
-        }
-    }
 }
 
 /// How one bar of a meter is drawn.

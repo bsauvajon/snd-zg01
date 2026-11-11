@@ -283,6 +283,18 @@ impl Shell {
         self.install_page(Page::Micro, root);
     }
 
+    /// Installs the real Meters body in place of its placeholder.
+    pub fn install_meters(&self, root: &impl IsA<gtk::Widget>) {
+        self.install_page(Page::Meters, root);
+    }
+
+    /// Enables or disables a sidebar row.
+    pub fn set_page_enabled(&self, page: Page, enabled: bool) {
+        if let Some(row) = self.sidebar.row_at_index(page.index()) {
+            row.set_sensitive(enabled);
+        }
+    }
+
     /// Installs the real Avancé body in place of its placeholder.
     pub fn install_advanced(&self, root: &impl IsA<gtk::Widget>) {
         self.install_page(Page::Advanced, root);

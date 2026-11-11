@@ -313,12 +313,13 @@ impl MicScreen {
         &self.root
     }
 
-    /// Installs one meter reading, in 0–127 device steps.
+    /// Installs one group's channel readings, in 0–127 device steps.
     ///
-    /// `None` is an unreadable meter: the widget draws the dashed unknown
-    /// state, not a zero.
-    pub(crate) fn set_meter(&self, id: MeterId, steps: Option<i64>) {
-        let level = level_from_steps(steps);
+    /// The mic groups are mono: their first channel is the reading. `None`
+    /// is an unreadable meter, so the widget draws the dashed unknown state,
+    /// not a zero.
+    pub(crate) fn set_meter(&self, id: MeterId, levels: &[Option<i64>]) {
+        let level = level_from_steps(levels.first().copied().flatten());
         for metered in &self.meters {
             if metered.id == id {
                 metered.meter.set_card_mono(level);
