@@ -1,20 +1,21 @@
 # Meter acceptance checklist
 
-Acceptance for the four card meters: `Meter Mic In`, `Meter Mic Out`,
-`Meter PC In` and `Meter Stream Mix`. The decode is in
+Acceptance for the six card meters: `Meter Mic In` and `Meter Mic Out`
+(one value each), and `Meter PC In`, `Meter HDMI In`, `Meter Game Mix`
+and `Meter Stream Mix` (eight values each). The v2 decode is in
 `docs/METER_PROTOCOL.md`; this file records the hardware checks and what
 they showed.
 
-> **Acceptance status: BLOCKED (2026-11-01).** The checks below passed on
-> an earlier session, while the device still streamed 192-byte frames.
-> The latest session does not: after a suspend that produced `-71`
-> (`EPROTO`) enumeration errors, EP `0x83` returns only zero-length
-> packets, `frames` stays 0, and the four controls read `-ENODATA` even
-> after a power cycle, `usbreset`, a hub port cycle and a replay of the
-> Windows preamble. The earlier results are kept as the decode evidence;
-> they are **not** the current behavior. Live-meter acceptance is
-> blocked on the device/session, not on a new protocol. The GUI state for
-> this case is the dashed/unknown meter documented in `docs/GUI_TEST.md`.
+> **Acceptance status: BLOCKED (2026-11-11).** The controls and the v2
+> parser are implemented, and the Windows ZG Controller streams 192-byte
+> frames. The Linux unit still returns only zero-length packets after the
+> 2026-11-01 suspend, so the six controls read `-ENODATA` even after a
+> power cycle, `usbreset`, a hub port cycle and a replay of the Windows
+> preamble. The earlier results below are kept as decode evidence; their
+> `pc_in`/`stream_mix` labels predate the v2 map (those values are
+> `stream_mix` channels 2 and 6). Live Linux acceptance stays blocked on
+> the device/session, not on the decode. The GUI state for this case is
+> the dashed/unknown Meters page documented in `docs/GUI_TEST.md`.
 
 Values are the control's integer, 0..127, where `value = dB + 127`
 (0 = −127 dB, 127 = 0 dBFS). Rounded to whole steps; the decode is 1 dB
@@ -47,19 +48,24 @@ the min values include the decay.
 | 4 | Silence reads the floor (see note) | PASS, with tolerance |
 | 5 | Mic In / Mic Out track a deliberate mic input | NOT RUN (see note) |
 | 6 | Disconnect while streaming: no crash, stream ends cleanly | PASS |
-| 7 | Replug recreates the card and the four controls, and values resume | PASS in the earlier session; **BLOCKED now** (controls reappear, reads are `-ENODATA`) |
+| 7 | Replug recreates the card and the six controls, and values resume | PASS in the earlier session; **BLOCKED now** (controls reappear, reads are `-ENODATA`) |
 | 8 | Suspend/resume restarts the reader and the keepalive | PASS for the reader/keepalive in `freeze` (s2idle); **frames never resumed** in the latest session; `reset_resume` not exercised |
 | 9 | `alsactl store` and `restore` succeed; meters are not restored | PASS |
 | 10 | No oops, BUG, WARNING or lockdep splat in the log | PASS |
 
 ### Results
 
-**1. Registration.** `amixer -c zg01 controls` lists the four names and no
-Game or HDMI meter. Each `cget` reports `type=INTEGER,access=r--v----,
-values=1,min=0,max=127`.
+**1. Registration.** `amixer -c zg01 controls` lists the six names.
+`Meter Mic In` and `Meter Mic Out` report `values=1`; `Meter PC In`,
+`Meter HDMI In`, `Meter Game Mix` and `Meter Stream Mix` report
+`values=8`. Each `cget` reports `type=INTEGER,access=r--v----,min=0,
+max=127`.
 
 **2 and 3. Playback tracks the documented table.** Measured medians from
-`METER_PROTOCOL.md` (sweeps), with the observed values:
+the earlier decode, with the observed values. The `pc_in`/`stream_mix`
+columns use the old single-pair labels; with the v2 map they are
+`stream_mix` channels 2 and 6. The current v2 capture evidence is in
+`docs/METER_PROTOCOL.md`.
 
 | Stimulus (nominal) | Meter | Documented | Observed (median, min–max) |
 |---|---|---|---|
@@ -103,9 +109,9 @@ as an unplug). The player exited with `ENODEV`. The card left
 `/proc/asound/cards` and no oops, BUG, WARNING or lockdep line followed.
 
 **7. Replug.** In the earlier session, `echo 1 > …/authorized` recreated
-the card (`2 [zg01] zg01_usb - ZG01`) and the four controls. The reader
+the card (`2 [zg01] zg01_usb - ZG01`) and the six controls. The reader
 started again, and the controls returned live values (idle `pc_in` 38).
-In the latest session the card and the four controls come back, but every
+In the latest session the card and the six controls come back, but every
 read returns `-ENODATA`: the device sends zero-length packets and no
 192-byte frame. The earlier result is evidence for the probe path, not a
 claim about the current unit.
@@ -156,8 +162,10 @@ message, not a fault.
   suspend and disconnect.
 - Mic tracking needs a person and a known source. Record the result here
   when it is done.
-- GAME and HDMI are unregistered in v1. `Meter Game Mix` and `Meter HDMI In`
-  are reserved names and do not appear in `amixer`.
+- GAME and HDMI are registered in v2 as `Meter Game Mix` and
+  `Meter HDMI In`, eight values each. The v2 captures show Game Out on
+  `pc_in`/`game_mix` 0/1 and HDMI on `hdmi_in`/`game_mix` 0/1; the
+  surround channels 2–7 are not measured yet.
 
 ## Reproducing
 

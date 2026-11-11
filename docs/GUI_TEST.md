@@ -51,23 +51,30 @@ Expected:
   solid zero.
 - A control that reads `-ENODATA` (the driver has no valid frame) is also
   dashed/unknown, and the value label shows `—`; it is never shown as zero.
+- The Mixage strips use `mic_in`, `pc_in` L/R, `game_mix` L/R and
+  `stream_mix` L/R. `GAME` now has a card bar; do not report it as missing.
+- Open **Meters**. It shows MIC IN, MIC OUT and the eight channels of
+  PC IN, HDMI IN, GAME MIX and STREAM MIX. Every channel is labelled
+  L/R/C/LFE/SBL/SBR/SL/SR; a channel with no reading is dashed.
+- An old driver without `Meter Game Mix`/`Meter HDMI In` shows the legacy
+  four-meter layout and a notice on the Meters page; the page row is
+  disabled and no legacy value is remapped.
 - STREAM OUT has no Linux source: it stays card-only.
-- `GAME` has no card meter in v1, so its strip shows only the `PW` bar. Do
-  not report the missing card bar as a failure.
 - A `PW` source that exists but has no frames is dashed; a source that
   PipeWire does not expose has no bar at all.
 - Closing the window leaves no `pw-record` process behind
   (`pgrep -af pw-record` is empty).
 
-> **Current hardware note (2026-11-01).** The meter protocol decode passes
-> on the earlier captures, but the current test unit stops streaming after
-> a suspend: EP `0x83` returns zero-length packets and the four meter
-> controls read `-ENODATA`. The expected GUI presentation is therefore
-> four dashed/unknown card meters; the `PW` bars are the live levels on
-> this unit. Record that as the observed state; card-meter acceptance stays
-> **blocked** until a session brings the 192-byte frames back (see
-> `docs/METER_TEST.md`). A moving card bar cannot be required from this
-> unit, and a dashed card bar is not a code failure.
+> **Current hardware note (2026-11-11).** The v2 decode is complete and
+> the Windows ZG Controller streams 192-byte frames, but the current Linux
+> unit stops streaming after a suspend: EP `0x83` returns zero-length
+> packets and the six meter groups read `-ENODATA`. The expected GUI
+> presentation is therefore dashed/unknown card bars on Mixage and Meters;
+> the `PW` bars are the live levels on this unit. Record that as the
+> observed state; card-meter acceptance stays **blocked** until a session
+> brings the 192-byte frames back (see `docs/METER_TEST.md`). A moving card
+> bar cannot be required from this unit, and a dashed card bar is not a
+> code failure.
 
 ## 3. Fader writes
 

@@ -276,7 +276,7 @@ pub(crate) enum Msg {
     /// The control writer finished a write.
     WriteOutcome(WriteOutcome),
     /// The meter pump read the four meters.
-    Meters(MeterSnapshot),
+    Meters(Box<MeterSnapshot>),
     /// The PipeWire pump read the three Linux sources.
     LinuxMeters(LinuxMetersSnapshot),
     /// The preset preview handed a plan to apply.
@@ -575,7 +575,7 @@ impl SimpleComponent for App {
             Msg::Mic(MicEvent::ReadState) => self.read_state(sender),
             Msg::Advanced(AdvancedEvent::Write { name, value }) => self.write_control(&name, value),
             Msg::WriteOutcome(outcome) => self.write_outcome(outcome, sender),
-            Msg::Meters(snapshot) => self.update_meters(snapshot, sender),
+            Msg::Meters(snapshot) => self.update_meters(*snapshot, sender),
             Msg::LinuxMeters(snapshot) => self.update_linux_meters(snapshot),
             Msg::PresetChosen(choice) => self.apply_preset(choice, sender),
             Msg::PresetApplied { id, label, report } => {
@@ -970,7 +970,7 @@ impl App {
             .spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     match events.recv_timeout(PUMP_TICK) {
-                        Ok(snapshot) => pump_sender.input(Msg::Meters(snapshot)),
+                        Ok(snapshot) => pump_sender.input(Msg::Meters(Box::new(snapshot))),
                         Err(RecvTimeoutError::Timeout) => {}
                         Err(RecvTimeoutError::Disconnected) => break,
                     }

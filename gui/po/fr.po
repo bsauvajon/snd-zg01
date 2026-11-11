@@ -789,6 +789,46 @@ msgstr "inconnu"
 msgid "Meter {name}"
 msgstr "Mètre {name}"
 
+#: crates/zg01-gui/src/app.rs
+msgid "Meters"
+msgstr "Vumètres"
+
+#: crates/zg01-gui/src/app.rs
+msgid "The card meter banks and the microphone levels."
+msgstr "Les bancs de vumètres de la carte et les niveaux du micro."
+
+#: crates/zg01-gui/src/ui/meters.rs
+msgid "Card meters"
+msgstr "Vumètres de la carte"
+
+#: crates/zg01-gui/src/ui/meters.rs
+msgid "Legacy driver: the card meters use the four-meter view."
+msgstr "Pilote ancien : les vumètres de la carte utilisent la vue à quatre mètres."
+
+#: crates/zg01-gui/src/ui/meters.rs
+msgid "MIC IN"
+msgstr "MIC IN"
+
+#: crates/zg01-gui/src/ui/meters.rs
+msgid "MIC OUT"
+msgstr "MIC OUT"
+
+#: crates/zg01-gui/src/ui/meters.rs
+msgid "PC IN"
+msgstr "PC IN"
+
+#: crates/zg01-gui/src/ui/meters.rs
+msgid "HDMI IN"
+msgstr "HDMI IN"
+
+#: crates/zg01-gui/src/ui/meters.rs
+msgid "GAME MIX"
+msgstr "GAME MIX"
+
+#: crates/zg01-gui/src/ui/meters.rs
+msgid "STREAM MIX"
+msgstr "STREAM MIX"
+
 #~ msgid ""
 #~ "MIC state is read from the ZG01; the Mixage section still shows the "
 #~ "driver cache."
