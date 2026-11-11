@@ -413,13 +413,19 @@ struct zg01_in_trace {
     struct zg01_in_record records[ZG01_TRACE_RECORDS];
 };
 
-/* Order matches struct zg01_meter_values in zg01_meters.h. */
+/*
+ * The 34 channel slots of the meter snapshot, in the order of
+ * struct zg01_meter_values in zg01_meters.h.  The values are the first
+ * channel of each group; a control covers the group's eight channels.
+ */
 enum zg01_meter_index {
-    ZG01_METER_MIC_IN,
-    ZG01_METER_MIC_OUT,
-    ZG01_METER_PC_IN,
-    ZG01_METER_STREAM_MIX,
-    ZG01_METER_COUNT,
+    ZG01_METER_MIC_IN = 0,
+    ZG01_METER_MIC_OUT = 1,
+    ZG01_METER_PC_IN = 2,
+    ZG01_METER_HDMI_IN = 10,
+    ZG01_METER_GAME_MIX = 18,
+    ZG01_METER_STREAM_MIX = 26,
+    ZG01_METER_LEVEL_COUNT = 34,
 };
 
 /*
@@ -441,7 +447,7 @@ struct zg01_meter_state {
     unsigned long long other;                /* other successful completions */
     unsigned long last_log_jiffies;
 
-    atomic_t levels[ZG01_METER_COUNT];       /* last valid snapshot, 0..127 */
+    atomic_t levels[ZG01_METER_LEVEL_COUNT]; /* last valid snapshot, 0..127 */
     atomic_t valid;                          /* a valid frame was seen since start */
     atomic_long_t valid_jiffies;             /* time of the last valid frame */
 
@@ -578,6 +584,8 @@ void zg01_meters_stop(struct zg01_dev *dev);
 void zg01_meters_keepalive_fn(struct work_struct *work);
 void zg01_meters_poll_fn(struct work_struct *work);
 int zg01_meters_value(struct zg01_dev *dev, unsigned int index);
+int zg01_meters_values(struct zg01_dev *dev, unsigned int first,
+                       unsigned int count, int *out);
 int zg01_state_request(struct zg01_dev *dev);
 
 /* zg01_usb_discovery.c (best-effort, debug only) */

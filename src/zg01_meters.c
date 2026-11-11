@@ -5,7 +5,7 @@
  * while the host keeps the 0x03 keepalive coming.  This file owns that
  * endpoint with a single URB that is resubmitted from its completion,
  * and a delayed work that sends the keepalive once a second.  Each valid
- * frame updates the four level snapshots read by the meter kcontrols.
+ * frame updates the 34 channel snapshots read by the meter kcontrols.
  */
 
 #include <linux/errno.h>
@@ -33,10 +33,16 @@ static void zg01_meters_store(struct zg01_meter_state *m,
      * valid == 1 with acquire ordering sees the levels and the timestamp
      * written before it, even on a weakly ordered CPU (arm64).
      */
+    unsigned int i;
+
     atomic_set(&m->levels[ZG01_METER_MIC_IN], v->mic_in);
     atomic_set(&m->levels[ZG01_METER_MIC_OUT], v->mic_out);
-    atomic_set(&m->levels[ZG01_METER_PC_IN], v->pc_in);
-    atomic_set(&m->levels[ZG01_METER_STREAM_MIX], v->stream_mix);
+    for (i = 0; i < ZG01_METER_GROUP_CHANNELS; i++) {
+        atomic_set(&m->levels[ZG01_METER_PC_IN + i], v->pc_in[i]);
+        atomic_set(&m->levels[ZG01_METER_HDMI_IN + i], v->hdmi_in[i]);
+        atomic_set(&m->levels[ZG01_METER_GAME_MIX + i], v->game_mix[i]);
+        atomic_set(&m->levels[ZG01_METER_STREAM_MIX + i], v->stream_mix[i]);
+    }
     atomic_long_set(&m->valid_jiffies, jiffies);
     atomic_set_release(&m->valid, 1);
 }
@@ -438,22 +444,41 @@ void zg01_meters_stop(struct zg01_dev *dev)
 }
 
 /*
- * Returns the last valid level for one meter (0..127), or -ENODATA when
- * no valid frame has arrived since start, when the reader is stopped, or
- * when the last valid frame is older than ZG01_METER_STALE_MS.  A missing
+ * Copy `count` consecutive levels (0..127) into `out`, or return -ENODATA
+ * when no valid frame has arrived since start, when the reader is stopped,
+ * or when the last valid frame is older than ZG01_METER_STALE_MS.  A missing
  * meter is never reported as zero.
  */
-int zg01_meters_value(struct zg01_dev *dev, unsigned int index)
+int zg01_meters_values(struct zg01_dev *dev, unsigned int first,
+                       unsigned int count, int *out)
 {
-    struct zg01_meter_state *m = &dev->meters;
+    struct zg01_meter_state *m;
+    unsigned int i;
 
-    if (index >= ZG01_METER_COUNT)
+    if (!dev || !out || count == 0)
         return -EINVAL;
+    if (first > ZG01_METER_LEVEL_COUNT ||
+        count > ZG01_METER_LEVEL_COUNT - first)
+        return -EINVAL;
+
+    m = &dev->meters;
     if (!atomic_read_acquire(&m->valid))
         return -ENODATA;
     if (time_after(jiffies, atomic_long_read(&m->valid_jiffies) +
                    msecs_to_jiffies(ZG01_METER_STALE_MS)))
         return -ENODATA;
 
-    return atomic_read(&m->levels[index]);
+    for (i = 0; i < count; i++)
+        out[i] = atomic_read(&m->levels[first + i]);
+    return 0;
+}
+
+/* One level, kept for single-value callers and tests. */
+int zg01_meters_value(struct zg01_dev *dev, unsigned int index)
+{
+    int level;
+    int ret;
+
+    ret = zg01_meters_values(dev, index, 1, &level);
+    return ret ? ret : level;
 }

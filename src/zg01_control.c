@@ -25,6 +25,7 @@
 #include "zg01_addr.h"
 #include "zg01_codec.h"
 #include "zg01_control.h"
+#include "zg01_meters.h"
 #include "zg01_state.h"
 
 int zg01_init_control(struct zg01_dev *dev)
@@ -1306,26 +1307,33 @@ static int zg01_state_known_get(struct snd_kcontrol *kcontrol,
 }
 
 /*
- * Read-only meter levels, fed by the 0x83 reader (zg01_meters.c).  Game
- * and HDMI are reserved and not registered until their fields decode.
+ * Read-only meter levels, fed by the 0x83 reader (zg01_meters.c).  The mic
+ * controls carry one value; the four surround groups carry one value per
+ * channel.
  */
 struct zg01_meter_ctl {
     const char *name;
-    enum zg01_meter_index index;
+    enum zg01_meter_index first;
+    unsigned int count;
 };
 
 static const struct zg01_meter_ctl zg01_meter_ctls[] = {
-    { "Meter Mic In", ZG01_METER_MIC_IN },
-    { "Meter Mic Out", ZG01_METER_MIC_OUT },
-    { "Meter PC In", ZG01_METER_PC_IN },
-    { "Meter Stream Mix", ZG01_METER_STREAM_MIX },
+    { "Meter Mic In", ZG01_METER_MIC_IN, 1 },
+    { "Meter Mic Out", ZG01_METER_MIC_OUT, 1 },
+    { "Meter PC In", ZG01_METER_PC_IN, ZG01_METER_GROUP_CHANNELS },
+    { "Meter HDMI In", ZG01_METER_HDMI_IN, ZG01_METER_GROUP_CHANNELS },
+    { "Meter Game Mix", ZG01_METER_GAME_MIX, ZG01_METER_GROUP_CHANNELS },
+    { "Meter Stream Mix", ZG01_METER_STREAM_MIX, ZG01_METER_GROUP_CHANNELS },
 };
 
 static int zg01_meter_info(struct snd_kcontrol *kcontrol,
                            struct snd_ctl_elem_info *uinfo)
 {
+    const struct zg01_meter_ctl *c =
+        (const struct zg01_meter_ctl *)kcontrol->private_value;
+
     uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
-    uinfo->count = 1;
+    uinfo->count = c->count;
     uinfo->value.integer.min = 0;
     uinfo->value.integer.max = 127;
     return 0;
@@ -1337,11 +1345,15 @@ static int zg01_meter_ctl_get(struct snd_kcontrol *kcontrol,
     struct zg01_dev *dev = snd_kcontrol_chip(kcontrol);
     const struct zg01_meter_ctl *c =
         (const struct zg01_meter_ctl *)kcontrol->private_value;
-    int level = zg01_meters_value(dev, c->index);
+    int values[ZG01_METER_GROUP_CHANNELS];
+    unsigned int i;
+    int ret;
 
-    if (level < 0)
-        return level;
-    ucontrol->value.integer.value[0] = level;
+    ret = zg01_meters_values(dev, c->first, c->count, values);
+    if (ret)
+        return ret;
+    for (i = 0; i < c->count; i++)
+        ucontrol->value.integer.value[i] = values[i];
     return 0;
 }
 
