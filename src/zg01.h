@@ -3,6 +3,7 @@
 
 #include <linux/usb.h>
 #include <linux/spinlock.h>
+#include <linux/seqlock.h>
 #include <linux/workqueue.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -447,9 +448,16 @@ struct zg01_meter_state {
     unsigned long long other;                /* other successful completions */
     unsigned long last_log_jiffies;
 
-    atomic_t levels[ZG01_METER_LEVEL_COUNT]; /* last valid snapshot, 0..127 */
-    atomic_t valid;                          /* a valid frame was seen since start */
-    atomic_long_t valid_jiffies;             /* time of the last valid frame */
+    /*
+     * snapshot_lock publishes the 34-level snapshot to the kcontrol
+     * readers.  The URB completion is the only writer; a reader copies
+     * the levels under the seqlock and retries if a frame lands during
+     * the copy, so one getter never mixes two frames.
+     */
+    seqlock_t snapshot_lock;
+    int levels[ZG01_METER_LEVEL_COUNT];      /* last valid snapshot, 0..127 */
+    bool valid;                              /* a valid frame was seen since start */
+    unsigned long valid_jiffies;             /* time of the last valid frame */
 
     /*
      * MIC state readback.  The type-20 response is eight 512-byte frames

@@ -29,22 +29,35 @@ static void zg01_meters_store(struct zg01_meter_state *m,
                               const struct zg01_meter_values *v)
 {
     /*
-     * Publish the snapshot with release ordering: a reader that observes
-     * valid == 1 with acquire ordering sees the levels and the timestamp
-     * written before it, even on a weakly ordered CPU (arm64).
+     * Publish the whole snapshot under the seqlock.  The URB completion
+     * can run while a kcontrol getter copies the levels; the sequence
+     * makes the reader retry instead of mixing two frames.
      */
+    unsigned long flags;
     unsigned int i;
 
-    atomic_set(&m->levels[ZG01_METER_MIC_IN], v->mic_in);
-    atomic_set(&m->levels[ZG01_METER_MIC_OUT], v->mic_out);
+    write_seqlock_irqsave(&m->snapshot_lock, flags);
+    m->levels[ZG01_METER_MIC_IN] = v->mic_in;
+    m->levels[ZG01_METER_MIC_OUT] = v->mic_out;
     for (i = 0; i < ZG01_METER_GROUP_CHANNELS; i++) {
-        atomic_set(&m->levels[ZG01_METER_PC_IN + i], v->pc_in[i]);
-        atomic_set(&m->levels[ZG01_METER_HDMI_IN + i], v->hdmi_in[i]);
-        atomic_set(&m->levels[ZG01_METER_GAME_MIX + i], v->game_mix[i]);
-        atomic_set(&m->levels[ZG01_METER_STREAM_MIX + i], v->stream_mix[i]);
+        m->levels[ZG01_METER_PC_IN + i] = v->pc_in[i];
+        m->levels[ZG01_METER_HDMI_IN + i] = v->hdmi_in[i];
+        m->levels[ZG01_METER_GAME_MIX + i] = v->game_mix[i];
+        m->levels[ZG01_METER_STREAM_MIX + i] = v->stream_mix[i];
     }
-    atomic_long_set(&m->valid_jiffies, jiffies);
-    atomic_set_release(&m->valid, 1);
+    m->valid_jiffies = jiffies;
+    m->valid = true;
+    write_sequnlock_irqrestore(&m->snapshot_lock, flags);
+}
+
+static void zg01_meters_reset(struct zg01_meter_state *m)
+{
+    unsigned long flags;
+
+    write_seqlock_irqsave(&m->snapshot_lock, flags);
+    m->valid = false;
+    m->valid_jiffies = 0;
+    write_sequnlock_irqrestore(&m->snapshot_lock, flags);
 }
 
 /* The type-20 response frames start with this USB-MIDI header. */
@@ -373,7 +386,7 @@ int zg01_meters_start(struct zg01_dev *dev)
     m->invalid = 0;
     m->other = 0;
     m->last_log_jiffies = 0;
-    atomic_set_release(&m->valid, 0);
+    zg01_meters_reset(m);
     WRITE_ONCE(m->running, true);
 
     err = usb_submit_urb(m->urb, GFP_KERNEL);
@@ -440,7 +453,7 @@ void zg01_meters_stop(struct zg01_dev *dev)
 
     kfree(m->buf);
     m->buf = NULL;
-    atomic_set_release(&m->valid, 0);
+    zg01_meters_reset(m);
 }
 
 /*
@@ -453,7 +466,10 @@ int zg01_meters_values(struct zg01_dev *dev, unsigned int first,
                        unsigned int count, int *out)
 {
     struct zg01_meter_state *m;
+    unsigned long valid_jiffies;
     unsigned int i;
+    unsigned int seq;
+    bool valid;
 
     if (!dev || !out || count == 0)
         return -EINVAL;
@@ -462,14 +478,25 @@ int zg01_meters_values(struct zg01_dev *dev, unsigned int first,
         return -EINVAL;
 
     m = &dev->meters;
-    if (!atomic_read_acquire(&m->valid))
+
+    /*
+     * Copy the levels and the publication metadata together.  A frame
+     * landing during the copy changes the sequence, so the reader retries
+     * instead of returning L from one frame and R from the next.
+     */
+    do {
+        seq = read_seqbegin(&m->snapshot_lock);
+        valid = m->valid;
+        valid_jiffies = m->valid_jiffies;
+        for (i = 0; i < count; i++)
+            out[i] = m->levels[first + i];
+    } while (read_seqretry(&m->snapshot_lock, seq));
+
+    if (!valid)
         return -ENODATA;
-    if (time_after(jiffies, atomic_long_read(&m->valid_jiffies) +
+    if (time_after(jiffies, valid_jiffies +
                    msecs_to_jiffies(ZG01_METER_STALE_MS)))
         return -ENODATA;
-
-    for (i = 0; i < count; i++)
-        out[i] = atomic_read(&m->levels[first + i]);
     return 0;
 }
 
