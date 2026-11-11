@@ -1758,6 +1758,7 @@ mod tests {
             min: 0,
             max: 100,
             step: 0,
+            count: 1,
             writable,
         }
     }
