@@ -51,6 +51,20 @@ fn game_strip_has_its_card_meter() {
 }
 
 #[test]
+fn legacy_voice_strip_uses_the_pc_meter() {
+    let model = MixageModel::from_controls(&controls_with_mixage());
+    assert_eq!(model.strips[1].meter, Some(MeterId::PcIn));
+}
+
+#[test]
+fn v2_voice_strip_uses_the_stream_mix() {
+    let mut all = controls_with_mixage();
+    all.extend(common::controls(&["Meter Game Mix", "Meter HDMI In"]));
+    let model = MixageModel::from_controls(&all);
+    assert_eq!(model.strips[1].meter, Some(MeterId::StreamMix));
+}
+
+#[test]
 fn strips_map_to_their_linux_meters() {
     let model = MixageModel::from_controls(&controls_with_mixage());
     assert_eq!(model.strips[0].linux_meter, Some(LinuxMeterId::MicIn));

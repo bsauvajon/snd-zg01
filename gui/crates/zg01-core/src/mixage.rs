@@ -129,8 +129,8 @@ pub struct StripModel {
     pub fx: Option<String>,
     /// The card meter of the strip.
     ///
-    /// `None` for GAME: the decoded frame has no separable game-only tap
-    /// in v1, so the strip is shown without a card meter.
+    /// The VOICE strip uses `PcIn` on a legacy driver and `StreamMix` on
+    /// a V2 driver; the other strips keep their group on both layouts.
     pub meter: Option<MeterId>,
     /// The Linux-side source of the strip, when it has one.
     pub linux_meter: Option<LinuxMeterId>,
@@ -167,6 +167,7 @@ impl MixageModel {
     /// A missing control is `None`, never an invented name. The strips are
     /// always three: a strip without a level still has its meter.
     pub fn from_controls(controls: &[Control]) -> Self {
+        let legacy = find(controls, &["Meter Game Mix", "Meter HDMI In"]).is_none();
         MixageModel {
             strips: vec![
                 StripModel {
@@ -184,7 +185,11 @@ impl MixageModel {
                     level: find(controls, &["Streaming Voice Level Steps"]),
                     mute: find(controls, &["Streaming Voice Mute Steps"]),
                     fx: find(controls, &["Streaming Voice FX Steps"]),
-                    meter: Some(MeterId::StreamMix),
+                    meter: Some(if legacy {
+                        MeterId::PcIn
+                    } else {
+                        MeterId::StreamMix
+                    }),
                     linux_meter: Some(LinuxMeterId::VoiceOut),
                 },
                 StripModel {
