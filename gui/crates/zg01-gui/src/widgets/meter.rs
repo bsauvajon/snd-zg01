@@ -31,6 +31,9 @@ const CARD_WIDTH: f64 = 7.0;
 /// The width of the Linux meter, in logical pixels.
 const LINUX_WIDTH: f64 = 3.0;
 
+/// The gap between two card bars of a bank, in logical pixels.
+const CARD_GAP: f64 = 2.0;
+
 /// The gap between the card and Linux bars, in logical pixels.
 const METER_GAP: f64 = 4.0;
 
@@ -63,12 +66,11 @@ const PEAK_HOLD: Duration = Duration::from_secs(1);
 pub(crate) struct MeterSpec {
     /// The label shown under the bars, e.g. `MIC`.
     pub(crate) label: String,
-    /// The level of the card meter, normalised to `0.0..=1.0`.
-    pub(crate) card: Option<f64>,
-    /// Whether the strip has a card meter at all.
-    ///
-    /// GAME has no decoded card meter in v1, so it draws no card track
-    /// even though its Linux bar may exist.
+    /// The channel levels of the card meter, normalised to `0.0..=1.0`.
+    pub(crate) card: [Option<f64>; 8],
+    /// How many of [`MeterSpec::card`] are shown (1 for a strip, 8 for a bank).
+    pub(crate) card_count: usize,
+    /// Whether the meter has a card source at all.
     pub(crate) card_present: bool,
     /// The level of the Linux meter, normalised to `0.0..=1.0`.
     pub(crate) linux: Option<f64>,
@@ -80,6 +82,42 @@ pub(crate) struct MeterSpec {
     /// is drawn as an unknown (dashed) bar, not removed. Set this to
     /// `true` even when `linux` is `None`.
     pub(crate) linux_present: bool,
+}
+
+impl MeterSpec {
+    /// A one-bar meter, used by the Mixage strips and the Micro screen.
+    pub(crate) fn mono(
+        label: &str,
+        card: Option<f64>,
+        card_present: bool,
+        linux: Option<f64>,
+        linux_present: bool,
+    ) -> Self {
+        let mut card_levels = [None; 8];
+        card_levels[0] = card;
+        MeterSpec {
+            label: label.to_string(),
+            card: card_levels,
+            card_count: 1,
+            card_present,
+            linux,
+            peak: 0.0,
+            linux_present,
+        }
+    }
+
+    /// An eight-channel bank, used by the Meters page.
+    pub(crate) fn bank(label: &str, card: [Option<f64>; 8], card_present: bool) -> Self {
+        MeterSpec {
+            label: label.to_string(),
+            card,
+            card_count: 8,
+            card_present,
+            linux: None,
+            peak: 0.0,
+            linux_present: false,
+        }
+    }
 }
 
 /// How one bar of a meter is drawn.
@@ -102,9 +140,13 @@ fn bar_state(present: bool, reading: Option<f64>) -> BarState {
     }
 }
 
-/// Installs a card reading without touching the Linux source.
-fn apply_card(spec: &mut MeterSpec, card: Option<f64>) {
-    spec.card = normalise(card);
+/// Installs card readings without touching the Linux source.
+fn apply_card(spec: &mut MeterSpec, levels: &[Option<f64>]) {
+    spec.card = [None; 8];
+    for (slot, level) in spec.card.iter_mut().zip(levels.iter().take(8)) {
+        *slot = normalise(*level);
+    }
+    spec.card_count = levels.len().clamp(1, 8);
 }
 
 /// Installs a Linux source and its reading without touching the card one.
@@ -133,7 +175,10 @@ impl Meter {
     pub(crate) fn new(mut spec: MeterSpec) -> Self {
         // A reading proves that the source exists, even when the caller
         // forgot to set `linux_present`.
-        spec.card = normalise(spec.card);
+        for level in &mut spec.card {
+            *level = normalise(*level);
+        }
+        spec.card_count = spec.card_count.clamp(1, 8);
         spec.linux = normalise(spec.linux);
         spec.peak = normalise(Some(spec.peak)).unwrap_or(0.0);
         spec.linux_present |= spec.linux.is_some();
@@ -143,7 +188,7 @@ impl Meter {
         root.set_halign(gtk::Align::Center);
 
         let area = gtk::DrawingArea::new();
-        let width = meter_width(spec.card_present, spec.linux_present);
+        let width = meter_width(spec.card_present, spec.card_count, spec.linux_present);
         area.set_content_width(width);
         area.set_content_height(AREA_HEIGHT);
         area.set_vexpand(true);
@@ -183,9 +228,14 @@ impl Meter {
         &self.root
     }
 
-    /// Installs a card reading; the Linux bar is untouched.
-    pub(crate) fn set_card(&self, card: Option<f64>) {
-        self.update(|spec| apply_card(spec, card));
+    /// Installs card readings; the Linux bar is untouched.
+    pub(crate) fn set_card(&self, levels: &[Option<f64>]) {
+        self.update(|spec| apply_card(spec, levels));
+    }
+
+    /// Installs one card reading; the Linux bar is untouched.
+    pub(crate) fn set_card_mono(&self, card: Option<f64>) {
+        self.set_card(&[card]);
     }
 
     /// Installs a Linux source and its reading; the card bar is untouched.
@@ -195,24 +245,28 @@ impl Meter {
 
     /// Applies one side of the meter, then repaints and updates the peak.
     fn update(&self, apply: impl FnOnce(&mut MeterSpec)) {
-        let had_linux = self.inner.spec.borrow().linux_present;
-        let card_present = self.inner.spec.borrow().card_present;
         {
             let mut spec = self.inner.spec.borrow_mut();
             apply(&mut spec);
         }
-        let has_linux = self.inner.spec.borrow().linux_present;
-        if had_linux != has_linux {
-            self.area
-                .set_content_width(meter_width(card_present, has_linux));
-        }
-        refresh_accessible(&self.area, &self.inner.spec.borrow());
-        self.area.queue_draw();
-
         let spec = self.inner.spec.borrow();
-        let current = spec.card.into_iter().chain(spec.linux).fold(0.0, f64::max);
+        self.area.set_content_width(meter_width(
+            spec.card_present,
+            spec.card_count,
+            spec.linux_present,
+        ));
+        refresh_accessible(&self.area, &spec);
+        let current = spec
+            .card
+            .iter()
+            .flatten()
+            .copied()
+            .chain(spec.linux)
+            .fold(0.0, f64::max);
         let candidate = spec.peak.max(current);
         drop(spec);
+        self.area.queue_draw();
+
         if candidate > self.inner.held_peak.get() {
             self.inner.held_peak.set(candidate);
             self.inner.peak_at.set(Some(Instant::now()));
@@ -226,7 +280,9 @@ fn initial_peak(spec: &MeterSpec) -> f64 {
     let peak = normalise(Some(spec.peak)).unwrap_or(0.0);
     let level = spec
         .card
-        .into_iter()
+        .iter()
+        .flatten()
+        .copied()
         .chain(spec.linux)
         .filter_map(|level| normalise(Some(level)))
         .fold(0.0, f64::max);
@@ -234,12 +290,18 @@ fn initial_peak(spec: &MeterSpec) -> f64 {
 }
 
 /// The width of a meter drawing area.
-fn meter_width(card_present: bool, has_linux: bool) -> i32 {
+fn meter_width(card_present: bool, card_count: usize, has_linux: bool) -> i32 {
+    let card_count = if card_present {
+        card_count.clamp(1, 8)
+    } else {
+        0
+    };
     let mut bars = 0.0;
-    if card_present {
-        bars += CARD_WIDTH;
+    if card_count > 0 {
+        bars += card_count as f64 * CARD_WIDTH;
+        bars += (card_count - 1) as f64 * CARD_GAP;
     }
-    if card_present && has_linux {
+    if card_count > 0 && has_linux {
         bars += METER_GAP;
     }
     if has_linux {
@@ -318,8 +380,14 @@ fn clear_peak(inner: &Rc<MeterInner>, area: &gtk::DrawingArea) {
 
 /// Updates the accessible label and value of the meter.
 fn refresh_accessible(area: &gtk::DrawingArea, spec: &MeterSpec) {
-    let level = spec.card.into_iter().chain(spec.linux).fold(0.0, f64::max);
-    let any = spec.card.is_some() || spec.linux.is_some();
+    let level = spec
+        .card
+        .iter()
+        .flatten()
+        .copied()
+        .chain(spec.linux)
+        .fold(0.0, f64::max);
+    let any = spec.card.iter().any(Option::is_some) || spec.linux.is_some();
     let text = if any {
         tf(
             "{percent} %",
@@ -359,45 +427,51 @@ fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
     let length = bottom - top;
 
     let has_card = spec.card_present;
-    let card_width = if has_card { CARD_WIDTH } else { 0.0 };
-    let gap = if has_card && has_linux {
+    let card_bars = if has_card {
+        spec.card_count.clamp(1, 8)
+    } else {
+        0
+    };
+    let card_total = if card_bars > 0 {
+        card_bars as f64 * CARD_WIDTH + (card_bars - 1) as f64 * CARD_GAP
+    } else {
+        0.0
+    };
+    let gap = if card_bars > 0 && has_linux {
         METER_GAP
     } else {
         0.0
     };
-    let bars = card_width + gap + if has_linux { LINUX_WIDTH } else { 0.0 };
+    let bars = card_total + gap + if has_linux { LINUX_WIDTH } else { 0.0 };
     let start = (f64::from(width) - bars) / 2.0;
-    let card_x = start;
-    let linux_x = start + card_width + gap;
+    let linux_x = start + card_total + gap;
 
-    // The card meter exists only when the strip has one; only its reading
-    // can be unknown. The Linux source may be absent, in which case it has
-    // no bar at all.
-    let card_state = bar_state(has_card, spec.card);
-    let linux_state = bar_state(has_linux, spec.linux);
-
-    if has_card {
-        draw_track(context, card_x, CARD_WIDTH, top, bottom);
+    // A card channel that exists but cannot be read is drawn dashed; a
+    // valid frame at the floor is a solid empty track.
+    for index in 0..card_bars {
+        let x = start + index as f64 * (CARD_WIDTH + CARD_GAP);
+        draw_track(context, x, CARD_WIDTH, top, bottom);
+        match bar_state(true, spec.card[index]) {
+            BarState::Unknown => draw_unknown(context, x, CARD_WIDTH, top, bottom),
+            BarState::Level(level) => {
+                draw_fill(context, x, CARD_WIDTH, level, top, bottom, 1.0);
+                draw_clip(context, x, CARD_WIDTH, level, top);
+            }
+            BarState::Absent => {}
+        }
     }
+
+    let linux_state = bar_state(has_linux, spec.linux);
     if has_linux {
         draw_track(context, linux_x, LINUX_WIDTH, top, bottom);
-    }
-
-    match card_state {
-        BarState::Unknown => draw_unknown(context, card_x, CARD_WIDTH, top, bottom),
-        BarState::Level(level) => {
-            draw_fill(context, card_x, CARD_WIDTH, level, top, bottom, 1.0);
-            draw_clip(context, card_x, CARD_WIDTH, level, top);
+        match linux_state {
+            BarState::Unknown => draw_unknown(context, linux_x, LINUX_WIDTH, top, bottom),
+            BarState::Level(level) => {
+                draw_fill(context, linux_x, LINUX_WIDTH, level, top, bottom, 0.65);
+                draw_clip(context, linux_x, LINUX_WIDTH, level, top);
+            }
+            BarState::Absent => {}
         }
-        BarState::Absent => {}
-    }
-    match linux_state {
-        BarState::Unknown => draw_unknown(context, linux_x, LINUX_WIDTH, top, bottom),
-        BarState::Level(level) => {
-            draw_fill(context, linux_x, LINUX_WIDTH, level, top, bottom, 0.65);
-            draw_clip(context, linux_x, LINUX_WIDTH, level, top);
-        }
-        BarState::Absent => {}
     }
 
     let held = inner.held_peak.get();
@@ -406,13 +480,13 @@ fn draw(context: &cairo::Context, width: i32, height: i32, inner: &MeterInner) {
         let right = if has_linux {
             linux_x + LINUX_WIDTH
         } else {
-            card_x + CARD_WIDTH
+            start + card_total
         };
         rounded_rect(
             context,
-            card_x - 1.0,
+            start - 1.0,
             y - PEAK_HEIGHT / 2.0,
-            right - card_x + 2.0,
+            right - start + 2.0,
             PEAK_HEIGHT,
             PEAK_HEIGHT / 2.0,
         );
@@ -529,11 +603,12 @@ mod tests {
     };
 
     #[test]
-    fn the_card_meter_is_narrower_than_the_pair() {
-        assert_eq!(meter_width(true, false), 19);
-        assert_eq!(meter_width(true, true), 26);
-        assert_eq!(meter_width(false, true), 15);
-        assert_eq!(meter_width(false, false), 12);
+    fn a_bank_width_counts_every_card_bar_and_the_pw_bar() {
+        assert_eq!(meter_width(true, 1, false), 19);
+        assert_eq!(meter_width(true, 8, false), 19 + 7 * 9);
+        assert_eq!(meter_width(true, 8, true), 26 + 7 * 9);
+        assert_eq!(meter_width(false, 0, true), 15);
+        assert_eq!(meter_width(false, 0, false), 12);
     }
 
     #[test]
@@ -552,74 +627,54 @@ mod tests {
 
     #[test]
     fn a_meter_spec_carries_the_card_and_linux_readings() {
-        let spec = MeterSpec {
-            label: "MIC".to_string(),
-            card: Some(0.5),
-            card_present: true,
-            linux: None,
-            peak: 0.7,
-            linux_present: false,
-        };
+        let spec = MeterSpec::mono("MIC", Some(0.5), true, None, false);
         assert_eq!(spec.label, "MIC");
-        assert_eq!(spec.card, Some(0.5));
+        assert_eq!(spec.card[0], Some(0.5));
         assert_eq!(spec.linux, None);
     }
 
     #[test]
     fn a_fresh_meter_holds_the_peak_of_its_spec() {
-        let spec = MeterSpec {
-            label: "MIC".to_string(),
-            card: Some(0.4),
-            card_present: true,
-            linux: None,
-            peak: 0.8,
-            linux_present: false,
-        };
+        let mut spec = MeterSpec::mono("MIC", Some(0.4), true, None, false);
+        spec.peak = 0.8;
         assert_eq!(initial_peak(&spec), 0.8);
-        let spec = MeterSpec {
-            label: "MIC".to_string(),
-            card: Some(0.9),
-            card_present: true,
-            linux: None,
-            peak: 0.2,
-            linux_present: false,
-        };
+        let mut spec = MeterSpec::mono("MIC", Some(0.9), true, None, false);
+        spec.peak = 0.2;
         assert_eq!(initial_peak(&spec), 0.9);
     }
 
     #[test]
     fn a_card_update_keeps_the_linux_bar() {
-        let mut spec = MeterSpec {
-            label: "MIC".to_string(),
-            card: Some(0.4),
-            card_present: true,
-            linux: Some(0.2),
-            peak: 0.0,
-            linux_present: true,
-        };
-        apply_card(&mut spec, Some(0.6));
-        assert_eq!(spec.card, Some(0.6));
+        let mut spec = MeterSpec::mono("MIC", Some(0.4), true, Some(0.2), true);
+        apply_card(&mut spec, &[Some(0.6)]);
+        assert_eq!(spec.card[0], Some(0.6));
         assert_eq!(spec.linux, Some(0.2));
         assert!(spec.linux_present);
     }
 
     #[test]
+    fn eight_card_channels_keep_every_reading() {
+        let mut spec = MeterSpec::mono("PC", None, true, None, false);
+        apply_card(
+            &mut spec,
+            &[Some(0.1), Some(0.2), None, None, None, None, None, None],
+        );
+        assert_eq!(spec.card_count, 8);
+        assert_eq!(spec.card[0], Some(0.1));
+        assert_eq!(spec.card[1], Some(0.2));
+        assert_eq!(spec.card[2], None);
+    }
+
+    #[test]
     fn a_linux_update_keeps_the_card_bar_and_controls_presence() {
-        let mut spec = MeterSpec {
-            label: "MIC".to_string(),
-            card: Some(0.4),
-            card_present: true,
-            linux: None,
-            peak: 0.0,
-            linux_present: false,
-        };
+        let mut spec = MeterSpec::mono("MIC", Some(0.4), true, None, false);
         apply_linux(&mut spec, true, Some(0.2));
-        assert_eq!(spec.card, Some(0.4));
+        assert_eq!(spec.card[0], Some(0.4));
         assert_eq!(spec.linux, Some(0.2));
         assert!(spec.linux_present);
 
         apply_linux(&mut spec, false, None);
-        assert_eq!(spec.card, Some(0.4));
+        assert_eq!(spec.card[0], Some(0.4));
         assert_eq!(spec.linux, None);
         assert!(!spec.linux_present);
     }

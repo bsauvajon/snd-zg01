@@ -1329,24 +1329,19 @@ impl App {
             self.device_lost(&sender);
             return;
         }
-        for id in [
-            MeterId::MicIn,
-            MeterId::MicOut,
-            MeterId::PcIn,
-            MeterId::StreamMix,
-        ] {
+        for id in MeterId::ALL {
             let value = snapshot
-                .value(id.index())
+                .max(id)
                 .map(ControlValue::Known)
                 .unwrap_or(ControlValue::Unknown);
             if let Some(control) = self.state.control_mut(id.control()) {
                 control.value = value;
             }
             if let Some(screen) = &self.mixage {
-                screen.set_meter(id, snapshot.value(id.index()));
+                screen.set_meter(id, snapshot.max(id));
             }
             if let Some(screen) = &self.mic {
-                screen.set_meter(id, snapshot.value(id.index()));
+                screen.set_meter(id, snapshot.max(id));
             }
             // Avancé lists the meter controls too: keep their readout live.
             if let Some(screen) = &self.advanced {

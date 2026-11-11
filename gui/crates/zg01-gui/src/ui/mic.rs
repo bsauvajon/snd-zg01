@@ -321,7 +321,7 @@ impl MicScreen {
         let level = level_from_steps(steps);
         for metered in &self.meters {
             if metered.id == id {
-                metered.meter.set_card(level);
+                metered.meter.set_card_mono(level);
             }
         }
     }
@@ -602,14 +602,13 @@ fn is_writable(state: &AppState, name: &str) -> bool {
 
 /// Builds one meter, with the dashed unknown state when it cannot be read.
 fn build_meter(state: &AppState, id: MeterId, label: &str) -> Metered {
-    let meter = Meter::new(MeterSpec {
-        label: label.to_string(),
-        card: meter_level(state, id),
-        card_present: true,
-        linux: None,
-        peak: 0.0,
-        linux_present: false,
-    });
+    let meter = Meter::new(MeterSpec::mono(
+        label,
+        meter_level(state, id),
+        true,
+        None,
+        false,
+    ));
     // The chain is taller than the meters: keep the bar and its label at
     // the top so both stay visible while the panel scrolls. The width
     // request keeps the full `MIC IN` / `MIC OUT` label under the bar.

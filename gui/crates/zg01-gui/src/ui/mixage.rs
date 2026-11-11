@@ -257,12 +257,12 @@ impl MixageScreen {
         let level = level_from_steps(steps);
         for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {
             if metered.card == Some(id) {
-                metered.meter.set_card(level);
+                metered.meter.set_card_mono(level);
             }
         }
         if let Some(metered) = &self.output.meter {
             if metered.card == Some(id) {
-                metered.meter.set_card(level);
+                metered.meter.set_card_mono(level);
             }
         }
     }
@@ -332,14 +332,13 @@ fn build_strip(
     body.set_vexpand(true);
 
     let meter = (strip.meter.is_some() || strip.linux_meter.is_some()).then(|| {
-        let meter = Meter::new(MeterSpec {
-            label: if strip.meter.is_some() { "CARD" } else { "PW" }.to_string(),
-            card: strip.meter.and_then(|id| meter_level(state, id)),
-            card_present: strip.meter.is_some(),
-            linux: None,
-            peak: 0.0,
-            linux_present: false,
-        });
+        let meter = Meter::new(MeterSpec::mono(
+            if strip.meter.is_some() { "CARD" } else { "PW" },
+            strip.meter.and_then(|id| meter_level(state, id)),
+            strip.meter.is_some(),
+            None,
+            false,
+        ));
         body.append(meter.widget());
         Metered {
             card: strip.meter,
@@ -463,14 +462,13 @@ fn build_output(
     body.set_vexpand(true);
 
     let meter = (output.meter.is_some() || output.linux_meter.is_some()).then(|| {
-        let meter = Meter::new(MeterSpec {
-            label: if output.meter.is_some() { "CARD" } else { "PW" }.to_string(),
-            card: output.meter.and_then(|id| meter_level(state, id)),
-            card_present: output.meter.is_some(),
-            linux: None,
-            peak: 0.0,
-            linux_present: false,
-        });
+        let meter = Meter::new(MeterSpec::mono(
+            if output.meter.is_some() { "CARD" } else { "PW" },
+            output.meter.and_then(|id| meter_level(state, id)),
+            output.meter.is_some(),
+            None,
+            false,
+        ));
         body.append(meter.widget());
         Metered {
             card: output.meter,
