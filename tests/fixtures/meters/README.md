@@ -3,11 +3,13 @@
 Real USB captures are **not** committed to this repository: they may contain
 private or licensed content, and they are large binary blobs.
 
-`frames.jsonl` holds seven **sanitized synthetic frames**. Each one is built
-from the measured layout in `docs/METER_PROTOCOL.md`: the eight current/peak
-pairs carry dB levels read from the captures, and every other field is the
-constant `15114`. The frames contain only those numbers, no capture data.
-The expected values live in `tests/test-decode-meters.py`.
+`frames.jsonl` holds eight **sanitized synthetic frames**. Each one is built
+from the measured layout in `docs/METER_PROTOCOL.md`: the 34 channels carry
+current/peak values, six of the measured frames reproduce the mic and stream
+channels seen in the captures, and `all-groups` pins one distinct level on
+every channel of every group. Every other field is the constant `15114`.
+The frames contain only those numbers, no capture data. The expected values
+live in `tests/test-decode-meters.py`.
 
 The schema follows `tools/normalize-usbmon.py`:
 
