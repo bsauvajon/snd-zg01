@@ -3,7 +3,9 @@
 mod common;
 
 use common::{control, controls_with_mic, state_with};
-use zg01_core::model::{ControlValue, DeviceState, StateRead, STATE_READ_KNOWN, STATE_READ_STATUS};
+use zg01_core::model::{
+    AppState, ControlValue, DeviceState, StateRead, STATE_READ_KNOWN, STATE_READ_STATUS,
+};
 
 fn readback_control(name: &str, value: i64, writable: bool) -> zg01_core::model::Control {
     let mut control = control(name, 0, 100);
@@ -13,7 +15,7 @@ fn readback_control(name: &str, value: i64, writable: bool) -> zg01_core::model:
 }
 
 #[test]
-fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
+fn a_successful_read_marks_direct_fields_and_keeps_transformed_cache() {
     let mut state = state_with(&[]);
     state.controls = controls_with_mic();
     state.control_mut("Gate").expect("Gate is present").value = ControlValue::Known(60);
@@ -21,6 +23,10 @@ fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
         .control_mut("Gate Threshold")
         .expect("Gate Threshold is present")
         .value = ControlValue::Known(50);
+    state
+        .control_mut("EQ Band 1 Gain")
+        .expect("EQ Band 1 Gain is present")
+        .value = ControlValue::Known(30);
     state
         .controls
         .push(readback_control(STATE_READ_STATUS, 1, false));
@@ -38,17 +44,17 @@ fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
     );
     assert_eq!(
         state.control("Gate Threshold").map(|control| control.value),
-        Some(ControlValue::Unknown)
+        Some(ControlValue::Known(50))
     );
     assert_eq!(
         state.control("Gate Attack").map(|control| control.value),
-        Some(ControlValue::Unknown)
+        Some(ControlValue::Known(0))
     );
     assert_eq!(
         state
             .control("Compressor Attack")
             .map(|control| control.value),
-        Some(ControlValue::Unknown)
+        Some(ControlValue::Known(0))
     );
     assert_eq!(
         state
@@ -62,7 +68,7 @@ fn a_successful_read_marks_direct_fields_and_leaves_transformed_unknown() {
     );
     assert_eq!(
         state.control("EQ Band 1 Gain").map(|control| control.value),
-        Some(ControlValue::Unknown)
+        Some(ControlValue::Known(30))
     );
 }
 
@@ -103,7 +109,7 @@ fn a_partial_known_mask_leaves_the_missing_direct_field_unknown() {
 }
 
 #[test]
-fn a_failed_read_marks_the_mic_chain_unknown_and_blocks_save() {
+fn a_failed_read_marks_the_direct_mic_chain_unknown_and_keeps_the_cache() {
     let mut state = state_with(&[]);
     state.controls = controls_with_mic();
     state
@@ -117,13 +123,143 @@ fn a_failed_read_marks_the_mic_chain_unknown_and_blocks_save() {
 
     assert_eq!(state.state_read, StateRead::Failed);
     assert!(!state.can_save());
-    for name in ["Gate", "Gate Threshold", "EQ Band 1 Q", "EQ Band 1 Gain"] {
+    for name in ["Gate", "Gate Range", "EQ Band 1 Q"] {
         assert_eq!(
             state.control(name).map(|control| control.value),
             Some(ControlValue::Unknown),
             "{name}"
         );
     }
+    for name in ["Gate Threshold", "EQ Band 1 Gain"] {
+        assert_eq!(
+            state.control(name).map(|control| control.value),
+            Some(ControlValue::Known(0)),
+            "{name}"
+        );
+    }
+}
+
+/// The driver cache still holds the pre-reset EQ gain when the GUI reloads
+/// after a Reset. Only a successful write may make that value known again.
+#[test]
+fn a_reload_after_reset_keeps_the_invalidated_mic_values_unknown() {
+    let mut state = state_with(&[]);
+    state.controls = controls_with_mic();
+    state
+        .control_mut("EQ Band 1 Gain")
+        .expect("EQ Band 1 Gain is present")
+        .value = ControlValue::Known(30);
+    state.control_mut("Gate").expect("Gate is present").value = ControlValue::Known(60);
+
+    state.mark_all_unknown();
+
+    // The cache read after the reset still carries the discarded gain.
+    let mut loaded = controls_with_mic();
+    loaded
+        .iter_mut()
+        .find(|control| control.name() == "EQ Band 1 Gain")
+        .expect("EQ Band 1 Gain is present")
+        .value = ControlValue::Known(30);
+    loaded
+        .iter_mut()
+        .find(|control| control.name() == "Gate")
+        .expect("Gate is present")
+        .value = ControlValue::Known(60);
+    loaded.push(readback_control(STATE_READ_STATUS, 1, false));
+    loaded.push(readback_control(STATE_READ_KNOWN, 0x3fffc7, false));
+
+    let mut reloaded = AppState::reloaded(
+        DeviceState::Connected(common::card()),
+        loaded,
+        state.layout.clone(),
+        &mut state,
+    );
+    reloaded.apply_readback();
+
+    assert_eq!(
+        reloaded
+            .control("EQ Band 1 Gain")
+            .map(|control| control.value),
+        Some(ControlValue::Unknown),
+        "the reloaded cache still holds the gain the reset discarded"
+    );
+    assert_eq!(
+        reloaded
+            .control("EQ Band 1 Frequency")
+            .map(|control| control.value),
+        Some(ControlValue::Unknown)
+    );
+    assert_eq!(
+        reloaded.control("Gate").map(|control| control.value),
+        Some(ControlValue::Known(60)),
+        "the state read refreshed the direct MIC field"
+    );
+
+    // Writing the gain now describes the device again, so the next reload
+    // must keep it while the untouched frequency stays invalidated.
+    assert!(reloaded.mark_known("EQ Band 1 Gain", 31));
+    let mut loaded = controls_with_mic();
+    loaded
+        .iter_mut()
+        .find(|control| control.name() == "EQ Band 1 Gain")
+        .expect("EQ Band 1 Gain is present")
+        .value = ControlValue::Known(31);
+    loaded.push(readback_control(STATE_READ_STATUS, 1, false));
+    loaded.push(readback_control(STATE_READ_KNOWN, 0x3fffc7, false));
+
+    let mut again = AppState::reloaded(
+        DeviceState::Connected(common::card()),
+        loaded,
+        reloaded.layout.clone(),
+        &mut reloaded,
+    );
+    again.apply_readback();
+
+    assert_eq!(
+        again.control("EQ Band 1 Gain").map(|control| control.value),
+        Some(ControlValue::Known(31))
+    );
+    assert_eq!(
+        again
+            .control("EQ Band 1 Frequency")
+            .map(|control| control.value),
+        Some(ControlValue::Unknown)
+    );
+}
+
+#[test]
+fn an_ordinary_reload_keeps_the_transformed_mic_cache() {
+    let mut state = state_with(&[]);
+    state.controls = controls_with_mic();
+    state
+        .control_mut("EQ Band 1 Gain")
+        .expect("EQ Band 1 Gain is present")
+        .value = ControlValue::Known(30);
+
+    let mut loaded = controls_with_mic();
+    loaded
+        .iter_mut()
+        .find(|control| control.name() == "EQ Band 1 Gain")
+        .expect("EQ Band 1 Gain is present")
+        .value = ControlValue::Known(30);
+    loaded.push(readback_control(STATE_READ_STATUS, 1, false));
+    loaded.push(readback_control(STATE_READ_KNOWN, 0x3fffc7, false));
+
+    let mut reloaded = AppState::reloaded(
+        DeviceState::Connected(common::card()),
+        loaded,
+        state.layout.clone(),
+        &mut state,
+    );
+    reloaded.apply_readback();
+
+    assert_eq!(
+        reloaded
+            .control("EQ Band 1 Gain")
+            .map(|control| control.value),
+        Some(ControlValue::Known(30)),
+        "no reset means the cache still describes the device"
+    );
 }
 
 #[test]

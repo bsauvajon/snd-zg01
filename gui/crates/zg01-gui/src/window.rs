@@ -617,7 +617,7 @@ fn build_footer() -> (gtk::Box, gtk::Label) {
     let badge = gtk::Label::new(Some(&t("Driver values (cache)")));
     badge.add_css_class("cache-badge");
     badge.set_tooltip_text(Some(&t(
-        "Direct MIC fields come from the ZG01 state read; transformed MIC fields are shown unknown, and the Mixage/Advanced sections come from the driver cache.",
+        "Direct MIC fields come from the ZG01 state read; EQ gain/frequency and the Mixage/Advanced sections come from the driver cache.",
     )));
     footer.append(&badge);
 

@@ -1601,7 +1601,14 @@ impl App {
         // From here on, only outcomes tagged with this generation describe
         // the card the screens show.
         self.device_generation = self.reloads.generation;
-        self.state = AppState::new(DeviceState::Connected(loaded.card), loaded.controls, layout);
+        let previous = &mut self.state;
+        let state = AppState::reloaded(
+            DeviceState::Connected(loaded.card),
+            loaded.controls,
+            layout,
+            previous,
+        );
+        self.state = state;
         self.state.apply_readback();
         if let Some(override_state) = self.readback_override.take() {
             if !override_state.is_known() {

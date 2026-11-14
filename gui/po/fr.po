@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: zg01-control 0.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/bsauvajon/snd-zg01/issues\n"
-"POT-Creation-Date: 2026-11-11 19:04+0100\n"
+"POT-Creation-Date: 2026-11-14 11:14+0100\n"
 "PO-Revision-Date: 2026-11-02 00:00+0100\n"
 "Last-Translator: ZG01 Control contributors\n"
 "Language-Team: French\n"
@@ -154,11 +154,11 @@ msgstr "Connexion au ZG01 perdue — reconnexion en cours"
 msgid "ZG01 detected, but its controls cannot be read"
 msgstr "ZG01 détecté, mais ses contrôles sont illisibles"
 
-#: crates/zg01-gui/src/app.rs:1637
+#: crates/zg01-gui/src/app.rs:1644
 msgid "ZG01 connected"
 msgstr "ZG01 connecté"
 
-#: crates/zg01-gui/src/app.rs:1663
+#: crates/zg01-gui/src/app.rs:1670
 msgid "Unnamed preset"
 msgstr "Preset sans nom"
 
@@ -319,12 +319,12 @@ msgstr "La fenêtre reste réactive pendant la lecture de la carte."
 
 #: crates/zg01-gui/src/window.rs:620
 msgid ""
-"Direct MIC fields come from the ZG01 state read; transformed MIC fields are "
-"shown unknown, and the Mixage/Advanced sections come from the driver cache."
+"Direct MIC fields come from the ZG01 state read; EQ gain/frequency and the "
+"Mixage/Advanced sections come from the driver cache."
 msgstr ""
-"Les champs MIC directs viennent de la lecture d’état du ZG01 ; les champs "
-"MIC transformés sont affichés comme inconnus, et les sections Mixage/Avancé "
-"viennent du cache du pilote."
+"Les champs MIC directs viennent de la lecture d’état du ZG01 ; le gain et la "
+"fréquence de l’EQ ainsi que les sections Mixage/Avancé viennent du cache du "
+"pilote."
 
 #: crates/zg01-gui/src/window.rs:661
 msgid "Screen in preparation."
@@ -511,7 +511,7 @@ msgid "Legacy driver: the card meters use the four-meter view."
 msgstr ""
 "Pilote ancien : les vumètres de la carte utilisent la vue à quatre mètres."
 
-#: crates/zg01-gui/src/ui/meters.rs:158
+#: crates/zg01-gui/src/ui/meters.rs:163
 msgid "MIC"
 msgstr "MIC"
 
@@ -808,18 +808,18 @@ msgstr "{label} : valeur inconnue"
 msgid "Control {name}"
 msgstr "Contrôle {name}"
 
-#: crates/zg01-gui/src/widgets/meter.rs:424
-#: crates/zg01-gui/src/widgets/meter.rs:753
+#: crates/zg01-gui/src/widgets/meter.rs:461
+#: crates/zg01-gui/src/widgets/meter.rs:784
 msgid "{percent} %"
 msgstr "{percent} %"
 
-#: crates/zg01-gui/src/widgets/meter.rs:428
-#: crates/zg01-gui/src/widgets/meter.rs:756
+#: crates/zg01-gui/src/widgets/meter.rs:465
+#: crates/zg01-gui/src/widgets/meter.rs:787
 msgid "unknown"
 msgstr "inconnu"
 
-#: crates/zg01-gui/src/widgets/meter.rs:430
-#: crates/zg01-gui/src/widgets/meter.rs:758
+#: crates/zg01-gui/src/widgets/meter.rs:467
+#: crates/zg01-gui/src/widgets/meter.rs:789
 msgid "Meter {name}"
 msgstr "Mètre {name}"
 
