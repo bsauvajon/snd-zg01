@@ -15,14 +15,15 @@
 
 #define ZG01_METER_FRAME_LEN      192
 
-#define ZG01_METER_MIC_IN_HI      10
-#define ZG01_METER_MIC_IN_LO      11
-#define ZG01_METER_MIC_OUT_HI     15
-#define ZG01_METER_MIC_OUT_LO     17
-#define ZG01_METER_PC_IN_HI       159
-#define ZG01_METER_PC_IN_LO       161
-#define ZG01_METER_STREAM_MIX_HI  181
-#define ZG01_METER_STREAM_MIX_LO  182
+#define ZG01_METER_GROUP_CHANNELS 8
+#define ZG01_METER_CHANNELS       34
+
+#define ZG01_METER_BASE_MIC_IN    0
+#define ZG01_METER_BASE_MIC_OUT   2
+#define ZG01_METER_BASE_PC_IN     4
+#define ZG01_METER_BASE_HDMI_IN   20
+#define ZG01_METER_BASE_GAME_MIX  36
+#define ZG01_METER_BASE_STREAM_MIX 52
 
 #define ZG01_METER_ZERO_CODE      16384
 #define ZG01_METER_CODES_PER_DB   10
@@ -30,8 +31,10 @@
 struct zg01_meter_values {
     int mic_in;
     int mic_out;
-    int pc_in;
-    int stream_mix;
+    int pc_in[ZG01_METER_GROUP_CHANNELS];
+    int hdmi_in[ZG01_METER_GROUP_CHANNELS];
+    int game_mix[ZG01_METER_GROUP_CHANNELS];
+    int stream_mix[ZG01_METER_GROUP_CHANNELS];
 };
 
 /* Round codes / 10 to the nearest dB, ties to even (as Python round()). */
@@ -63,6 +66,26 @@ static inline int zg01_meter_level(const unsigned char *buf,
     return level;
 }
 
+/* Map a SysEx payload index to its raw frame offset. */
+static inline unsigned int zg01_meter_raw(unsigned int payload)
+{
+    return 4 * (payload / 3) + 1 + payload % 3;
+}
+
+/*
+ * One channel current value. A channel has a current and a peak field; the
+ * current is the even field of the pair.
+ */
+static inline int zg01_meter_channel(const unsigned char *buf,
+                                     unsigned int base, unsigned int channel)
+{
+    unsigned int field = base + 2 * channel;
+    unsigned int payload = 7 + 2 * field;
+
+    return zg01_meter_level(buf, zg01_meter_raw(payload),
+                            zg01_meter_raw(payload + 1));
+}
+
 static inline int zg01_meter_parse(const unsigned char *buf, unsigned int len,
                                    struct zg01_meter_values *out)
 {
@@ -86,14 +109,15 @@ static inline int zg01_meter_parse(const unsigned char *buf, unsigned int len,
         buf[ZG01_METER_FRAME_LEN - 1] != 0xf7)
         return -EINVAL;
 
-    v.mic_in = zg01_meter_level(buf, ZG01_METER_MIC_IN_HI,
-                                ZG01_METER_MIC_IN_LO);
-    v.mic_out = zg01_meter_level(buf, ZG01_METER_MIC_OUT_HI,
-                                 ZG01_METER_MIC_OUT_LO);
-    v.pc_in = zg01_meter_level(buf, ZG01_METER_PC_IN_HI,
-                               ZG01_METER_PC_IN_LO);
-    v.stream_mix = zg01_meter_level(buf, ZG01_METER_STREAM_MIX_HI,
-                                    ZG01_METER_STREAM_MIX_LO);
+    v.mic_in = zg01_meter_channel(buf, ZG01_METER_BASE_MIC_IN, 0);
+    v.mic_out = zg01_meter_channel(buf, ZG01_METER_BASE_MIC_OUT, 0);
+    for (i = 0; i < ZG01_METER_GROUP_CHANNELS; i++) {
+        v.pc_in[i] = zg01_meter_channel(buf, ZG01_METER_BASE_PC_IN, i);
+        v.hdmi_in[i] = zg01_meter_channel(buf, ZG01_METER_BASE_HDMI_IN, i);
+        v.game_mix[i] = zg01_meter_channel(buf, ZG01_METER_BASE_GAME_MIX, i);
+        v.stream_mix[i] =
+            zg01_meter_channel(buf, ZG01_METER_BASE_STREAM_MIX, i);
+    }
     *out = v;
     return 0;
 }

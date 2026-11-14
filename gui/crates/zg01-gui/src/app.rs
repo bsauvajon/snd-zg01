@@ -20,7 +20,7 @@ use zg01_core::alsa::{
 };
 use zg01_core::device::{spawn_watcher, DeviceEvent};
 use zg01_core::layout::{load_layout_str, Layout, LAYOUT_TOML};
-use zg01_core::meters::{spawn_poller_with_generation, MeterSnapshot, METER_INTERVAL};
+use zg01_core::meters::{spawn_poller_with_generation, MeterLayout, MeterSnapshot, METER_INTERVAL};
 use zg01_core::mic::MicModel;
 use zg01_core::mixage::{LinuxMeterId, MeterId, MixageModel};
 use zg01_core::model::{
@@ -37,8 +37,8 @@ use zg01_core::writer::{ControlWriter, WriteOutcome};
 
 use crate::i18n::{t, tf};
 use crate::ui::{
-    present_preset_dialog, present_preset_report, AdvancedEvent, AdvancedScreen, MicEvent,
-    MicScreen, MixageEvent, MixageScreen, PresetChoice,
+    present_preset_dialog, present_preset_report, AdvancedEvent, AdvancedScreen, MetersScreen,
+    MicEvent, MicScreen, MixageEvent, MixageScreen, PresetChoice,
 };
 use crate::window::Shell;
 
@@ -70,20 +70,23 @@ pub(crate) enum Page {
     Mixage,
     /// The microphone chain: gate, compressor, EQ and limiter.
     Micro,
+    /// The card meter banks: mic, PC, HDMI, game and stream.
+    Meters,
     /// Every control the curated screens do not claim.
     Advanced,
 }
 
 impl Page {
     /// The screens, in sidebar order.
-    pub const ALL: [Page; 3] = [Page::Mixage, Page::Micro, Page::Advanced];
+    pub const ALL: [Page; 4] = [Page::Mixage, Page::Micro, Page::Meters, Page::Advanced];
 
     /// The row index of the screen.
     pub fn index(self) -> i32 {
         match self {
             Page::Mixage => 0,
             Page::Micro => 1,
-            Page::Advanced => 2,
+            Page::Meters => 2,
+            Page::Advanced => 3,
         }
     }
 
@@ -100,6 +103,7 @@ impl Page {
         match self {
             Page::Mixage => t("Mixage"),
             Page::Micro => t("Micro"),
+            Page::Meters => t("Meters"),
             Page::Advanced => t("Advanced"),
         }
     }
@@ -109,6 +113,7 @@ impl Page {
         match self {
             Page::Mixage => t("The three stream sends, the stream output and the meters."),
             Page::Micro => t("The microphone chain: GATE, COMP, EQ and LIMITER."),
+            Page::Meters => t("The card meter banks and the microphone levels."),
             Page::Advanced => t("Every ALSA control the curated screens do not cover."),
         }
     }
@@ -118,6 +123,7 @@ impl Page {
         match self {
             Page::Mixage => "audio-volume-high-symbolic",
             Page::Micro => "audio-input-microphone-symbolic",
+            Page::Meters => "audio-volume-medium-symbolic",
             Page::Advanced => "emblem-system-symbolic",
         }
     }
@@ -127,6 +133,7 @@ impl Page {
         match self {
             Page::Mixage => "mixage",
             Page::Micro => "micro",
+            Page::Meters => "meters",
             Page::Advanced => "advanced",
         }
     }
@@ -146,6 +153,8 @@ pub(crate) struct App {
     mixage: Option<MixageScreen>,
     /// The Micro screen, rebuilt whenever the controls are read.
     mic: Option<MicScreen>,
+    /// The card meter page, rebuilt whenever the controls are read.
+    meters: Option<MetersScreen>,
     /// The Avancé screen, rebuilt whenever the controls are read.
     advanced: Option<AdvancedScreen>,
     /// The coalescing writer of the connected card.
@@ -267,7 +276,7 @@ pub(crate) enum Msg {
     /// The control writer finished a write.
     WriteOutcome(WriteOutcome),
     /// The meter pump read the four meters.
-    Meters(MeterSnapshot),
+    Meters(Box<MeterSnapshot>),
     /// The PipeWire pump read the three Linux sources.
     LinuxMeters(LinuxMetersSnapshot),
     /// The preset preview handed a plan to apply.
@@ -485,6 +494,7 @@ impl SimpleComponent for App {
             page: Page::Mixage,
             mixage: None,
             mic: None,
+            meters: None,
             advanced: None,
             writer: None,
             writer_stop: None,
@@ -565,7 +575,7 @@ impl SimpleComponent for App {
             Msg::Mic(MicEvent::ReadState) => self.read_state(sender),
             Msg::Advanced(AdvancedEvent::Write { name, value }) => self.write_control(&name, value),
             Msg::WriteOutcome(outcome) => self.write_outcome(outcome, sender),
-            Msg::Meters(snapshot) => self.update_meters(snapshot, sender),
+            Msg::Meters(snapshot) => self.update_meters(*snapshot, sender),
             Msg::LinuxMeters(snapshot) => self.update_linux_meters(snapshot),
             Msg::PresetChosen(choice) => self.apply_preset(choice, sender),
             Msg::PresetApplied { id, label, report } => {
@@ -886,6 +896,13 @@ impl App {
         self.mic = Some(screen);
     }
 
+    /// Builds the card meter page from the current state and installs it.
+    fn install_meters(&mut self) {
+        let screen = MetersScreen::new(&self.state);
+        self.shell.install_meters(screen.widget());
+        self.meters = Some(screen);
+    }
+
     /// Builds the Avancé screen from the current controls and installs it.
     fn install_advanced(&mut self, sender: ComponentSender<Self>) {
         let mixage = MixageModel::from_controls(&self.state.controls);
@@ -953,7 +970,7 @@ impl App {
             .spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
                     match events.recv_timeout(PUMP_TICK) {
-                        Ok(snapshot) => pump_sender.input(Msg::Meters(snapshot)),
+                        Ok(snapshot) => pump_sender.input(Msg::Meters(Box::new(snapshot))),
                         Err(RecvTimeoutError::Timeout) => {}
                         Err(RecvTimeoutError::Disconnected) => break,
                     }
@@ -1329,30 +1346,38 @@ impl App {
             self.device_lost(&sender);
             return;
         }
-        for id in [
-            MeterId::MicIn,
-            MeterId::MicOut,
-            MeterId::PcIn,
-            MeterId::StreamMix,
-        ] {
+        for id in MeterId::ALL {
+            let levels = snapshot.values[id.index()];
             let value = snapshot
-                .value(id.index())
+                .max(id)
                 .map(ControlValue::Known)
                 .unwrap_or(ControlValue::Unknown);
             if let Some(control) = self.state.control_mut(id.control()) {
                 control.value = value;
             }
             if let Some(screen) = &self.mixage {
-                screen.set_meter(id, snapshot.value(id.index()));
+                screen.set_meter(id, &levels);
             }
             if let Some(screen) = &self.mic {
-                screen.set_meter(id, snapshot.value(id.index()));
+                screen.set_meter(id, &levels);
+            }
+            if let Some(screen) = &self.meters {
+                screen.set_meter(id, &levels);
             }
             // Avancé lists the meter controls too: keep their readout live.
             if let Some(screen) = &self.advanced {
                 screen.set_control(id.control(), value);
             }
         }
+        let legacy = snapshot.layout == MeterLayout::Legacy;
+        if let Some(screen) = &self.meters {
+            screen.set_legacy(legacy);
+            self.shell.set_page_enabled(Page::Meters, !legacy);
+        }
+        if let Some(screen) = &self.mixage {
+            screen.set_legacy(legacy);
+        }
+        self.shell.set_meter_legacy(legacy);
     }
 
     /// Installs the Linux readings on the screens.
@@ -1602,6 +1627,7 @@ impl App {
         self.sync_shell_state();
         self.install_mixage(sender.clone());
         self.install_micro(sender.clone());
+        self.install_meters();
         self.install_advanced(sender.clone());
         self.start_writer(&sender);
         self.start_meters(&sender);
@@ -1765,6 +1791,7 @@ mod tests {
             min: 0,
             max: 100,
             step: 0,
+            count: 1,
             writable,
         }
     }
@@ -1787,7 +1814,8 @@ mod tests {
             assert_eq!(Page::from_index(page.index()), Some(page));
         }
         assert_eq!(Page::from_index(-1), None);
-        assert_eq!(Page::from_index(3), None);
+        assert_eq!(Page::from_index(3), Some(Page::Advanced));
+        assert_eq!(Page::from_index(4), None);
     }
 
     #[test]

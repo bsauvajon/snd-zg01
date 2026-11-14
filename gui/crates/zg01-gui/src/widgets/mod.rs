@@ -18,7 +18,7 @@ mod meter;
 #[allow(unused_imports)]
 pub(crate) use fader::{Fader, FaderOutput, FaderSpec};
 #[allow(unused_imports)]
-pub(crate) use meter::{Meter, MeterSpec};
+pub(crate) use meter::{ChannelMeter, Meter, MeterSpec};
 
 use gtk4::cairo;
 
@@ -66,6 +66,8 @@ pub(crate) mod theme {
     pub(crate) const ACCENT: Rgb = Rgb::hex(0xc9_b8_ff);
     /// The fader fill and the focus ring (`#8b6ff0`).
     pub(crate) const ACCENT_STRONG: Rgb = Rgb::hex(0x8b_6f_f0);
+    /// The Linux (PW) meter (`#5ac8fa`).
+    pub(crate) const PW: Rgb = Rgb::hex(0x5a_c8_fa);
     /// The bottom of the meter gradient (`#34c759`).
     pub(crate) const SUCCESS: Rgb = Rgb::hex(0x34_c7_59);
     /// The middle of the meter gradient (`#f0b429`).
@@ -142,6 +144,7 @@ mod tests {
             theme::MUTED,
             theme::ACCENT,
             theme::ACCENT_STRONG,
+            theme::PW,
             theme::SUCCESS,
             theme::WARNING,
             theme::ERROR,

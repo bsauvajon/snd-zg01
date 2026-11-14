@@ -249,20 +249,33 @@ impl MixageScreen {
         ));
     }
 
-    /// Installs one meter reading, in 0–127 device steps.
+    /// Installs one group's channel readings, in 0–127 device steps.
     ///
-    /// `None` is an unreadable meter: the widget draws the dashed unknown
-    /// state, not a zero.
-    pub(crate) fn set_meter(&self, id: MeterId, steps: Option<i64>) {
-        let level = level_from_steps(steps);
+    /// A strip shows the louder of the first two channels; `None` is an
+    /// unreadable meter, so the widget draws the dashed unknown state, not
+    /// a zero.
+    pub(crate) fn set_meter(&self, id: MeterId, levels: &[Option<i64>]) {
+        let level = strip_level(levels);
         for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {
             if metered.card == Some(id) {
-                metered.meter.set_card(level);
+                metered.meter.set_card_mono(level);
             }
         }
         if let Some(metered) = &self.output.meter {
             if metered.card == Some(id) {
-                metered.meter.set_card(level);
+                metered.meter.set_card_mono(level);
+            }
+        }
+    }
+
+    /// Keeps the old four-meter presentation for a legacy driver.
+    ///
+    /// The GAME strip had no card bar in that layout; its `PW` bar stays.
+    pub(crate) fn set_legacy(&self, legacy: bool) {
+        for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {
+            if metered.card == Some(MeterId::GameMix) {
+                metered.meter.set_card_present(!legacy);
+                metered.meter.set_label(if legacy { "PW" } else { "CARD" });
             }
         }
     }
@@ -332,14 +345,13 @@ fn build_strip(
     body.set_vexpand(true);
 
     let meter = (strip.meter.is_some() || strip.linux_meter.is_some()).then(|| {
-        let meter = Meter::new(MeterSpec {
-            label: if strip.meter.is_some() { "CARD" } else { "PW" }.to_string(),
-            card: strip.meter.and_then(|id| meter_level(state, id)),
-            card_present: strip.meter.is_some(),
-            linux: None,
-            peak: 0.0,
-            linux_present: false,
-        });
+        let meter = Meter::new(MeterSpec::mono(
+            if strip.meter.is_some() { "CARD" } else { "PW" },
+            strip.meter.and_then(|id| meter_level(state, id)),
+            strip.meter.is_some(),
+            None,
+            false,
+        ));
         body.append(meter.widget());
         Metered {
             card: strip.meter,
@@ -463,14 +475,13 @@ fn build_output(
     body.set_vexpand(true);
 
     let meter = (output.meter.is_some() || output.linux_meter.is_some()).then(|| {
-        let meter = Meter::new(MeterSpec {
-            label: if output.meter.is_some() { "CARD" } else { "PW" }.to_string(),
-            card: output.meter.and_then(|id| meter_level(state, id)),
-            card_present: output.meter.is_some(),
-            linux: None,
-            peak: 0.0,
-            linux_present: false,
-        });
+        let meter = Meter::new(MeterSpec::mono(
+            if output.meter.is_some() { "CARD" } else { "PW" },
+            output.meter.and_then(|id| meter_level(state, id)),
+            output.meter.is_some(),
+            None,
+            false,
+        ));
         body.append(meter.widget());
         Metered {
             card: output.meter,
@@ -668,9 +679,14 @@ fn level_from_steps(steps: Option<i64>) -> Option<f64> {
     steps.map(|steps| (steps as f64 / METER_FULL_SCALE).clamp(0.0, 1.0))
 }
 
+/// The level a strip shows: the louder of the first two channels.
+fn strip_level(levels: &[Option<i64>]) -> Option<f64> {
+    level_from_steps(levels.iter().take(2).flatten().copied().max())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::level_from_steps;
+    use super::{level_from_steps, strip_level};
 
     #[test]
     fn meter_steps_are_normalised_to_the_unit_interval() {
@@ -681,5 +697,15 @@ mod tests {
         assert!((half - 64.0 / 127.0).abs() < 1e-12);
         assert_eq!(level_from_steps(Some(-1)), Some(0.0));
         assert_eq!(level_from_steps(Some(999)), Some(1.0));
+    }
+
+    #[test]
+    fn a_strip_uses_the_louder_of_the_first_two_channels() {
+        assert_eq!(
+            strip_level(&[Some(10), Some(40), Some(90)]),
+            Some(40.0 / 127.0)
+        );
+        assert_eq!(strip_level(&[None, Some(40)]), Some(40.0 / 127.0));
+        assert_eq!(strip_level(&[None, None]), None);
     }
 }

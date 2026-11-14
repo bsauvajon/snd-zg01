@@ -34,6 +34,7 @@ fn info(name: &str, min: i64, max: i64, writable: bool) -> ControlInfo {
         min,
         max,
         step: 0,
+        count: 1,
         writable,
     }
 }

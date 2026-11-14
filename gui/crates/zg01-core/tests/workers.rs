@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use zg01_core::alsa::{AlsaBackend, AlsaError, CardInfo, ControlInfo};
 use zg01_core::device::{spawn_watcher, DeviceEvent};
-use zg01_core::meters::{poll_meters, METER_CONTROLS};
+use zg01_core::meters::{poll_meters, MeterLayout, METER_CONTROLS};
+use zg01_core::mixage::MeterId;
 use zg01_core::model::{SAVE_ACTION, STATE_READ_ACTION};
 use zg01_core::state_read::spawn_state_read_with;
 use zg01_core::writer::{ControlWriter, WriteOutcome};
@@ -367,17 +368,22 @@ fn a_meter_read_that_loses_the_card_marks_the_snapshot() {
         snapshot.lost,
         "a liveness failure is not just a missing meter"
     );
-    assert_eq!(snapshot.values, [None; 4]);
+    assert!(snapshot
+        .values
+        .iter()
+        .all(|group| group.iter().all(Option::is_none)));
 }
 
 #[test]
-fn the_meter_controls_are_the_four_decoded_ones() {
+fn the_meter_controls_are_the_six_decoded_ones() {
     assert_eq!(
         METER_CONTROLS,
         [
             "Meter Mic In",
             "Meter Mic Out",
             "Meter PC In",
+            "Meter HDMI In",
+            "Meter Game Mix",
             "Meter Stream Mix"
         ]
     );
@@ -387,7 +393,10 @@ fn the_meter_controls_are_the_four_decoded_ones() {
 fn the_meters_report_the_values() {
     let backend = RecordingBackend::default();
     let snapshot = poll_meters(&backend);
-    assert_eq!(snapshot.values, [Some(0); 4]);
+    assert_eq!(snapshot.layout, MeterLayout::V2);
+    assert_eq!(snapshot.value(MeterId::PcIn, 0), Some(0));
+    assert_eq!(snapshot.value(MeterId::PcIn, 1), None);
+    assert_eq!(snapshot.value(MeterId::GameMix, 0), Some(0));
 }
 
 #[test]
@@ -395,7 +404,10 @@ fn a_missing_meter_is_none() {
     let backend = RecordingBackend::default();
     *backend.answer.lock().unwrap() = ReadAnswer::Unknown;
     let snapshot = poll_meters(&backend);
-    assert_eq!(snapshot.values, [None; 4]);
+    assert!(snapshot
+        .values
+        .iter()
+        .all(|group| group.iter().all(Option::is_none)));
 }
 
 #[test]
@@ -403,7 +415,10 @@ fn a_meter_without_a_value_is_none() {
     let backend = RecordingBackend::default();
     *backend.answer.lock().unwrap() = ReadAnswer::NoData;
     let snapshot = poll_meters(&backend);
-    assert_eq!(snapshot.values, [None; 4]);
+    assert!(snapshot
+        .values
+        .iter()
+        .all(|group| group.iter().all(Option::is_none)));
 }
 
 /// A card the watcher can report.

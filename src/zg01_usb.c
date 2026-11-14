@@ -127,7 +127,9 @@ static int zg01_probe(struct usb_interface *interface,
     dev->meters.running = false;
     dev->meters.keepalive_running = false;
     dev->meters.poll_running = false;
-    atomic_set(&dev->meters.valid, 0);
+    seqlock_init(&dev->meters.snapshot_lock);
+    dev->meters.valid = false;
+    dev->meters.valid_jiffies = 0;
     INIT_DELAYED_WORK(&dev->meters.keepalive_work, zg01_meters_keepalive_fn);
     INIT_DELAYED_WORK(&dev->meters.poll_work, zg01_meters_poll_fn);
 

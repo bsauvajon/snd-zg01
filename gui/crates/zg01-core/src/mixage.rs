@@ -9,12 +9,12 @@
 //! steps with no established dB mapping: the screen shows the step value,
 //! it never invents a dB readout.
 
-use crate::meters::METER_CONTROLS;
+use crate::meters::{layout_from_counts, MeterLayout, METER_CONTROLS};
 use crate::model::Control;
 
-/// One of the four meters the driver registers.
+/// One of the six meters the driver registers.
 ///
-/// The variants are the four decoded meter controls of
+/// The variants are the six decoded meter controls of
 /// [`crate::meters::METER_CONTROLS`]; `index` is the slot of the readings
 /// in a [`crate::meters::MeterSnapshot`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,18 +25,42 @@ pub enum MeterId {
     MicOut,
     /// `Meter PC In`.
     PcIn,
+    /// `Meter HDMI In`.
+    HdmiIn,
+    /// `Meter Game Mix`.
+    GameMix,
     /// `Meter Stream Mix`.
     StreamMix,
 }
 
 impl MeterId {
+    /// Every meter, in snapshot-slot order.
+    pub const ALL: [MeterId; 6] = [
+        MeterId::MicIn,
+        MeterId::MicOut,
+        MeterId::PcIn,
+        MeterId::HdmiIn,
+        MeterId::GameMix,
+        MeterId::StreamMix,
+    ];
+
     /// The slot of this meter in a [`crate::meters::MeterSnapshot`].
     pub const fn index(self) -> usize {
         match self {
             MeterId::MicIn => 0,
             MeterId::MicOut => 1,
             MeterId::PcIn => 2,
-            MeterId::StreamMix => 3,
+            MeterId::HdmiIn => 3,
+            MeterId::GameMix => 4,
+            MeterId::StreamMix => 5,
+        }
+    }
+
+    /// How many channels the group publishes.
+    pub const fn channel_count(self) -> usize {
+        match self {
+            MeterId::MicIn | MeterId::MicOut => 1,
+            MeterId::PcIn | MeterId::HdmiIn | MeterId::GameMix | MeterId::StreamMix => 8,
         }
     }
 
@@ -105,8 +129,8 @@ pub struct StripModel {
     pub fx: Option<String>,
     /// The card meter of the strip.
     ///
-    /// `None` for GAME: the decoded frame has no separable game-only tap
-    /// in v1, so the strip is shown without a card meter.
+    /// The VOICE strip uses `PcIn` on a legacy driver and `StreamMix` on
+    /// a V2 driver; the other strips keep their group on both layouts.
     pub meter: Option<MeterId>,
     /// The Linux-side source of the strip, when it has one.
     pub linux_meter: Option<LinuxMeterId>,
@@ -143,6 +167,13 @@ impl MixageModel {
     /// A missing control is `None`, never an invented name. The strips are
     /// always three: a strip without a level still has its meter.
     pub fn from_controls(controls: &[Control]) -> Self {
+        let layout = layout_from_counts(|name| {
+            controls
+                .iter()
+                .find(|control| control.name() == name)
+                .map(|control| control.info.count)
+        });
+        let legacy = layout == MeterLayout::Legacy;
         MixageModel {
             strips: vec![
                 StripModel {
@@ -160,7 +191,11 @@ impl MixageModel {
                     level: find(controls, &["Streaming Voice Level Steps"]),
                     mute: find(controls, &["Streaming Voice Mute Steps"]),
                     fx: find(controls, &["Streaming Voice FX Steps"]),
-                    meter: Some(MeterId::PcIn),
+                    meter: Some(if legacy {
+                        MeterId::PcIn
+                    } else {
+                        MeterId::StreamMix
+                    }),
                     linux_meter: Some(LinuxMeterId::VoiceOut),
                 },
                 StripModel {
@@ -169,7 +204,7 @@ impl MixageModel {
                     level: find(controls, &["Streaming Game Level Steps"]),
                     mute: find(controls, &["Streaming Game Mute Steps"]),
                     fx: find(controls, &["Streaming Game FX Steps"]),
-                    meter: None,
+                    meter: Some(MeterId::GameMix),
                     linux_meter: Some(LinuxMeterId::GameOut),
                 },
             ],
@@ -208,12 +243,7 @@ mod tests {
 
     #[test]
     fn the_meter_ids_match_the_snapshot_slots() {
-        for meter in [
-            MeterId::MicIn,
-            MeterId::MicOut,
-            MeterId::PcIn,
-            MeterId::StreamMix,
-        ] {
+        for meter in MeterId::ALL {
             assert_eq!(meter.control(), METER_CONTROLS[meter.index()]);
         }
     }

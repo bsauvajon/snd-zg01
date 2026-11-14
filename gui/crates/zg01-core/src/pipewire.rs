@@ -26,7 +26,11 @@ use crate::mixage::LinuxMeterId;
 /// How often the Linux meters are published.
 pub const LINUX_METER_INTERVAL: Duration = Duration::from_millis(50);
 
-/// The PipeWire node serials of the three ZG01 sources.
+/// The PipeWire object serials of the three ZG01 sources.
+///
+/// `pw-record --target` resolves these serials, not the global node ids:
+/// the two values differ in a live graph, and targeting the id lands on
+/// another node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Nodes {
     /// The `Voice In` source.
@@ -638,27 +642,29 @@ mod tests {
     use super::{level_from_peak, parse_pw_dump, recorder_args, LinuxMetersSnapshot};
     use crate::mixage::LinuxMeterId;
 
+    // Node ids and serials differ in a live PipeWire graph. `pw-record
+    // --target` resolves the object serial, so the ids must not be used.
     const DUMP: &str = r#"[
-      {"id": 69, "type": "PipeWire:Interface:Node",
-       "info": {"props": {"node.name": "alsa_output.usb-Yamaha_Corporation_Yamaha_ZG01-01.HiFi__VoiceOut__sink",
-                          "node.description": "Yamaha ZG01 Voice Out", "object.serial": "69"}}},
-      {"id": 70, "type": "PipeWire:Interface:Node",
-       "info": {"props": {"node.name": "alsa_output.usb-Yamaha_Corporation_Yamaha_ZG01-01.HiFi__Game__sink",
-                          "node.description": "Yamaha ZG01 Game Out", "object.serial": "70"}}},
       {"id": 71, "type": "PipeWire:Interface:Node",
+       "info": {"props": {"node.name": "alsa_output.usb-Yamaha_Corporation_Yamaha_ZG01-01.HiFi__VoiceOut__sink",
+                          "node.description": "Yamaha ZG01 Voice Out", "object.serial": "72"}}},
+      {"id": 72, "type": "PipeWire:Interface:Node",
+       "info": {"props": {"node.name": "alsa_output.usb-Yamaha_Corporation_Yamaha_ZG01-01.HiFi__Game__sink",
+                          "node.description": "Yamaha ZG01 Game Out", "object.serial": "73"}}},
+      {"id": 73, "type": "PipeWire:Interface:Node",
        "info": {"props": {"node.name": "alsa_input.usb-Yamaha_Corporation_Yamaha_ZG01-01.HiFi__VoiceIn__source",
-                          "node.description": "Yamaha ZG01 Voice In", "object.serial": "71"}}},
+                          "node.description": "Yamaha ZG01 Voice In", "object.serial": "74"}}},
       {"id": 12, "type": "PipeWire:Interface:Node",
        "info": {"props": {"node.name": "alsa_output.pci-0000_00_1f.3.analog-stereo",
-                          "object.serial": "12"}}}
+                          "object.serial": "13"}}}
     ]"#;
 
     #[test]
     fn the_dump_selects_the_three_zg01_nodes() {
         let nodes = parse_pw_dump(DUMP).expect("a valid dump");
-        assert_eq!(nodes.mic_in, Some(71));
-        assert_eq!(nodes.voice_out, Some(69));
-        assert_eq!(nodes.game_out, Some(70));
+        assert_eq!(nodes.mic_in, Some(74));
+        assert_eq!(nodes.voice_out, Some(72));
+        assert_eq!(nodes.game_out, Some(73));
     }
 
     #[test]
@@ -787,8 +793,9 @@ mod tests {
 
         fn nodes_json(serial: u64) -> String {
             format!(
-                r#"[{{"info":{{"props":{{"node.name":"alsa_input.usb-ZG01-VoiceIn__source",
-                    "node.description":"Yamaha ZG01 Voice In","object.serial":"{serial}"}}}}}}]"#
+                r#"[{{"id":{},"info":{{"props":{{"node.name":"alsa_input.usb-ZG01-VoiceIn__source",
+                    "node.description":"Yamaha ZG01 Voice In","object.serial":"{serial}"}}}}}}]"#,
+                serial + 1
             )
         }
 

@@ -79,6 +79,8 @@ pub struct ControlInfo {
     pub max: i64,
     /// The step between two values, 0 when the element does not publish one.
     pub step: i64,
+    /// How many values the element carries.
+    pub count: u32,
     /// Whether the element accepts writes.
     pub writable: bool,
 }
@@ -133,8 +135,24 @@ pub trait AlsaBackend: Send + Sync {
     /// Every control the device publishes.
     fn list_controls(&self) -> Result<Vec<ControlInfo>, AlsaError>;
 
+    /// How many values a control declares, when the backend knows it.
+    ///
+    /// The meter poller uses this to tell the legacy four-value driver from
+    /// the v2 arrays without reading a frame first. The default is unknown.
+    fn control_count(&self, _name: &str) -> Option<u32> {
+        None
+    }
+
     /// The current value of a control.
     fn read(&self, name: &str) -> Result<i64, AlsaError>;
+
+    /// Every value of a control.
+    ///
+    /// The default is the single value of [`AlsaBackend::read`], so a
+    /// backend that cannot carry arrays keeps working.
+    fn read_values(&self, name: &str) -> Result<Vec<i64>, AlsaError> {
+        self.read(name).map(|value| vec![value])
+    }
 
     /// Sets the value of a control.
     fn write(&self, name: &str, value: i64) -> Result<(), AlsaError>;
@@ -280,6 +298,7 @@ impl AlsaBackend for RealAlsa {
                 min: meta.min,
                 max: meta.max,
                 step: meta.step,
+                count: meta.count as u32,
                 writable: meta.writable,
             });
             cache.insert(name, id, meta);
@@ -292,6 +311,20 @@ impl AlsaBackend for RealAlsa {
         let mut cache = self.lock_cache();
         let (id, meta) = find_cached(&mut cache, name, || ctl.find(name))?;
         ctl.read(id, meta)
+    }
+
+    fn read_values(&self, name: &str) -> Result<Vec<i64>, AlsaError> {
+        let ctl = self.lock();
+        let mut cache = self.lock_cache();
+        let (id, meta) = find_cached(&mut cache, name, || ctl.find(name))?;
+        ctl.read_values(id, meta)
+    }
+
+    fn control_count(&self, name: &str) -> Option<u32> {
+        let ctl = self.lock();
+        let mut cache = self.lock_cache();
+        let (_, meta) = find_cached(&mut cache, name, || ctl.find(name)).ok()?;
+        Some(meta.count as u32)
     }
 
     fn write(&self, name: &str, value: i64) -> Result<(), AlsaError> {
@@ -370,6 +403,7 @@ struct ElemMeta {
     min: i64,
     max: i64,
     step: i64,
+    count: usize,
     writable: bool,
 }
 
@@ -467,6 +501,7 @@ impl RawCtl {
                 min,
                 max,
                 step,
+                count: (alsa_sys::snd_ctl_elem_info_get_count(info.0) as usize).max(1),
                 writable: alsa_sys::snd_ctl_elem_info_is_writable(info.0) != 0,
             })
         }
@@ -483,8 +518,8 @@ impl RawCtl {
         Err(AlsaError::Unknown(name.to_string()))
     }
 
-    /// Reads the value of an element.
-    fn read(&self, id: &RawElemId, meta: &ElemMeta) -> Result<i64, AlsaError> {
+    /// Reads every value of an element.
+    fn read_values(&self, id: &RawElemId, meta: &ElemMeta) -> Result<Vec<i64>, AlsaError> {
         let kind = meta
             .kind
             .ok_or_else(|| AlsaError::Unsupported(element_name(id).unwrap_or_default()))?;
@@ -520,14 +555,30 @@ impl RawCtl {
                 return Err(alsa::Error::new("snd_ctl_elem_read", errno).into());
             }
 
-            Ok(match kind {
-                ControlKind::Boolean => alsa_sys::snd_ctl_elem_value_get_boolean(value.0, 0) as i64,
-                ControlKind::Integer => alsa_sys::snd_ctl_elem_value_get_integer(value.0, 0) as i64,
-                ControlKind::Bytes => {
-                    return Err(AlsaError::Unsupported(element_name(id).unwrap_or_default()));
-                }
-            })
+            let mut values = Vec::with_capacity(meta.count.max(1));
+            for index in 0..meta.count.max(1) as u32 {
+                values.push(match kind {
+                    ControlKind::Boolean => {
+                        alsa_sys::snd_ctl_elem_value_get_boolean(value.0, index) as i64
+                    }
+                    ControlKind::Integer => {
+                        alsa_sys::snd_ctl_elem_value_get_integer(value.0, index) as i64
+                    }
+                    ControlKind::Bytes => {
+                        return Err(AlsaError::Unsupported(element_name(id).unwrap_or_default()));
+                    }
+                });
+            }
+            Ok(values)
         }
+    }
+
+    /// Reads the first value of an element.
+    fn read(&self, id: &RawElemId, meta: &ElemMeta) -> Result<i64, AlsaError> {
+        self.read_values(id, meta)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AlsaError::NoData(element_name(id).unwrap_or_default()))
     }
 
     /// Writes the value of an element.
@@ -695,6 +746,8 @@ fn kind_of(elem_type: u32) -> Option<ControlKind> {
 pub enum FakeError {
     /// The control does not exist.
     Unknown,
+    /// The control exists but has no value.
+    NoData,
     /// The control exists but does not accept writes.
     ReadOnly,
     /// The control kind cannot be handled as a number.
@@ -713,7 +766,7 @@ pub struct FakeAlsa {
 
 struct FakeState {
     controls: Vec<ControlInfo>,
-    values: HashMap<String, i64>,
+    values: HashMap<String, Vec<i64>>,
     writes: Vec<(String, i64)>,
     errors: HashMap<String, FakeError>,
 }
@@ -733,12 +786,20 @@ impl FakeAlsa {
 
     /// Sets the value a control hands out.
     pub fn set_value(&self, name: &str, value: i64) {
-        self.lock().values.insert(name.to_string(), value);
+        self.lock().values.insert(name.to_string(), vec![value]);
     }
 
-    /// The value of a control.
+    /// Sets every value a multichannel control hands out.
+    pub fn set_values(&self, name: &str, values: Vec<i64>) {
+        self.lock().values.insert(name.to_string(), values);
+    }
+
+    /// The first value of a control.
     pub fn value(&self, name: &str) -> Option<i64> {
-        self.lock().values.get(name).copied()
+        self.lock()
+            .values
+            .get(name)
+            .and_then(|values| values.first().copied())
     }
 
     /// Makes every access to a control fail.
@@ -771,7 +832,22 @@ impl AlsaBackend for FakeAlsa {
         Ok(self.lock().controls.clone())
     }
 
+    fn control_count(&self, name: &str) -> Option<u32> {
+        self.lock()
+            .controls
+            .iter()
+            .find(|control| control.name == name)
+            .map(|control| control.count)
+    }
+
     fn read(&self, name: &str) -> Result<i64, AlsaError> {
+        self.read_values(name)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AlsaError::NoData(name.to_string()))
+    }
+
+    fn read_values(&self, name: &str) -> Result<Vec<i64>, AlsaError> {
         let state = self.lock();
         if let Some(error) = state.errors.get(name) {
             return Err(fake_error(error, name));
@@ -782,7 +858,7 @@ impl AlsaBackend for FakeAlsa {
         state
             .values
             .get(name)
-            .copied()
+            .cloned()
             .ok_or_else(|| AlsaError::NoData(name.to_string()))
     }
 
@@ -800,7 +876,7 @@ impl AlsaBackend for FakeAlsa {
             return Err(AlsaError::ReadOnly(name.to_string()));
         }
         state.writes.push((name.to_string(), value));
-        state.values.insert(name.to_string(), value);
+        state.values.insert(name.to_string(), vec![value]);
         Ok(())
     }
 }
@@ -809,6 +885,7 @@ impl AlsaBackend for FakeAlsa {
 fn fake_error(error: &FakeError, name: &str) -> AlsaError {
     match error {
         FakeError::Unknown => AlsaError::Unknown(name.to_string()),
+        FakeError::NoData => AlsaError::NoData(name.to_string()),
         FakeError::ReadOnly => AlsaError::ReadOnly(name.to_string()),
         FakeError::Unsupported => AlsaError::Unsupported(name.to_string()),
         FakeError::DeviceLost => AlsaError::Alsa(alsa::Error::new("fake", ENODEV)),
@@ -820,7 +897,8 @@ mod tests {
     use std::ffi::CString;
 
     use super::{
-        element_name, find_cached, AlsaError, ControlKind, ElemCache, ElemMeta, RawElemId,
+        element_name, find_cached, AlsaBackend, AlsaError, ControlInfo, ControlKind, ElemCache,
+        ElemMeta, FakeAlsa, RawElemId,
     };
 
     #[test]
@@ -859,6 +937,7 @@ mod tests {
             min: 0,
             max: 100,
             step: 1,
+            count: 1,
             writable,
         }
     }
@@ -902,5 +981,25 @@ mod tests {
         let (_, found) =
             find_cached(&mut cache, "Gate", || Ok((element("Gate"), meta(true)))).unwrap();
         assert!(!found.writable, "the cache wins over the scan");
+    }
+
+    #[test]
+    fn a_multichannel_control_reads_all_its_values() {
+        let info = ControlInfo {
+            name: "Meter PC In".to_string(),
+            kind: ControlKind::Integer,
+            min: 0,
+            max: 127,
+            step: 0,
+            count: 8,
+            writable: false,
+        };
+        let fake = FakeAlsa::new(vec![info]);
+        fake.set_values("Meter PC In", vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(
+            fake.read_values("Meter PC In").unwrap(),
+            vec![1, 2, 3, 4, 5, 6, 7, 8]
+        );
+        assert_eq!(fake.read("Meter PC In").unwrap(), 1);
     }
 }

@@ -10,6 +10,7 @@
 @define-color zg_text #eef1f6;
 @define-color zg_accent #c9b8ff;
 @define-color zg_accent_strong #8b6ff0;
+@define-color zg_pw #5ac8fa;
 @define-color zg_success #34c759;
 @define-color zg_warning #f0b429;
 @define-color zg_error #f0523b;
@@ -181,6 +182,65 @@ switch.unknown-value {
 .meter-label {
   font-weight: 600;
   letter-spacing: 0.5px;
+}
+
+.meter-legend {
+  margin-top: 2px;
+}
+
+.meter-legend-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.meter-swatch {
+  font-size: 9px;
+}
+
+.meter-swatch-card {
+  color: @zg_success;
+}
+
+.meter-swatch-linux {
+  color: @zg_pw;
+}
+
+/* Card meter dashboard ---------------------------------------------------- */
+
+.meter-card {
+  padding: 16px;
+}
+
+.meter-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: @zg_text;
+}
+
+.channel-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: alpha(@zg_text, 0.62);
+}
+
+.channel-value {
+  font-size: 11px;
+  font-weight: 600;
+  font-feature-settings: "tnum" 1;
+  color: alpha(@zg_text, 0.78);
+}
+
+.channel-value.unknown {
+  color: alpha(@zg_muted, 0.72);
+}
+
+.mic-value {
+  font-size: 13px;
+  color: @zg_accent;
 }
 
 /* Micro ------------------------------------------------------------------- */

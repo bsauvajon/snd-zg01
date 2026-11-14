@@ -5,7 +5,7 @@
  * while the host keeps the 0x03 keepalive coming.  This file owns that
  * endpoint with a single URB that is resubmitted from its completion,
  * and a delayed work that sends the keepalive once a second.  Each valid
- * frame updates the four level snapshots read by the meter kcontrols.
+ * frame updates the 34 channel snapshots read by the meter kcontrols.
  */
 
 #include <linux/errno.h>
@@ -29,16 +29,35 @@ static void zg01_meters_store(struct zg01_meter_state *m,
                               const struct zg01_meter_values *v)
 {
     /*
-     * Publish the snapshot with release ordering: a reader that observes
-     * valid == 1 with acquire ordering sees the levels and the timestamp
-     * written before it, even on a weakly ordered CPU (arm64).
+     * Publish the whole snapshot under the seqlock.  The URB completion
+     * can run while a kcontrol getter copies the levels; the sequence
+     * makes the reader retry instead of mixing two frames.
      */
-    atomic_set(&m->levels[ZG01_METER_MIC_IN], v->mic_in);
-    atomic_set(&m->levels[ZG01_METER_MIC_OUT], v->mic_out);
-    atomic_set(&m->levels[ZG01_METER_PC_IN], v->pc_in);
-    atomic_set(&m->levels[ZG01_METER_STREAM_MIX], v->stream_mix);
-    atomic_long_set(&m->valid_jiffies, jiffies);
-    atomic_set_release(&m->valid, 1);
+    unsigned long flags;
+    unsigned int i;
+
+    write_seqlock_irqsave(&m->snapshot_lock, flags);
+    m->levels[ZG01_METER_MIC_IN] = v->mic_in;
+    m->levels[ZG01_METER_MIC_OUT] = v->mic_out;
+    for (i = 0; i < ZG01_METER_GROUP_CHANNELS; i++) {
+        m->levels[ZG01_METER_PC_IN + i] = v->pc_in[i];
+        m->levels[ZG01_METER_HDMI_IN + i] = v->hdmi_in[i];
+        m->levels[ZG01_METER_GAME_MIX + i] = v->game_mix[i];
+        m->levels[ZG01_METER_STREAM_MIX + i] = v->stream_mix[i];
+    }
+    m->valid_jiffies = jiffies;
+    m->valid = true;
+    write_sequnlock_irqrestore(&m->snapshot_lock, flags);
+}
+
+static void zg01_meters_reset(struct zg01_meter_state *m)
+{
+    unsigned long flags;
+
+    write_seqlock_irqsave(&m->snapshot_lock, flags);
+    m->valid = false;
+    m->valid_jiffies = 0;
+    write_sequnlock_irqrestore(&m->snapshot_lock, flags);
 }
 
 /* The type-20 response frames start with this USB-MIDI header. */
@@ -367,7 +386,7 @@ int zg01_meters_start(struct zg01_dev *dev)
     m->invalid = 0;
     m->other = 0;
     m->last_log_jiffies = 0;
-    atomic_set_release(&m->valid, 0);
+    zg01_meters_reset(m);
     WRITE_ONCE(m->running, true);
 
     err = usb_submit_urb(m->urb, GFP_KERNEL);
@@ -434,26 +453,59 @@ void zg01_meters_stop(struct zg01_dev *dev)
 
     kfree(m->buf);
     m->buf = NULL;
-    atomic_set_release(&m->valid, 0);
+    zg01_meters_reset(m);
 }
 
 /*
- * Returns the last valid level for one meter (0..127), or -ENODATA when
- * no valid frame has arrived since start, when the reader is stopped, or
- * when the last valid frame is older than ZG01_METER_STALE_MS.  A missing
+ * Copy `count` consecutive levels (0..127) into `out`, or return -ENODATA
+ * when no valid frame has arrived since start, when the reader is stopped,
+ * or when the last valid frame is older than ZG01_METER_STALE_MS.  A missing
  * meter is never reported as zero.
  */
-int zg01_meters_value(struct zg01_dev *dev, unsigned int index)
+int zg01_meters_values(struct zg01_dev *dev, unsigned int first,
+                       unsigned int count, int *out)
 {
-    struct zg01_meter_state *m = &dev->meters;
+    struct zg01_meter_state *m;
+    unsigned long valid_jiffies;
+    unsigned int i;
+    unsigned int seq;
+    bool valid;
 
-    if (index >= ZG01_METER_COUNT)
+    if (!dev || !out || count == 0)
         return -EINVAL;
-    if (!atomic_read_acquire(&m->valid))
+    if (first > ZG01_METER_LEVEL_COUNT ||
+        count > ZG01_METER_LEVEL_COUNT - first)
+        return -EINVAL;
+
+    m = &dev->meters;
+
+    /*
+     * Copy the levels and the publication metadata together.  A frame
+     * landing during the copy changes the sequence, so the reader retries
+     * instead of returning L from one frame and R from the next.
+     */
+    do {
+        seq = read_seqbegin(&m->snapshot_lock);
+        valid = m->valid;
+        valid_jiffies = m->valid_jiffies;
+        for (i = 0; i < count; i++)
+            out[i] = m->levels[first + i];
+    } while (read_seqretry(&m->snapshot_lock, seq));
+
+    if (!valid)
         return -ENODATA;
-    if (time_after(jiffies, atomic_long_read(&m->valid_jiffies) +
+    if (time_after(jiffies, valid_jiffies +
                    msecs_to_jiffies(ZG01_METER_STALE_MS)))
         return -ENODATA;
+    return 0;
+}
 
-    return atomic_read(&m->levels[index]);
+/* One level, kept for single-value callers and tests. */
+int zg01_meters_value(struct zg01_dev *dev, unsigned int index)
+{
+    int level;
+    int ret;
+
+    ret = zg01_meters_values(dev, index, 1, &level);
+    return ret ? ret : level;
 }

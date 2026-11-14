@@ -178,12 +178,21 @@ behaviour; see `docs/MIC_CONTROL_PROTOCOL.md`.
 
 ### Meters
 
-The card reports four live levels as read-only ALSA integer controls:
+The card reports six meter groups as read-only ALSA integer controls. The
+two mic groups carry one value; the four surround groups carry eight
+values, one per channel:
 
-- `Meter Mic In`: the mic before the gate.
-- `Meter Mic Out`: the mic after the gate.
-- `Meter PC In`: the Voice Out playback path.
-- `Meter Stream Mix`: the stream mix (mic after the gate, Voice Out and Game Out).
+- `Meter Mic In` (1 value): the mic before the gate.
+- `Meter Mic Out` (1 value): the mic after the gate.
+- `Meter PC In` (8 values): the USB PC playback; Game Out is on L/R in
+  the measured captures.
+- `Meter HDMI In` (8 values): the HDMI input, on L/R in the measured
+  captures.
+- `Meter Game Mix` (8 values): the game mix; HDMI and Game Out are on L/R
+  in the measured captures.
+- `Meter Stream Mix` (8 values): the streaming output mix; Voice playback
+  is on L/R in the measured captures. The exact VOICE strip mapping is
+  still open.
 
 Each value is 0–127 and linear in dB: 0 is −127 dB and 127 is 0 dBFS.
 The device sends a frame about every 50 ms (20 Hz); a read returns the
@@ -192,19 +201,24 @@ latest valid frame. The controls are read-only and volatile, so
 or after the reader stops, a read returns an error rather than zero.
 
 ```bash
-amixer -c zg01 cget 'name=Meter Stream Mix'
+amixer -c zg01 cget 'name=Meter PC In'   # values=8
+amixer -c zg01 cget 'name=Meter Mic In'  # values=1
 ```
 
-The GUI polls these four controls at 20 Hz on a worker thread and draws
-the card meters. It also draws a thin `PW` bar beside the card bar from
+The GUI polls the six controls at 20 Hz on a worker thread. The Mixage
+strips use `mic_in`, `pc_in` L/R, `game_mix` L/R and `stream_mix` L/R; the
+new **Meters** page shows every channel of the four surround groups plus
+the two mic levels. It also draws a thin `PW` bar beside the card bar from
 the Linux PipeWire graph: `Voice In` for MIC, `Voice Out` for VOICE and
 `Game Out` for GAME. The two bars share the card dB scale, so a given
 height means the same level. STREAM OUT has no Linux source and stays
 card-only. When PipeWire or a node is unavailable, the `PW` bar is hidden;
-a source with no frames is drawn dashed, never as zero. GAME has no card
-meter in v1, so its strip shows only the `PW` bar. HDMI is not registered
-until its field is decoded. See `docs/METER_PROTOCOL.md` and the
-acceptance record in `docs/METER_TEST.md`.
+a source with no frames is drawn dashed, never as zero.
+
+An older driver with only the four one-value controls is detected and kept
+in the legacy four-meter view; the Meters page is disabled and the legacy
+values are not remapped. See `docs/METER_PROTOCOL.md` and the acceptance
+record in `docs/METER_TEST.md`.
 
 ## GUI (ZG01 Control)
 
@@ -341,21 +355,26 @@ persists the current values on the ZG01.
 
 ### Meters
 
-The card meters (MIC IN, MIC OUT, PC IN, STREAM) are read-only volatile
-controls. If the driver does not publish one, or a read fails, the bar is
-drawn dashed and the accessible value is "unknown" — never a fake zero.
-Beside each card bar, a thin `PW` bar shows the Linux PipeWire level:
-`Voice In` for MIC, `Voice Out` for VOICE and `Game Out` for GAME. STREAM
-OUT has no Linux source. GAME has no card meter, so it shows only its `PW`
-bar. HDMI is deferred until its field is decoded.
+The card meters (MIC IN, MIC OUT, PC IN, HDMI IN, GAME MIX, STREAM MIX)
+are read-only volatile controls. If the driver does not publish a group,
+or a read fails, the bar is drawn dashed and the accessible value is
+"unknown" — never a fake zero. Beside each strip card bar, a thin `PW` bar
+shows the Linux PipeWire level: `Voice In` for MIC, `Voice Out` for VOICE
+and `Game Out` for GAME. STREAM OUT has no Linux source. The **Meters**
+page shows the two mic levels and the eight channels of PC IN, HDMI IN,
+GAME MIX and STREAM MIX.
+
+An older driver is detected by its four one-value controls. The GUI keeps
+the legacy four-meter layout, disables the Meters page and shows a notice;
+it never remaps the old values into the new groups.
 
 ### Known limitations and missing features
 
 - **Card meters can be unavailable.** When EP `0x83` does not stream (the
-  current test unit after a suspend), the four card controls answer
+  current test unit after a suspend), the six card controls answer
   `-ENODATA` and the card bars stay dashed. The thin `PW` bars are then the
-  only live levels. `GAME` has no card meter in this version, and
-  `Meter HDMI In` is reserved but not decoded.
+  only live levels. The Linux re-arm of the meter session is a separate
+  phase.
 - **PipeWire meters are runtime-optional.** They need `pw-dump` and
   `pw-record`; if PipeWire, a tool or a ZG01 node is missing, the `PW` bars
   are hidden. There is no enable/disable preference yet.

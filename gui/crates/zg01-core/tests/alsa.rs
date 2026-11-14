@@ -58,6 +58,7 @@ fn gate() -> ControlInfo {
         min: 0,
         max: 100,
         step: 0,
+        count: 1,
         writable: true,
     }
 }
@@ -69,6 +70,7 @@ fn meter() -> ControlInfo {
         min: 0,
         max: 127,
         step: 0,
+        count: 1,
         writable: false,
     }
 }
