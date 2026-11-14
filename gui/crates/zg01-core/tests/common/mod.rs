@@ -8,7 +8,7 @@
 
 use zg01_core::alsa::{CardInfo, ControlInfo, ControlKind};
 use zg01_core::layout::Layout;
-use zg01_core::model::{AppState, Control, ControlValue, DeviceState, StateRead, Unit};
+use zg01_core::model::{AppState, Control, ControlValue, DeviceState, Unit};
 
 /// A writable integer control with the given name and range.
 pub fn control(name: &str, min: i64, max: i64) -> Control {
@@ -128,12 +128,11 @@ pub fn card() -> CardInfo {
 
 /// A connected state that holds one known control per name.
 pub fn state_with(names: &[&str]) -> AppState {
-    AppState {
-        device: DeviceState::Connected(card()),
-        controls: controls(names),
-        layout: Layout {
+    AppState::new(
+        DeviceState::Connected(card()),
+        controls(names),
+        Layout {
             screens: Vec::new(),
         },
-        state_read: StateRead::Unknown,
-    }
+    )
 }

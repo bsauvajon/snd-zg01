@@ -18,6 +18,7 @@
 //! | [`Unit::Bool`] | a switch, shown as `on`/`off` |
 //! | [`Unit::Raw`] | a value without a unit |
 
+use std::collections::BTreeSet;
 use std::sync::mpsc::{self, Receiver};
 
 use serde::Deserialize;
@@ -252,6 +253,13 @@ pub struct AppState {
     pub layout: Layout,
     /// The last MIC state read result.
     pub state_read: StateRead,
+    /// The values a Reset invalidated that are still unknown.
+    ///
+    /// The driver cache keeps the pre-reset values until each control is
+    /// written again, so a reload must not turn these back into known
+    /// values. A successful state read refreshes the direct MIC fields and
+    /// a successful write refreshes one control; both remove the name.
+    reset_invalidated: BTreeSet<String>,
 }
 
 impl AppState {
@@ -262,6 +270,35 @@ impl AppState {
             controls,
             layout,
             state_read: StateRead::Unknown,
+            reset_invalidated: BTreeSet::new(),
+        }
+    }
+
+    /// A state installed after a card reload.
+    ///
+    /// A reload reads the driver cache, which a Reset does not refresh:
+    /// the values `previous` invalidated stay unknown after
+    /// [`Self::apply_readback`] until a successful write makes each one
+    /// known again. Ordinary reloads carry no invalidation and keep the
+    /// cached values, including the transformed MIC fields the state dump
+    /// cannot refresh.
+    pub fn reloaded(
+        device: DeviceState,
+        controls: Vec<Control>,
+        layout: Layout,
+        previous: &mut AppState,
+    ) -> Self {
+        let mut state = AppState::new(device, controls, layout);
+        state.reset_invalidated = std::mem::take(&mut previous.reset_invalidated);
+        state
+    }
+
+    /// Marks the values a Reset invalidated unknown again.
+    fn reapply_reset_invalidation(&mut self) {
+        for control in self.controls.iter_mut() {
+            if self.reset_invalidated.contains(control.name()) {
+                control.value = ControlValue::Unknown;
+            }
         }
     }
 
@@ -309,15 +346,18 @@ impl AppState {
     /// This is what a successful write means: the driver cache and the
     /// device agree on that one value again. The other values keep their
     /// state, so Save stays blocked until every writable value is known.
-    /// Returns `false` when the device publishes no such control.
+    /// A Reset invalidation ends for this control, so a later reload keeps
+    /// the value instead of hiding it again. Returns `false` when the
+    /// device publishes no such control.
     pub fn mark_known(&mut self, name: &str, value: i64) -> bool {
-        match self.control_mut(name) {
-            Some(control) => {
-                control.value = ControlValue::Known(value);
-                true
-            }
-            None => false,
+        if self.control(name).is_none() {
+            return false;
         }
+        if let Some(control) = self.control_mut(name) {
+            control.value = ControlValue::Known(value);
+        }
+        self.reset_invalidated.remove(name);
+        true
     }
 
     /// Forgets the value of every writable value.
@@ -325,7 +365,8 @@ impl AppState {
     /// This is what a reset does: `zg01_param_reset()` reloads the device
     /// without updating the driver cache, so the values the GUI shows no
     /// longer describe the device. Read-only controls and write-only
-    /// actions are left alone.
+    /// actions are left alone. The names are remembered so a reload, which
+    /// reads that stale cache, cannot claim these values are known again.
     pub fn mark_all_unknown(&mut self) {
         for control in self
             .controls
@@ -333,6 +374,7 @@ impl AppState {
             .filter(|control| is_writable_value(control))
         {
             control.value = ControlValue::Unknown;
+            self.reset_invalidated.insert(control.name().to_string());
         }
         self.state_read = StateRead::Unknown;
     }
@@ -360,10 +402,11 @@ impl AppState {
     /// A successful read (`State Read Status == 1`) makes the direct MIC
     /// fields known from the values the driver just read; the fields the
     /// dump stores as DSP values keep the driver cache, never shown as if
-    /// they came from the device. A failed or pending read marks only the
-    /// direct MIC chain unknown. The Mixage and Avancé sections are outside
-    /// this scope and keep their cached values; the Mixage screen carries a
-    /// notice.
+    /// they came from the device. A value a Reset invalidated stays unknown
+    /// unless this read refreshed it. A failed or pending read marks only
+    /// the direct MIC chain unknown. The Mixage and Avancé sections are
+    /// outside this scope and keep their cached values; the Mixage screen
+    /// carries a notice.
     pub fn apply_readback(&mut self) {
         let status = self
             .control(STATE_READ_STATUS)
@@ -396,6 +439,10 @@ impl AppState {
                 _ => StateRead::Unknown,
             };
         }
+        // The direct fields the read just refreshed left the invalidation
+        // set through `mark_known`; the ones the dump cannot refresh must
+        // not come back from the driver cache on this reload.
+        self.reapply_reset_invalidation();
     }
 }
 
