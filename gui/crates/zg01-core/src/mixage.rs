@@ -9,7 +9,7 @@
 //! steps with no established dB mapping: the screen shows the step value,
 //! it never invents a dB readout.
 
-use crate::meters::METER_CONTROLS;
+use crate::meters::{layout_from_counts, MeterLayout, METER_CONTROLS};
 use crate::model::Control;
 
 /// One of the six meters the driver registers.
@@ -167,7 +167,13 @@ impl MixageModel {
     /// A missing control is `None`, never an invented name. The strips are
     /// always three: a strip without a level still has its meter.
     pub fn from_controls(controls: &[Control]) -> Self {
-        let legacy = find(controls, &["Meter Game Mix", "Meter HDMI In"]).is_none();
+        let layout = layout_from_counts(|name| {
+            controls
+                .iter()
+                .find(|control| control.name() == name)
+                .map(|control| control.info.count)
+        });
+        let legacy = layout == MeterLayout::Legacy;
         MixageModel {
             strips: vec![
                 StripModel {

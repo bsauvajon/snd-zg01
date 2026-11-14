@@ -32,6 +32,39 @@ pub fn controls(names: &[&str]) -> Vec<Control> {
     names.iter().map(|name| control(name, 0, 100)).collect()
 }
 
+/// A read-only meter control with its declared number of values.
+pub fn meter_control(name: &str, count: u32) -> Control {
+    let mut control = control(name, 0, 127);
+    control.info.count = count;
+    control.info.writable = false;
+    control
+}
+
+/// The four one-value meters of the legacy driver.
+pub fn legacy_meter_controls() -> Vec<Control> {
+    [
+        "Meter Mic In",
+        "Meter Mic Out",
+        "Meter PC In",
+        "Meter Stream Mix",
+    ]
+    .into_iter()
+    .map(|name| meter_control(name, 1))
+    .collect()
+}
+
+/// The six meters of the V2 driver.
+pub fn v2_meter_controls() -> Vec<Control> {
+    vec![
+        meter_control("Meter Mic In", 1),
+        meter_control("Meter Mic Out", 1),
+        meter_control("Meter PC In", 8),
+        meter_control("Meter HDMI In", 8),
+        meter_control("Meter Game Mix", 8),
+        meter_control("Meter Stream Mix", 8),
+    ]
+}
+
 /// The controls the Mixage screen claims: the three send levels, the
 /// three mutes, the two per-send FX switches and the stream outputs.
 pub fn controls_with_mixage() -> Vec<Control> {

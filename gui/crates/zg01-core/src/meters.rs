@@ -40,6 +40,26 @@ pub enum MeterLayout {
     Legacy,
 }
 
+/// The layout the declared meter controls describe.
+///
+/// `count` returns the declared number of values of one control, or `None`
+/// when the driver does not publish it. Only the declaration matters: a
+/// control that currently reads `-ENODATA` cannot flip the layout. The
+/// legacy driver publishes one-value `Meter PC In` and `Meter Stream Mix`
+/// and neither new group; anything else is V2, so a partial V2 driver with
+/// eight-value arrays but no new control stays V2 in every consumer.
+pub fn layout_from_counts(count: impl Fn(&str) -> Option<u32>) -> MeterLayout {
+    let legacy = count("Meter Game Mix").is_none()
+        && count("Meter HDMI In").is_none()
+        && count("Meter PC In") == Some(1)
+        && count("Meter Stream Mix") == Some(1);
+    if legacy {
+        MeterLayout::Legacy
+    } else {
+        MeterLayout::V2
+    }
+}
+
 /// The readings of the six meter groups, taken at one moment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeterSnapshot {
@@ -111,17 +131,7 @@ pub fn poll_meters_with_generation(backend: &dyn AlsaBackend, generation: u64) -
     // reading: a legacy driver with no meter data must stay legacy, and a
     // driver that publishes either new control must be treated as v2 even
     // when its arrays are short.
-    let has_game = backend.control_count("Meter Game Mix").is_some();
-    let has_hdmi = backend.control_count("Meter HDMI In").is_some();
-    let legacy = !has_game
-        && !has_hdmi
-        && backend.control_count("Meter PC In") == Some(1)
-        && backend.control_count("Meter Stream Mix") == Some(1);
-    let layout = if legacy {
-        MeterLayout::Legacy
-    } else {
-        MeterLayout::V2
-    };
+    let layout = layout_from_counts(|name| backend.control_count(name));
 
     MeterSnapshot {
         values,
@@ -165,7 +175,9 @@ pub fn spawn_poller_with_generation(
 mod tests {
     use std::time::Instant;
 
-    use super::{poll_meters_with_generation, MeterLayout, MeterSnapshot, METER_CONTROLS};
+    use super::{
+        layout_from_counts, poll_meters_with_generation, MeterLayout, MeterSnapshot, METER_CONTROLS,
+    };
     use crate::alsa::{ControlInfo, ControlKind, FakeAlsa, FakeError};
     use crate::mixage::MeterId;
 
@@ -285,6 +297,40 @@ mod tests {
         let snapshot = poll_meters_with_generation(&fake, 0);
         assert_eq!(snapshot.layout, MeterLayout::V2);
         assert_eq!(snapshot.value(MeterId::PcIn, 0), Some(38));
+    }
+
+    #[test]
+    fn eight_value_pc_and_stream_controls_without_the_new_groups_are_v2() {
+        let fake = FakeAlsa::new(vec![
+            control("Meter PC In", 8),
+            control("Meter Stream Mix", 8),
+        ]);
+
+        let snapshot = poll_meters_with_generation(&fake, 0);
+        assert_eq!(snapshot.layout, MeterLayout::V2);
+    }
+
+    #[test]
+    fn the_layout_predicate_only_uses_declared_counts() {
+        assert_eq!(
+            layout_from_counts(|name| match name {
+                "Meter PC In" | "Meter Stream Mix" => Some(1),
+                _ => None,
+            }),
+            MeterLayout::Legacy
+        );
+        assert_eq!(
+            layout_from_counts(|name| match name {
+                "Meter PC In" | "Meter Stream Mix" => Some(8),
+                _ => None,
+            }),
+            MeterLayout::V2,
+            "eight-value arrays without the new groups are a partial v2 driver"
+        );
+        assert_eq!(
+            layout_from_counts(|name| (name == "Meter Game Mix").then_some(8)),
+            MeterLayout::V2
+        );
     }
 
     #[test]

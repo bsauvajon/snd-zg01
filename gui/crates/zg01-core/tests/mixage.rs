@@ -52,16 +52,33 @@ fn game_strip_has_its_card_meter() {
 
 #[test]
 fn legacy_voice_strip_uses_the_pc_meter() {
-    let model = MixageModel::from_controls(&controls_with_mixage());
+    let mut all = controls_with_mixage();
+    all.extend(common::legacy_meter_controls());
+    let model = MixageModel::from_controls(&all);
     assert_eq!(model.strips[1].meter, Some(MeterId::PcIn));
 }
 
 #[test]
 fn v2_voice_strip_uses_the_stream_mix() {
     let mut all = controls_with_mixage();
-    all.extend(common::controls(&["Meter Game Mix", "Meter HDMI In"]));
+    all.extend(common::v2_meter_controls());
     let model = MixageModel::from_controls(&all);
     assert_eq!(model.strips[1].meter, Some(MeterId::StreamMix));
+}
+
+#[test]
+fn a_partial_v2_layout_uses_the_stream_mix() {
+    let mut all = controls_with_mixage();
+    all.extend([
+        common::meter_control("Meter PC In", 8),
+        common::meter_control("Meter Stream Mix", 8),
+    ]);
+    let model = MixageModel::from_controls(&all);
+    assert_eq!(
+        model.strips[1].meter,
+        Some(MeterId::StreamMix),
+        "the poller treats eight-value PC/Stream arrays without the new groups as V2"
+    );
 }
 
 #[test]
