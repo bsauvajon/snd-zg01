@@ -97,6 +97,25 @@ jobs:
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
 
+      - name: Set the GUI version from tag
+        run: |
+          upver=${GITHUB_REF_NAME#v}
+          upver=${upver//-/\~}
+          # The binary prints `env!("CARGO_PKG_VERSION")`, so the workspace
+          # version must follow the tag or the footer lies about the build.
+          python3 - gui/Cargo.toml "$upver" <<'PY'
+          import re
+          import sys
+
+          path, version = sys.argv[1], sys.argv[2]
+          text = open(path, encoding="utf-8").read()
+          text = re.sub(r'(?m)^(version = )".*"$', rf'\1"{version}"', text, count=1)
+          open(path, "w", encoding="utf-8").write(text)
+          PY
+          grep -n '^version' gui/Cargo.toml
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+
       - name: Build package
         run: |
           # assume packaging metadata is present under debian/ and top-level Makefile

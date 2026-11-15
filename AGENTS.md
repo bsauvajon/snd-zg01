@@ -115,5 +115,6 @@ without it only the generic stereo sink exists.
 - `README.md` — feature/status and user-facing behavior
 - `docs/INITIALIZATION_ANALYSIS.md` — USB topology and packet formats
 - `docs/MIC_CONTROL_PROTOCOL.md` — decoded mic parameter protocol
-- `docs/superpowers/specs/` and `plans/` — planned Rust/GTK4 `zg01-control`
-  GUI (source will live in `gui/`; not implemented yet)
+- `docs/superpowers/specs/` and `plans/` — the Rust/GTK4 `zg01-control`
+  GUI (`gui/`, shipped as `snd-zg01-gui` / `zg01-control-git`); read the
+  newest spec/plan pair before changing it

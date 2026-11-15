@@ -96,7 +96,13 @@ draft release and builds the Debian driver/tools/GUI packages, the APT
 repository, and the driver/tools Arch packages:
 
 1. Bump the versions in `dkms.conf`, `debian/changelog` and, for a GUI
-   change, `gui/Cargo.toml`/`gui/Cargo.lock`.
+   change, `gui/Cargo.toml`/`gui/Cargo.lock`. The release workflows rewrite
+   the Debian changelog and the `[workspace.package]` version of
+   `gui/Cargo.toml` from the tag before building, so the GUI footer always
+   matches the package; the in-tree value only matters for local builds.
+   `gui/data/io.github.bsauvajon.Zg01Control.metainfo.xml` keeps its own
+   `<release>` history and is edited by hand (`appstreamcli validate
+   --no-net`).
 2. Refresh the catalogue when a source string changed:
    `make -C gui update-po` (xgettext into `gui/po/zg01-control.pot`, msgmerge
    into `gui/po/fr.po`) then fill any new `msgstr`; `make -C gui check-po`

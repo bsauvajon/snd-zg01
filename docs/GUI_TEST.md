@@ -75,16 +75,17 @@ Expected:
 - Closing the window leaves no `pw-record` process behind
   (`pgrep -af pw-record` is empty).
 
-> **Current hardware note (2026-11-11).** The v2 decode is complete and
-> the Windows ZG Controller streams 192-byte frames, but the current Linux
-> unit stops streaming after a suspend: EP `0x83` returns zero-length
-> packets and the six meter groups read `-ENODATA`. The expected GUI
-> presentation is therefore dashed/unknown card bars on Mixage and Meters;
-> the `PW` bars are the live levels on this unit. Record that as the
-> observed state; card-meter acceptance stays **blocked** until a session
-> brings the 192-byte frames back (see `docs/METER_TEST.md`). A moving card
-> bar cannot be required from this unit, and a dashed card bar is not a
-> code failure.
+> **Current hardware note (2026-11-15).** The v2 decode is live on this unit
+> after a module load: at rest `Meter Stream Mix` reads `0,0 / 38,38 / 0,0 /
+> 0,0`, and a Game Out tone lifts GAME 4/5 and the output bus 6/7 to 96. The
+> earlier session (2026-11-01/11) only lost the frames after a system
+> suspend, and they stayed gone across a power cycle, so the card-meter
+> checks were recorded as blocked. They can be run again; keep the suspend
+> case in mind: if the six groups read `-ENODATA`, reload the module
+> (`modprobe -r snd_zg01 && modprobe snd_zg01`) and re-read; that restored
+> the frames on 2026-11-15, while the 2026-11-01 session never recovered.
+> Record which of the two cases you see before filing a driver bug. See
+> `docs/METER_TEST.md`.
 
 ## 3. Fader writes
 

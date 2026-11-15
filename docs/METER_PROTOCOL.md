@@ -1,11 +1,10 @@
 # ZG01 meter frames (bulk IN 0x83)
 
-Status: **decoded v2; Linux live-meter acceptance is blocked**. The frame
-carries 34 channels of level data in six groups. The map comes from the
-vendor `MemAPI_ZG01.dll` meter table and is confirmed by USB captures on
-Windows with Voice, Game Out, HDMI and microphone stimuli. The current
-Linux test unit still returns zero-length packets after a suspend; see
-"Current session status".
+Status: **decoded v2 and live on the Linux unit**. The frame carries 34
+channels of level data in six groups. The map comes from the vendor
+`MemAPI_ZG01.dll` meter table and is confirmed by USB captures on Windows
+with Voice, Game Out, HDMI and microphone stimuli, and by the Linux
+controls on a fresh module load; see "Current session status".
 
 ## Transport
 
@@ -135,9 +134,11 @@ The Windows ZG Controller streams 192-byte frames as soon as it starts:
 the 2026-11-11 captures show the app's startup (dirty-flag reads `F0 43 30`
 and preset blocks `F0 43 00`) followed by a keepalive and then meter frames.
 
-The Linux driver on this unit still gets zero-length packets after the
-2026-11-01 suspend. The driver's meter reader, keepalive and state request
-work, but the device does not enter the streaming meter state. Replaying
-the Windows startup sequence from Linux is a separate phase; until it
-lands, the Linux card controls answer `-ENODATA` and the GUI draws the card
-banks dashed. The `PW` bars from PipeWire remain the live Linux levels.
+The Linux driver streams them too, with no extra startup sequence: on
+2026-11-15, after a module load, the six controls returned live values at
+rest (`stream_mix` `0,0 / 38,38 / 0,0 / 0,0`) and a Game Out tone lifted
+GAME 4/5 and the output bus 6/7 to 96. The 2026-11-01 session is the
+exception that made this look blocked: the frames stopped after a system
+suspend and did not come back across a power cycle in that session. Treat a
+silent meter as a session state first: reload the module and re-read (that
+restored the frames on 2026-11-15) before suspecting the decode.

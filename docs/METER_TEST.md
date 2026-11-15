@@ -6,16 +6,20 @@ and `Meter Stream Mix` (eight values each). The v2 decode is in
 `docs/METER_PROTOCOL.md`; this file records the hardware checks and what
 they showed.
 
-> **Acceptance status: BLOCKED (2026-11-11).** The controls and the v2
-> parser are implemented, and the Windows ZG Controller streams 192-byte
-> frames. The Linux unit still returns only zero-length packets after the
-> 2026-11-01 suspend, so the six controls read `-ENODATA` even after a
-> power cycle, `usbreset`, a hub port cycle and a replay of the Windows
-> preamble. The earlier results below are kept as decode evidence; their
+> **Acceptance status: UNBLOCKED (2026-11-15).** The controls and the v2
+> parser are implemented, the Windows ZG Controller streams 192-byte
+> frames, and so does the Linux unit after a module load: the six controls
+> returned live values (`stream_mix` `0,0 / 38,38 / 0,0 / 0,0` at rest, 96
+> on GAME 4/5 and the output bus under a Game Out tone). The 2026-11-11
+> session had stopped after the 2026-11-01 suspend and did not recover
+> across a power cycle, `usbreset`, a hub port cycle or a replay of the
+> Windows preamble; the rows marked TO RE-RUN below come from that
+> session. The earlier results are kept as decode evidence; their
 > `pc_in`/`stream_mix` labels predate the v2 map (those values are
-> `stream_mix` channels 2 and 6). Live Linux acceptance stays blocked on
-> the device/session, not on the decode. The GUI state for this case is
-> the dashed/unknown Meters page documented in `docs/GUI_TEST.md`.
+> `stream_mix` channels 2 and 6). If the six groups read `-ENODATA` again,
+> reload the module and re-read (that restored the frames on 2026-11-15);
+> record whether they come back and whether they survive a suspend before
+> filing a driver bug.
 
 Values are the control's integer, 0..127, where `value = dB + 127`
 (0 = −127 dB, 127 = 0 dBFS). Rounded to whole steps; the decode is 1 dB
@@ -42,15 +46,15 @@ the min values include the decay.
 
 | # | Check | Result |
 |---|---|---|
-| 1 | Six controls registered, `access=r--v----`, `min=0 max=127`, counts 1/1/8/8/8/8 | **NOT RUN (v2)**; the PASS rows below are the v1 four-control session |
+| 1 | Six controls registered, `access=r--v----`, `min=0 max=127`, counts 1/1/8/8/8/8 | **TO RE-RUN**; the PASS rows below are the v1 four-control session |
 | 2 | v1: Game Out playback moves the two stream channels and not the old `pc_in` pair | PASS (v1) |
 | 3 | v1: Voice playback moves the old `pc_in` pair and the stream pair | PASS (v1) |
 | 4 | Silence reads the floor (see note) | PASS, with tolerance |
 | 5 | Mic In / Mic Out track a deliberate mic input | NOT RUN (see note) |
 | 6 | Disconnect while streaming: no crash, stream ends cleanly | PASS |
-| 7 | v2: replug recreates the card and the six controls, with arrays | **NOT RUN / BLOCKED** (the v1 session only had four controls) |
-| 8 | Suspend/resume restarts the reader and the keepalive | PASS for the reader/keepalive in `freeze` (s2idle); **frames never resumed** in the latest session; `reset_resume` not exercised |
-| 9 | v2: `alsactl store` and `restore` succeed; the six controls are not restored | **NOT RUN / BLOCKED** (v1 PASS) |
+| 7 | v2: replug recreates the card and the six controls, with arrays | **TO RE-RUN** (the v1 session only had four controls) |
+| 8 | Suspend/resume restarts the reader and the keepalive | PASS for the reader/keepalive in `freeze` (s2idle); **frames never resumed** in the 2026-11-01 session, and they stream on a fresh module load (2026-11-15); `reset_resume` not exercised |
+| 9 | v2: `alsactl store` and `restore` succeed; the six controls are not restored | **TO RE-RUN** (v1 PASS) |
 | 10 | No oops, BUG, WARNING or lockdep splat in the log | PASS |
 
 ### Historical v1 results (four controls)
