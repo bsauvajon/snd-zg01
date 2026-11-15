@@ -82,10 +82,11 @@ sudo apt install snd-zg01-dkms snd-zg01-tools
 ```
 
 `snd-zg01-tools` is optional and ships `zgctl`; `snd-zg01-gui` is the
-optional GTK4 GUI. Install only `snd-zg01-dkms` for the driver alone. The
-APT repository is refreshed by `v*` releases, which also attach the GUI
-`.deb` and the Arch GUI package. A `gui-vX.Y.Z` tag remains available for a
-GUI-only build.
+optional GTK4 GUI. Install only `snd-zg01-dkms` for the driver alone. A
+`v*` release refreshes the APT repository and attaches the Debian `.deb`
+files plus the driver and `zgctl` Arch packages; the Arch GUI package is
+built from the same tag and attached by hand (`PACKAGING.md`). A
+`gui-vX.Y.Z` tag remains available for a GUI-only build.
 
 Or download the `.deb` files from the release that matches the version you
 want:
@@ -381,11 +382,14 @@ it never remaps the old values into the new groups.
 
 ### Known limitations and missing features
 
-- **Card meters can be unavailable.** When EP `0x83` does not stream (the
-  current test unit after a suspend), the six card controls answer
-  `-ENODATA` and the card bars stay dashed. The thin `PW` bars are then the
-  only live levels. The Linux re-arm of the meter session is a separate
-  phase.
+- **Card meters can drop out after a suspend.** The six card controls stream
+  on a fresh module load (measured 2026-11-15: a Game Out tone lifts GAME
+  4/5 and the output bus 6/7 to 96). The 2026-11-01 session stopped sending
+  meter frames after a system suspend: the controls answered `-ENODATA`, the
+  card bars stayed dashed, and neither a power cycle nor a replay of the
+  Windows preamble brought them back; module reloads did restore them on
+  2026-11-15. The thin `PW` bars are live in every case. Re-arming the meter
+  session without a reload is still an open phase.
 - **PipeWire meters are runtime-optional.** They need `pw-dump` and
   `pw-record`; if PipeWire, a tool or a ZG01 node is missing, the `PW` bars
   are hidden. There is no enable/disable preference yet.
@@ -518,11 +522,12 @@ install. If a pre-2026 package left broken DKMS state, remove
 
 ## Scope and status
 
-Working: Game Out + Voice Out simultaneous playback, Voice In capture,
-suspend/resume, replug, single module, single card, and live write of 367
-mixer controls, covering every one of the 375 device addresses except the
-eight read-only status rows, through ALSA and `zgctl`. Not implemented:
-MIDI, other sample rates, reading device state back.
+Working: Game Out + Voice Out simultaneous playback, Voice In capture and
+the second capture pair (Streaming In, silent on some units, see the
+limitations above), suspend/resume, replug, single module, single card, and
+live write of 367 mixer controls, covering every one of the 375 device
+addresses except the eight read-only status rows, through ALSA and `zgctl`.
+Not implemented: MIDI, other sample rates, reading device state back.
 
 `docs/FEATURE_PARITY.md` maps the 375-address surface (367 writable
 controls, 8 read-only exclusions) to the vendor's seven screens and lists

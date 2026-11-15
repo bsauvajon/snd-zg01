@@ -1121,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "zg01-core"
-version = "0.1.0"
+version = "2.2.0"
 dependencies = [
  "alsa",
  "alsa-sys",
@@ -1135,7 +1135,7 @@ dependencies = [
 
 [[package]]
 name = "zg01-gui"
-version = "0.1.0"
+version = "2.2.0"
 dependencies = [
  "cc",
  "gtk4",

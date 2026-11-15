@@ -69,10 +69,16 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="2.2.0" date="2026-11-15">
+      <description>
+        <p>The ZG01's second capture pair is exposed as Streaming In, and the Mixage meters read each source of the device's stream mixer.</p>
+        <p>PipeWire recorders stay pinned to their node, so switching the default output no longer makes one strip show another strip's level.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-11-02">
       <description>
         <p>First release of the standalone ZG01 Control GUI.</p>
-        <p>MIC state readback: gate, compressor, limiter and direct EQ fields come from the device; the Mixage section and the transformed MIC fields remain cached. Live meters remain blocked on the test unit.</p>
+        <p>MIC state readback: gate, compressor, limiter and direct EQ fields come from the device; the Mixage section and the transformed MIC fields remain cached. The card meters were not streaming on the test unit at that time.</p>
       </description>
     </release>
   </releases>
