@@ -50,6 +50,9 @@ fn a_legacy_driver_keeps_the_game_mix_meter() {
     let model = MixageModel::from_controls(&all);
     assert_eq!(model.strips[2].meter, Some(MeterId::GameMix));
     assert_eq!(model.output.meter, Some(MeterId::StreamMix));
+    // Legacy Stream Mix carries one value, so the output bar must read
+    // channel 0: a 6/7 offset would leave it dashed forever.
+    assert_eq!(model.output.meter_first, 0);
 }
 
 #[test]

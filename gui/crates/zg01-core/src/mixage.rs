@@ -242,7 +242,8 @@ impl MixageModel {
                 ),
                 monitor: find(controls, &["Streaming Monitor Steps"]),
                 meter: Some(MeterId::StreamMix),
-                meter_first: 6,
+                /* Legacy: one-value Stream Mix; V2: the output bus on 6/7. */
+                meter_first: if legacy { 0 } else { 6 },
                 linux_meter: Some(LinuxMeterId::StreamingIn),
             },
         }
