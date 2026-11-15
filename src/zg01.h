@@ -20,9 +20,10 @@
  *       - variable-length packet = 5 to 7 frames of 40 bytes
  *       - frame = Voice_L(4) Voice_R(4) Game_L(4) Game_R(4) + 24 pad
  *   Interface 2, Alt 1: EP 0x81 IN, isochronous (implicit feedback)
- *       - Voice In capture and playback pacing
+ *       - Voice In and Streaming In capture, playback pacing
  *       - variable-length packet: 8-byte header + 5 to 7 frames
  *         x 16 bytes + 4-byte trailer (124-byte buffer)
+ *       - frame = Voice_L(4) Voice_R(4) Stream_L(4) Stream_R(4)
  */
 #define ZG01_EP_OUT          0x01
 #define ZG01_EP_IN           0x81
@@ -277,14 +278,16 @@
 #define MAX_URBS             16      /* 64ms of buffering */
 
 /* PCM device numbers on the single card */
-#define ZG01_PCM_GAME        0
-#define ZG01_PCM_VOICE_OUT   1
-#define ZG01_PCM_VOICE_IN    2
+#define ZG01_PCM_GAME         0
+#define ZG01_PCM_VOICE_OUT    1
+#define ZG01_PCM_VOICE_IN     2
+#define ZG01_PCM_STREAMING_IN 3
 
 enum zg01_stream_id {
     ZG01_GAME = 0,
     ZG01_VOICE_OUT,
     ZG01_VOICE_IN,
+    ZG01_STREAMING_IN,
     ZG01_N_STREAMS,
 };
 
@@ -300,6 +303,13 @@ struct zg01_stream {
     struct zg01_dev *dev;
     unsigned int pcm_device;                 /* ALSA pcm device number */
     int direction;                           /* SNDRV_PCM_STREAM_* */
+
+    /*
+     * Capture consumers only: byte offset of this PCM's stereo pair
+     * inside one 16-byte IN frame.  The device sends four 32-bit
+     * channels per frame: Voice at 0, Streaming at 8.
+     */
+    unsigned int capture_offset;
 
     /* Callback-shared state, protected by dev->lock: */
     struct snd_pcm_substream *substream;

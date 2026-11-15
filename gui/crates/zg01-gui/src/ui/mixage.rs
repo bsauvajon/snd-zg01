@@ -51,6 +51,8 @@ pub(crate) enum MixageEvent {
 /// One card meter and the reading slots it uses.
 struct Metered {
     card: Option<MeterId>,
+    /// First channel of this meter's stereo pair in the card group.
+    card_first: usize,
     linux: Option<LinuxMeterId>,
     meter: Meter,
 }
@@ -255,15 +257,18 @@ impl MixageScreen {
     /// unreadable meter, so the widget draws the dashed unknown state, not
     /// a zero.
     pub(crate) fn set_meter(&self, id: MeterId, levels: &[Option<i64>]) {
-        let level = strip_level(levels);
         for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {
             if metered.card == Some(id) {
-                metered.meter.set_card_mono(level);
+                metered
+                    .meter
+                    .set_card_mono(pair_level(levels, metered.card_first));
             }
         }
         if let Some(metered) = &self.output.meter {
             if metered.card == Some(id) {
-                metered.meter.set_card_mono(level);
+                metered
+                    .meter
+                    .set_card_mono(pair_level(levels, metered.card_first));
             }
         }
     }
@@ -283,6 +288,11 @@ impl MixageScreen {
     /// Installs one Linux reading.
     pub(crate) fn set_linux_meter(&self, id: LinuxMeterId, available: bool, level: Option<f64>) {
         for metered in self.strips.iter().filter_map(|strip| strip.meter.as_ref()) {
+            if metered.linux == Some(id) {
+                metered.meter.set_linux_source(available, level);
+            }
+        }
+        if let Some(metered) = &self.output.meter {
             if metered.linux == Some(id) {
                 metered.meter.set_linux_source(available, level);
             }
@@ -347,7 +357,9 @@ fn build_strip(
     let meter = (strip.meter.is_some() || strip.linux_meter.is_some()).then(|| {
         let meter = Meter::new(MeterSpec::mono(
             if strip.meter.is_some() { "CARD" } else { "PW" },
-            strip.meter.and_then(|id| meter_level(state, id)),
+            strip
+                .meter
+                .and_then(|id| initial_meter_level(state, id, strip.meter_first)),
             strip.meter.is_some(),
             None,
             false,
@@ -355,6 +367,7 @@ fn build_strip(
         body.append(meter.widget());
         Metered {
             card: strip.meter,
+            card_first: strip.meter_first,
             linux: strip.linux_meter,
             meter,
         }
@@ -477,7 +490,9 @@ fn build_output(
     let meter = (output.meter.is_some() || output.linux_meter.is_some()).then(|| {
         let meter = Meter::new(MeterSpec::mono(
             if output.meter.is_some() { "CARD" } else { "PW" },
-            output.meter.and_then(|id| meter_level(state, id)),
+            output
+                .meter
+                .and_then(|id| initial_meter_level(state, id, output.meter_first)),
             output.meter.is_some(),
             None,
             false,
@@ -485,6 +500,7 @@ fn build_output(
         body.append(meter.widget());
         Metered {
             card: output.meter,
+            card_first: output.meter_first,
             linux: output.linux_meter,
             meter,
         }
@@ -665,7 +681,17 @@ fn fader_spec(state: &AppState, name: &str, label: &str) -> FaderSpec {
     }
 }
 
-/// The card reading of a meter, normalised to `0.0..=1.0`.
+/// The initial reading of a card bar, before the meter poller runs.
+///
+/// `AppState` only carries channel 0 of a control, so a bar that reads a
+/// later pair starts unknown and the first snapshot fills it.
+fn initial_meter_level(state: &AppState, id: MeterId, first: usize) -> Option<f64> {
+    if first != 0 {
+        return None;
+    }
+    meter_level(state, id)
+}
+
 fn meter_level(state: &AppState, id: MeterId) -> Option<f64> {
     level_from_steps(
         state
@@ -679,14 +705,17 @@ fn level_from_steps(steps: Option<i64>) -> Option<f64> {
     steps.map(|steps| (steps as f64 / METER_FULL_SCALE).clamp(0.0, 1.0))
 }
 
-/// The level a strip shows: the louder of the first two channels.
-fn strip_level(levels: &[Option<i64>]) -> Option<f64> {
-    level_from_steps(levels.iter().take(2).flatten().copied().max())
+/// The louder of the two channels starting at `first`.
+///
+/// `Stream Mix` carries four stereo pairs in one control, so a meter that
+/// is not the first pair must start somewhere other than channel 0.
+fn pair_level(levels: &[Option<i64>], first: usize) -> Option<f64> {
+    level_from_steps(levels.iter().skip(first).take(2).flatten().copied().max())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{level_from_steps, strip_level};
+    use super::{level_from_steps, pair_level};
 
     #[test]
     fn meter_steps_are_normalised_to_the_unit_interval() {
@@ -700,12 +729,30 @@ mod tests {
     }
 
     #[test]
-    fn a_strip_uses_the_louder_of_the_first_two_channels() {
+    fn a_strip_uses_the_louder_of_its_two_channels() {
         assert_eq!(
-            strip_level(&[Some(10), Some(40), Some(90)]),
+            pair_level(&[Some(10), Some(40), Some(90)], 0),
             Some(40.0 / 127.0)
         );
-        assert_eq!(strip_level(&[None, Some(40)]), Some(40.0 / 127.0));
-        assert_eq!(strip_level(&[None, None]), None);
+        assert_eq!(pair_level(&[None, Some(40)], 0), Some(40.0 / 127.0));
+        assert_eq!(pair_level(&[None, None], 0), None);
+    }
+
+    #[test]
+    fn a_pair_offset_reads_its_own_channels() {
+        let levels = [
+            Some(10),
+            Some(10),
+            Some(20),
+            Some(30),
+            Some(40),
+            Some(50),
+            Some(60),
+            Some(70),
+        ];
+        assert_eq!(pair_level(&levels, 2), Some(30.0 / 127.0));
+        assert_eq!(pair_level(&levels, 4), Some(50.0 / 127.0));
+        assert_eq!(pair_level(&levels, 6), Some(70.0 / 127.0));
+        assert_eq!(pair_level(&levels, 8), None);
     }
 }

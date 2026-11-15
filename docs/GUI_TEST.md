@@ -51,17 +51,27 @@ Expected:
   solid zero.
 - A control that reads `-ENODATA` (the driver has no valid frame) is also
   dashed/unknown, and the value label shows `—`; it is never shown as zero.
-- The Mixage strips use `mic_in`, `pc_in` L/R, `game_mix` L/R and
-  `stream_mix` L/R. `GAME` now has a card bar; do not report it as missing.
+- The Mixage strips read `mic_in` for MIC and their own pair of the four
+  `stream_mix` stereo pairs: 2/3 for VOICE, 4/5 for GAME, 6/7 for STREAM
+  OUT. A VOICE-only stimulus must not move the MIC or GAME bars, and a
+  GAME-only stimulus must not move the VOICE bar.
 - Open **Meters**. It shows MIC IN, MIC OUT and the eight channels of
-  PC IN, HDMI IN, GAME MIX and STREAM MIX. Every channel is labelled
-  L/R/C/LFE/SBL/SBR/SL/SR; a channel with no reading is dashed.
+  PC IN, HDMI IN, GAME MIX and STREAM MIX. PC IN, HDMI IN and GAME MIX are
+  labelled L/R/C/LFE/SBL/SBR/SL/SR; STREAM MIX is four stereo pairs
+  labelled MIC/VOICE/GAME/OUT. A channel with no reading is dashed.
 - An old driver without `Meter Game Mix`/`Meter HDMI In` shows the legacy
   four-meter layout and a notice on the Meters page; the page row is
   disabled and no legacy value is remapped.
-- STREAM OUT has no Linux source: it stays card-only.
-- A `PW` source that exists but has no frames is dashed; a source that
-  PipeWire does not expose has no bar at all.
+- STREAM OUT shows a `PW` bar from the `Streaming In` source; a driver
+  without the second capture PCM has no bar there and stays card-only.
+- A `PW` source that exists but has no frames is dashed, and so is one whose
+  recorder stops delivering for a second (paused stream, suspended target);
+  a source that PipeWire does not expose has no bar at all.
+- Switching the default output mid-playback (`wpctl set-default`) moves the
+  stream from GAME to VOICE: the GAME `PW` bar falls to the bottom and the
+  VOICE one lights, without the two bars ever showing the same audio. The
+  recorders are pinned (`node.dont-reconnect`, `node.dont-fallback`), so
+  WirePlumber cannot re-link them to the new default.
 - Closing the window leaves no `pw-record` process behind
   (`pgrep -af pw-record` is empty).
 
@@ -102,9 +112,11 @@ Expected:
 > Confirm the write with `amixer`; the local monitor is on the physical
 > knobs and the `Monitor *` controls in Avancé.
 >
-> The driver does not expose the ZG01's separate USB **Streaming** capture
-> device. OBS therefore builds the stream from `Voice In` plus the
-> `Game Out`/`Voice Out` monitors, or captures the HDMI OUT.
+> The device's stream mix is exposed as **Streaming In** (`hw:N,3`). If that
+> pair records silence, check the device before the driver: the test unit
+> never fills channels 3/4, even with the Windows vendor stack. Failing
+> that, build the stream in OBS from `Voice In` plus the `Game Out`/
+> `Voice Out` monitors, or capture the HDMI OUT.
 
 ## 4. Micro screen
 

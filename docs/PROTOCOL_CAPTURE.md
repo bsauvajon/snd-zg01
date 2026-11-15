@@ -1,6 +1,7 @@
 # ZG01 control-protocol capture
 
-The driver already transports Game Out, Voice Out, and Voice In audio.
+The driver already transports Game Out, Voice Out, Voice In and
+Streaming In audio.
 Hardware knobs, buttons, routing, and DSP remain proprietary. Capture
 one deliberate action at a time on Windows so those controls can be implemented
 from observed behavior rather than guessed USB messages.

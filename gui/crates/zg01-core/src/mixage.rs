@@ -8,6 +8,10 @@
 //! The three send levels are `Streaming ... Level Steps`, 0–127 device
 //! steps with no established dB mapping: the screen shows the step value,
 //! it never invents a dB readout.
+//!
+//! Every strip and the stream output also carry a PipeWire source when the
+//! Linux graph has one: `Voice In` for MIC, `Voice Out` for VOICE,
+//! `Game Out` for GAME and `Streaming In` for the stream output.
 
 use crate::meters::{layout_from_counts, MeterLayout, METER_CONTROLS};
 use crate::model::Control;
@@ -94,22 +98,26 @@ pub enum LinuxMeterId {
     VoiceOut,
     /// The `Game Out` sink monitor.
     GameOut,
+    /// The `Streaming In` source (the device's stream mix).
+    StreamingIn,
 }
 
 impl LinuxMeterId {
     /// Every Linux meter, in snapshot-slot order.
-    pub const ALL: [LinuxMeterId; 3] = [
+    pub const ALL: [LinuxMeterId; 4] = [
         LinuxMeterId::MicIn,
         LinuxMeterId::VoiceOut,
         LinuxMeterId::GameOut,
+        LinuxMeterId::StreamingIn,
     ];
 
-    /// The slot of this source in a `LinuxMetersSnapshot`.
+    /// The slot of this source in a [`crate::pipewire::LinuxMetersSnapshot`].
     pub const fn index(self) -> usize {
         match self {
             LinuxMeterId::MicIn => 0,
             LinuxMeterId::VoiceOut => 1,
             LinuxMeterId::GameOut => 2,
+            LinuxMeterId::StreamingIn => 3,
         }
     }
 }
@@ -132,6 +140,11 @@ pub struct StripModel {
     /// The VOICE strip uses `PcIn` on a legacy driver and `StreamMix` on
     /// a V2 driver; the other strips keep their group on both layouts.
     pub meter: Option<MeterId>,
+    /// First channel of the strip's stereo pair inside the meter group.
+    ///
+    /// `Stream Mix` is four stereo pairs -- MIC, VOICE, GAME and the
+    /// output bus -- so a strip reads its own pair, not channels 0/1.
+    pub meter_first: usize,
     /// The Linux-side source of the strip, when it has one.
     pub linux_meter: Option<LinuxMeterId>,
 }
@@ -148,7 +161,12 @@ pub struct StreamOutputModel {
     pub monitor: Option<String>,
     /// The card meter of the stream mix.
     pub meter: Option<MeterId>,
-    /// The Linux-side source of the output, when it has one.
+    /// First channel of the output bus pair inside the meter group.
+    ///
+    /// `Stream Mix` channels 6/7 carry the summed streaming output.
+    pub meter_first: usize,
+    /// The `Streaming In` source, on a driver that exposes the second
+    /// capture pair.
     pub linux_meter: Option<LinuxMeterId>,
 }
 
@@ -183,6 +201,7 @@ impl MixageModel {
                     mute: find(controls, &["Streaming Mic Mute Steps"]),
                     fx: find(controls, &["Streaming Mic FX Steps"]),
                     meter: Some(MeterId::MicIn),
+                    meter_first: 0,
                     linux_meter: Some(LinuxMeterId::MicIn),
                 },
                 StripModel {
@@ -196,6 +215,8 @@ impl MixageModel {
                     } else {
                         MeterId::StreamMix
                     }),
+                    /* Stream Mix: MIC 0/1, VOICE 2/3, GAME 4/5, out 6/7. */
+                    meter_first: if legacy { 0 } else { 2 },
                     linux_meter: Some(LinuxMeterId::VoiceOut),
                 },
                 StripModel {
@@ -204,7 +225,12 @@ impl MixageModel {
                     level: find(controls, &["Streaming Game Level Steps"]),
                     mute: find(controls, &["Streaming Game Mute Steps"]),
                     fx: find(controls, &["Streaming Game FX Steps"]),
-                    meter: Some(MeterId::GameMix),
+                    meter: Some(if legacy {
+                        MeterId::GameMix
+                    } else {
+                        MeterId::StreamMix
+                    }),
+                    meter_first: if legacy { 0 } else { 4 },
                     linux_meter: Some(LinuxMeterId::GameOut),
                 },
             ],
@@ -216,7 +242,9 @@ impl MixageModel {
                 ),
                 monitor: find(controls, &["Streaming Monitor Steps"]),
                 meter: Some(MeterId::StreamMix),
-                linux_meter: None,
+                /* Legacy: one-value Stream Mix; V2: the output bus on 6/7. */
+                meter_first: if legacy { 0 } else { 6 },
+                linux_meter: Some(LinuxMeterId::StreamingIn),
             },
         }
     }

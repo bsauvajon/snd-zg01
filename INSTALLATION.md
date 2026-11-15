@@ -81,19 +81,28 @@ lsmod | grep snd_zg01
 cat /proc/asound/cards
 ```
 
-Expected card state: one card `zg01` with three PCM devices.
+Expected card state: one card `zg01` with four PCM devices.
 
 ```bash
 # Playback, Game Out
 speaker-test -D hw:zg01,0 -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
 # Playback, Voice Out
 speaker-test -D hw:zg01,1 -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
-# Capture, Voice In
+# Capture, Voice In (microphone pair)
 arecord -D hw:zg01,2 -f S32_LE -r 48000 -c 2 -d 5 test.wav
+# Capture, Streaming In (stream mix pair)
+arecord -D hw:zg01,3 -f S32_LE -r 48000 -c 2 -d 5 mix.wav
 ```
 
 In PipeWire, the UCM profile exposes the devices as Game Out, Voice Out,
-and Voice In.
+Voice In and Streaming In. `Streaming In` records the stream mix configured
+in the Mixage screen; on a unit that never fills the second capture pair it
+records silence while `Voice In` works.
+
+```bash
+# Check that both capture pairs are listed
+cat /proc/asound/card*/pcm*c/info | grep -E "^(name|subdevices_avail)"
+```
 
 ## Automatic loading
 

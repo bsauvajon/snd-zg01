@@ -44,10 +44,32 @@ fn stream_output_uses_the_three_switches() {
 }
 
 #[test]
-fn game_strip_has_its_card_meter() {
-    let model = MixageModel::from_controls(&controls_with_mixage());
+fn a_legacy_driver_keeps_the_game_mix_meter() {
+    let mut all = controls_with_mixage();
+    all.extend(common::legacy_meter_controls());
+    let model = MixageModel::from_controls(&all);
     assert_eq!(model.strips[2].meter, Some(MeterId::GameMix));
     assert_eq!(model.output.meter, Some(MeterId::StreamMix));
+    // Legacy Stream Mix carries one value, so the output bar must read
+    // channel 0: a 6/7 offset would leave it dashed forever.
+    assert_eq!(model.output.meter_first, 0);
+}
+
+#[test]
+fn v2_strips_read_their_own_stream_mix_pair() {
+    let mut all = controls_with_mixage();
+    all.extend(common::v2_meter_controls());
+    let model = MixageModel::from_controls(&all);
+    // Stream Mix is four stereo pairs: MIC 0/1, VOICE 2/3, GAME 4/5,
+    // output bus 6/7.
+    assert_eq!(model.strips[0].meter, Some(MeterId::MicIn));
+    assert_eq!(model.strips[0].meter_first, 0);
+    assert_eq!(model.strips[1].meter, Some(MeterId::StreamMix));
+    assert_eq!(model.strips[1].meter_first, 2);
+    assert_eq!(model.strips[2].meter, Some(MeterId::StreamMix));
+    assert_eq!(model.strips[2].meter_first, 4);
+    assert_eq!(model.output.meter, Some(MeterId::StreamMix));
+    assert_eq!(model.output.meter_first, 6);
 }
 
 #[test]
@@ -56,6 +78,7 @@ fn legacy_voice_strip_uses_the_pc_meter() {
     all.extend(common::legacy_meter_controls());
     let model = MixageModel::from_controls(&all);
     assert_eq!(model.strips[1].meter, Some(MeterId::PcIn));
+    assert_eq!(model.strips[1].meter_first, 0);
 }
 
 #[test]
@@ -87,7 +110,7 @@ fn strips_map_to_their_linux_meters() {
     assert_eq!(model.strips[0].linux_meter, Some(LinuxMeterId::MicIn));
     assert_eq!(model.strips[1].linux_meter, Some(LinuxMeterId::VoiceOut));
     assert_eq!(model.strips[2].linux_meter, Some(LinuxMeterId::GameOut));
-    assert_eq!(model.output.linux_meter, None);
+    assert_eq!(model.output.linux_meter, Some(LinuxMeterId::StreamingIn));
 }
 
 #[test]
@@ -95,7 +118,8 @@ fn linux_meter_ids_have_stable_slots() {
     assert_eq!(LinuxMeterId::MicIn.index(), 0);
     assert_eq!(LinuxMeterId::VoiceOut.index(), 1);
     assert_eq!(LinuxMeterId::GameOut.index(), 2);
-    assert_eq!(LinuxMeterId::ALL.len(), 3);
+    assert_eq!(LinuxMeterId::StreamingIn.index(), 3);
+    assert_eq!(LinuxMeterId::ALL.len(), 4);
 }
 
 #[test]

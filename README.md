@@ -9,18 +9,23 @@ class driver.
 
 The ZG01 carries both playback channels on one isochronous endpoint. The
 driver mixes them into the shared URB stream. It exposes one ALSA card with
-three PCM devices:
+four PCM devices:
 
 | PCM device | Name | Direction | Rates | Packet |
 |---|---|---|---|---|
 | 0 | Game Out | playback | 48 kHz | 240 B: 6 frames x 40 B |
 | 1 | Voice Out | playback | 48 kHz | shared EP 0x01 with Game Out |
 | 2 | Voice In | capture | 48 kHz | 108 B nominal: 8 B header, 5-7 frames x 16 B, 4 B trailer |
+| 3 | Streaming In | capture | 48 kHz | same packet, second stereo pair |
 
-All channels run S32_LE stereo. Both sinks work at the same time. Both
-packages install a UCM profile, so PipeWire shows the devices as separate
-sinks named Game Out, Voice Out, and Voice In. Without it, userspace falls
-back to the single generic stereo profile and only Game Out is exposed.
+All channels run S32_LE stereo. Both sinks work at the same time, and both
+capture PCMs can be read at the same time. Each 16-byte IN frame carries
+four 32-bit channels: the microphone pair (Voice In, byte 0) and the
+device's STREAMING OUTPUT MIXER pair (Streaming In, byte 8), matching the
+two recording devices Windows exposes. Both packages install a UCM profile,
+so PipeWire shows the devices as separate sinks/sources named Game Out,
+Voice Out, Voice In and Streaming In. Without it, userspace falls back to
+the single generic stereo profile and only Game Out is exposed.
 
 A single out chain serves both playback PCMs. When only Voice Out runs, the
 chain sends keepalive silence on the shared endpoint. When both run, the URB
@@ -112,15 +117,17 @@ lsmod | grep snd_zg01
 journalctl -b -k --grep zg01
 ```
 
-The card offers three PCM devices: `hw:N,0` Game Out, `hw:N,1` Voice Out,
-`hw:N,2` Voice In. With the UCM profile installed, PipeWire names them the
-same way.
+The card offers four PCM devices: `hw:N,0` Game Out, `hw:N,1` Voice Out,
+`hw:N,2` Voice In and `hw:N,3` Streaming In. With the UCM profile installed,
+PipeWire names them the same way.
 
 ```bash
 # Game Out
 speaker-test -D hw:zg01,0 -c 2 -r 48000 -F S32_LE -t sine -f 440 -l 1
-# Voice In
+# Voice In (microphone pair)
 arecord -D hw:zg01,2 -f S32_LE -r 48000 -c 2 -d 5 test.wav
+# Streaming In (STREAMING OUTPUT MIXER pair)
+arecord -D hw:zg01,3 -f S32_LE -r 48000 -c 2 -d 5 mix.wav
 ```
 
 Voice In logs bursts of `-ECONNRESET` on the first open. They are benign;
@@ -190,9 +197,8 @@ values, one per channel:
   captures.
 - `Meter Game Mix` (8 values): the game mix; HDMI and Game Out are on L/R
   in the measured captures.
-- `Meter Stream Mix` (8 values): the streaming output mix; Voice playback
-  is on L/R in the measured captures. The exact VOICE strip mapping is
-  still open.
+- `Meter Stream Mix` (8 values): the STREAMING OUTPUT MIXER, as four
+  stereo pairs: MIC 0/1, VOICE 2/3, GAME 4/5 and the summed output 6/7.
 
 Each value is 0–127 and linear in dB: 0 is −127 dB and 127 is 0 dBFS.
 The device sends a frame about every 50 ms (20 Hz); a read returns the
@@ -205,15 +211,18 @@ amixer -c zg01 cget 'name=Meter PC In'   # values=8
 amixer -c zg01 cget 'name=Meter Mic In'  # values=1
 ```
 
-The GUI polls the six controls at 20 Hz on a worker thread. The Mixage
-strips use `mic_in`, `pc_in` L/R, `game_mix` L/R and `stream_mix` L/R; the
-new **Meters** page shows every channel of the four surround groups plus
-the two mic levels. It also draws a thin `PW` bar beside the card bar from
-the Linux PipeWire graph: `Voice In` for MIC, `Voice Out` for VOICE and
-`Game Out` for GAME. The two bars share the card dB scale, so a given
-height means the same level. STREAM OUT has no Linux source and stays
-card-only. When PipeWire or a node is unavailable, the `PW` bar is hidden;
-a source with no frames is drawn dashed, never as zero.
+The GUI polls the six controls at 20 Hz on a worker thread. `Meter Stream
+Mix` is four stereo pairs, so the Mixage strips read their own pair: MIC
+from `mic_in`, VOICE from `stream_mix` 2/3, GAME from `stream_mix` 4/5 and
+the STREAM OUT block from `stream_mix` 6/7 (the summed output). The new
+**Meters** page shows every channel of the four surround groups plus the
+two mic levels, with the `stream_mix` bank labelled MIC/VOICE/GAME/OUT. It
+also draws a thin `PW` bar beside the card bar from the Linux PipeWire
+graph: `Voice In` for MIC, `Voice Out` for VOICE, `Game Out` for GAME and
+`Streaming In` for the STREAM OUT block (the device's stream mix). The two
+bars share the card dB scale, so a given height means the same level. When
+PipeWire or a node is unavailable, the `PW` bar is hidden; a source with no
+frames is drawn dashed, never as zero.
 
 An older driver with only the four one-value controls is detected and kept
 in the legacy four-meter view; the Meters page is disabled and the legacy
@@ -301,30 +310,32 @@ STREAM OUT USB/HDMI/MON switches route the stream output: MON toggles the
 stream-monitor path, USB and HDMI select the digital outputs. They do not set
 the local monitor volume.
 
-On the host side, this driver exposes only the **Voice In** capture device.
-The ZG01's separate USB **Streaming** virtual device, which carries the mix
-configured by the Mixage screen, is not implemented. OBS therefore cannot
-select the internal stream mix as one USB source; see the next section.
+On the host side, this driver exposes both capture pairs: **Voice In**
+(`hw:N,2`, the microphone) and **Streaming In** (`hw:N,3`, the mix
+configured by the Mixage screen), mirroring the two Windows recording
+devices. OBS can select either one directly.
+
+**Current unit caveat:** the test unit never populates the second pair. A
+20-minute USB trace of the Windows vendor stack with `Streaming USB Out`
+enabled shows the same thing: channels 3/4 stay at zero while "Voice"
+records normally. If `Streaming In` records silence, check the device
+before the driver; see the limitations section.
 
 ### Capturing the stream in OBS
 
-Under Windows the ZG01 exposes two USB output devices: **Voice** (microphone
-and voice chat) and **Streaming** (the STREAMING OUTPUT MIXER). This driver
-exposes only the **Voice In** capture PCM; the **Streaming** capture device
-is missing. On Linux, build the stream in OBS instead:
+Under Windows the ZG01 exposes two recording devices: **Voice** (microphone)
+and **Streaming** (the STREAMING OUTPUT MIXER). This driver exposes the same
+two pairs as **Yamaha ZG01 Voice In** and **Yamaha ZG01 Streaming In**:
 
-- Add an OBS **Audio Input Capture** and select **Yamaha ZG01 Voice In** for
-  the microphone/voice path.
-- Add OBS **Audio Output Capture** sources for **Yamaha ZG01 Game Out** and
-  **Yamaha ZG01 Voice Out** (their PipeWire/Pulse monitor), or route the game
-  and chat to the default sink and use OBS desktop audio.
-- Set the stream balance in OBS's own mixer. The GUI's Mixage faders and
-  STREAM OUT switches configure the device's internal Streaming output; they
-  do not drive the OBS sources above.
-- To capture the device's internal stream mix as a single source, use the
-  **HDMI OUT** jack with an HDMI capture device (enable `Streaming HDMI
-  Out`), or use the Windows ZG Controller with its USB Streaming device.
-  Exposing the USB Streaming capture is future driver work.
+- **Yamaha ZG01 Streaming In** carries the device's stream mix, as
+  configured in the Mixage screen and the ZG Controller's STREAMING OUTPUT
+  MIXER (`Streaming USB Out` must be on).
+- **Yamaha ZG01 Voice In** carries the microphone pair.
+- The Mixage faders and STREAM OUT switches configure the device's internal
+  Streaming output; OBS's own mixer is separate.
+- If the second pair stays silent, build the stream in OBS instead: add
+  **Yamaha ZG01 Voice In** plus **Audio Output Capture** sources for
+  **Game Out** and **Voice Out**, or capture the **HDMI OUT** jack.
 
 ### Keybindings
 
@@ -359,10 +370,10 @@ The card meters (MIC IN, MIC OUT, PC IN, HDMI IN, GAME MIX, STREAM MIX)
 are read-only volatile controls. If the driver does not publish a group,
 or a read fails, the bar is drawn dashed and the accessible value is
 "unknown" — never a fake zero. Beside each strip card bar, a thin `PW` bar
-shows the Linux PipeWire level: `Voice In` for MIC, `Voice Out` for VOICE
-and `Game Out` for GAME. STREAM OUT has no Linux source. The **Meters**
-page shows the two mic levels and the eight channels of PC IN, HDMI IN,
-GAME MIX and STREAM MIX.
+shows the Linux PipeWire level: `Voice In` for MIC, `Voice Out` for VOICE,
+`Game Out` for GAME and `Streaming In` for the STREAM OUT block. The
+**Meters** page shows the two mic levels and the eight channels of PC IN,
+HDMI IN, GAME MIX and STREAM MIX.
 
 An older driver is detected by its four one-value controls. The GUI keeps
 the legacy four-meter layout, disables the Meters page and shows a notice;
@@ -378,14 +389,14 @@ it never remaps the old values into the new groups.
 - **PipeWire meters are runtime-optional.** They need `pw-dump` and
   `pw-record`; if PipeWire, a tool or a ZG01 node is missing, the `PW` bars
   are hidden. There is no enable/disable preference yet.
-- **The internal Streaming output is not exposed over USB.** The
-  MIC/VOICE/GAME faders and the STREAM OUT switches configure the device's
-  STREAMING OUTPUT MIXER. This driver exposes only the **Voice In** capture
-  device, not the separate USB **Streaming** virtual device. They therefore
-  do not drive the local headphone/speaker volume or the OBS sources: mix
-  Voice In + Game Out/Voice Out in OBS, or capture the HDMI OUT. The local
-  monitor is on the physical knobs and the `Monitor *` controls in Avancé
-  until the **Casque** screen exists.
+- **The second capture pair can stay silent on a unit.** The device
+  declares four capture channels and this driver exposes both stereo pairs,
+  but the test unit never fills channels 3/4, with this driver or with the
+  Windows vendor stack (`Streaming USB Out` on, every routing parameter
+  swept). `Streaming In` therefore records silence there while `Voice In`
+  works. Build the stream in OBS or capture the HDMI OUT until the device
+  side is resolved. The local monitor is on the physical knobs and the
+  `Monitor *` controls in Avancé until the **Casque** screen exists.
 - **The curated screens are incomplete.** **Jeu**, **Casque** and
   **Réglages** are not implemented. Their controls (game effect, binaural,
   monitor EQ, HDMI select/4K/HDCP, LED, preferences) remain reachable in

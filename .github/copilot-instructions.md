@@ -5,8 +5,8 @@
 Linux kernel driver for the Yamaha ZG01 USB audio interface (VID 0x0499,
 PID 0x1513). The device is vendor specific and not USB Audio Class, so all
 knowledge of it comes from USB captures on Windows. One module `snd-zg01`,
-one ALSA card, three PCM devices (Game Out, Voice Out, Voice In).
-Distributed through DKMS packages for Debian and Arch.
+one ALSA card, four PCM devices (Game Out, Voice Out, Voice In,
+Streaming In). Distributed through DKMS packages for Debian and Arch.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ Distributed through DKMS packages for Debian and Arch.
 Build from the repository root only; `make -C src` fails. `snd_card_new`
 allocates `struct zg01_dev` as card private data. Never free it manually;
 `card->private_free` handles it. One probe on interface 1 creates the card
-and all three PCM devices.
+and all four PCM devices.
 
 ### Shared endpoint 0x01
 
@@ -51,7 +51,7 @@ buffer. The same IN stream paces playback via implicit feedback.
 
 ### Rates
 
-All three PCMs run at 48 kHz only; the old 16 kHz capture mode is gone.
+All four PCMs run at 48 kHz only; the old 16 kHz capture mode is gone.
 The device clock is shared across interfaces; the driver always
 initializes it at 48 kHz. The vendor handshake
 in prepare resets both interfaces to alt 0, so it runs only when no chain is

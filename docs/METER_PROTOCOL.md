@@ -67,10 +67,17 @@ The captures on the current Windows session show:
 
 | Stimulus | Observed groups/channels |
 |---|---|
-| Game Out (USB) | `pc_in` 0/1, `game_mix` 0/1, `stream_mix` 4/5 |
-| HDMI input | `hdmi_in` 0/1, `game_mix` 0/1, `stream_mix` 4/5 |
-| Voice playback (ZG device "Voice") | `stream_mix` 0/1; `mic_out` follows |
-| Microphone | `mic_in`, `mic_out` |
+| Game Out (USB) | `pc_in` 0/1, `game_mix` 0/1, `stream_mix` 4/5 and 6/7 |
+| HDMI input | `hdmi_in` 0/1, `game_mix` 0/1, `stream_mix` 4/5 and 6/7 |
+| Voice playback (ZG device "Voice") | `stream_mix` 2/3 and 6/7 |
+| Microphone | `mic_in`, `mic_out`, `stream_mix` 0/1 and 6/7 |
+
+`stream_mix` is **four stereo pairs**, not a surround bus: MIC on 0/1,
+VOICE on 2/3, GAME on 4/5 and the summed streaming output (after the
+per-source send levels) on 6/7. A source reaches 6/7 only when its
+`Streaming ... Level` is above zero, so 2/3 can move while 6/7 stays
+silent. The other surround groups (`pc_in`, `hdmi_in`, `game_mix`) are
+true buses and carry a stereo source on 0/1.
 
 The earlier September fixtures (`gate-closed-quiet`, `mic-tap`, ...) show
 `mic_in`, `mic_out` and `stream_mix`. With the corrected indexing, their
@@ -78,10 +85,11 @@ old `pc_in` field is `stream_mix` channel 2 and their old `stream_mix` field
 is `stream_mix` channel 6; they never contained a PC In group. The
 `all-groups` fixture pins every channel of every group.
 
-The stereo captures activate only channels 0/1 (and `stream_mix` 4/5). The
-surround channels 2-7 are not measured. The GUI maps the VOICE strip to
-`stream_mix` 0/1: a Game Out stimulus also raises `pc_in` and `game_mix`,
-so `pc_in` 0/1 must not feed that strip.
+The stereo captures activate only channels 0/1 (and `stream_mix` 2/3-6/7
+for the send buses). The surround channels 2-7 of `pc_in`, `hdmi_in` and
+`game_mix` are not measured. The GUI reads each Mixage strip from its own
+`stream_mix` pair (MIC 0/1, VOICE 2/3, GAME 4/5) and the STREAM OUT block
+from 6/7; `pc_in` and `game_mix` feed no strip bar.
 
 ## Driver controls
 
