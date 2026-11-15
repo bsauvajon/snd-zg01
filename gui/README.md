@@ -122,23 +122,28 @@ unknown. See `../docs/STATE_DUMP_PROTOCOL.md` and
 and the six meter controls are implemented, and Windows captures show live
 values, but the Linux unit returns only zero-length meter frames and
 `-ENODATA` after a suspend. On that device the GUI draws the card meters
-dashed/unknown instead of a fake zero. The Mixage strips use `mic_in`,
-`pc_in` L/R, `game_mix` L/R and `stream_mix` L/R; the **Meters** page shows
-the two mic levels and the eight channels of PC IN, HDMI IN, GAME MIX and
-STREAM MIX. To keep the interface usable, the GUI also shows thin `PW`
-bars from PipeWire: `Voice In` for MIC, `Voice Out` for VOICE and `Game
-Out` for GAME; STREAM OUT has no Linux source. The card bars stay dashed
-until EP `0x83` returns. A driver without `Meter Game Mix`/`Meter HDMI In`
-is detected as legacy: the old four-meter layout stays, the Meters page is
-disabled and its values are not remapped. See `../docs/METER_TEST.md` and
-`../docs/METER_PROTOCOL.md`.
+dashed/unknown instead of a fake zero. `Meter Stream Mix` is four stereo
+pairs, so the Mixage strips read their own: MIC from `mic_in`, VOICE from
+`stream_mix` 2/3, GAME from `stream_mix` 4/5, STREAM OUT from `stream_mix`
+6/7. The **Meters** page shows the two mic levels and the eight channels of
+PC IN, HDMI IN, GAME MIX and STREAM MIX, the last one labelled
+MIC/VOICE/GAME/OUT. To keep the interface usable, the GUI also shows thin `PW`
+bars from PipeWire: `Voice In` for MIC, `Voice Out` for VOICE, `Game Out`
+for GAME and `Streaming In` for STREAM OUT. A bar is hidden when the node
+is absent (for example a driver without the second capture PCM), and a
+source with no frames is dashed rather than drawn as zero. The card bars
+stay dashed until EP `0x83` returns. A driver without `Meter Game Mix`/
+`Meter HDMI In` is detected as legacy: the old four-meter layout stays,
+the Meters page is disabled and its values are not remapped. See
+`../docs/METER_TEST.md` and `../docs/METER_PROTOCOL.md`.
 
 **Known limitations.** The Mixage faders and STREAM OUT switches configure
-the device's **STREAMING OUTPUT MIXER**. The driver exposes only `Voice In`,
-not the separate USB **Streaming** capture device, so those controls drive
-neither the local monitor nor the OBS sources: mix `Voice In` + `Game Out` /
-`Voice Out` in OBS, or capture the HDMI OUT. The local monitor is on the
-physical knobs and the `Monitor *` controls (Avancé). The **Jeu**,
+the device's **STREAMING OUTPUT MIXER**. The driver exposes both capture
+pairs, `Voice In` (microphone) and `Streaming In` (the stream mix), which
+is what OBS selects; if the device leaves the second pair silent, the
+capture is empty and the mix must be built in OBS from `Voice In` +
+`Game Out` / `Voice Out`, or captured from HDMI OUT. The local monitor is
+on the physical knobs and the `Monitor *` controls (Avancé). The **Jeu**,
 **Casque** and **Réglages** screens, compact/pinned meters, a PipeWire
 enable/disable setting and persisted GUI preferences are v1.1 work; their
 controls stay in Avancé where the driver exposes them. MIC readback covers

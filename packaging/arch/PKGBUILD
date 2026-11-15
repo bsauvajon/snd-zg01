@@ -48,8 +48,8 @@ package() {
   install -Dm644 "${_pkgname}/src/snd-zg01.conf" \
     "${pkgdir}/usr/lib/modules-load.d/snd-zg01.conf"
 
-  # UCM profile: three named devices (Game Out, Voice Out, Voice In)
-  # instead of the generic single-stereo fallback.
+  # UCM profile: four named devices (Game Out, Voice Out, Voice In,
+  # Streaming In) instead of the generic single-stereo fallback.
   install -Dm644 "${_pkgname}/ucm/conf.d/zg01_usb/zg01_usb.conf" \
     "${pkgdir}/usr/share/alsa/ucm2/conf.d/zg01_usb/zg01_usb.conf"
 }

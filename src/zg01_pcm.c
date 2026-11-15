@@ -1,10 +1,11 @@
 /*
  * Yamaha ZG01 USB Audio Driver - PCM layer
  *
- * One card, three PCM devices:
- *   pcm0 "ZG01 Game"      playback   - consumer of the EP 0x01 chain
- *   pcm1 "ZG01 Voice Out" playback   - consumer of the EP 0x01 chain
- *   pcm2 "ZG01 Voice In"  capture    - owner of the EP 0x81 chain
+ * One card, four PCM devices:
+ *   pcm0 "ZG01 Game"        playback   - consumer of the EP 0x01 chain
+ *   pcm1 "ZG01 Voice Out"   playback   - consumer of the EP 0x01 chain
+ *   pcm2 "ZG01 Voice In"    capture    - owner of the EP 0x81 chain
+ *   pcm3 "ZG01 Streaming In" capture   - second pair of the EP 0x81 chain
  *
  * The EP 0x01 URB chain is a single shared resource.  Each packet
  * carries 5 to 7 frames of 40 bytes; the nominal 240-byte packet has
@@ -14,6 +15,12 @@
  * from its own ALSA ring buffer (silence for a consumer that is not
  * running).  The two consumer slots land side by side in each frame;
  * the ZG01 combines both streams at its input.
+ *
+ * The EP 0x81 chain is shared the same way by the two capture PCMs.
+ * Each 16-byte IN frame carries four 32-bit channels: the microphone
+ * pair (Windows "Voice") at byte 0 and the STREAMING OUTPUT MIXER pair
+ * (Windows "Streaming") at byte 8.  Every running capture consumer gets
+ * its own pair copied out of the same packet.
  */
 
 #include <linux/module.h>
@@ -47,6 +54,9 @@
  * is quiesced for real. */
 #define ZG01_QUIESCE_DELAY msecs_to_jiffies(200)
 
+/* Capture PCMs that share the EP 0x81 chain, in frame-offset order. */
+#define ZG01_CAPTURE_STREAMS 2
+
 static struct zg01_stream *sub_to_stream(struct snd_pcm_substream *substream)
 {
     return substream->pcm->private_data;
@@ -54,8 +64,10 @@ static struct zg01_stream *sub_to_stream(struct snd_pcm_substream *substream)
 
 static const char *stream_name(const struct zg01_stream *s)
 {
-    return s->direction == SNDRV_PCM_STREAM_CAPTURE ? "Voice In" :
-           (s->pcm_device == ZG01_PCM_GAME ? "Game Out" : "Voice Out");
+    if (s->direction == SNDRV_PCM_STREAM_CAPTURE)
+        return s->pcm_device == ZG01_PCM_STREAMING_IN ? "Streaming In"
+                                                      : "Voice In";
+    return s->pcm_device == ZG01_PCM_GAME ? "Game Out" : "Voice Out";
 }
 
 /* Snapshot for consumer demand; submission decisions must hold dev->lock. */
@@ -73,6 +85,7 @@ static bool chain_consumers_running(struct zg01_dev *dev, struct zg01_chain *c)
         return dev->streams[ZG01_GAME].running ||
                dev->streams[ZG01_VOICE_OUT].running;
     return dev->streams[ZG01_VOICE_IN].running ||
+           dev->streams[ZG01_STREAMING_IN].running ||
            dev->streams[ZG01_GAME].running ||
            dev->streams[ZG01_VOICE_OUT].running ||
            (dev->out_chain.allocated && zg01_chain_active(&dev->out_chain));
@@ -1021,21 +1034,28 @@ static void zg01_iso_in(struct urb *urb)
 {
     struct zg01_chain *c = urb->context;
     struct zg01_dev *dev = c->dev;
-    struct zg01_stream *s = &dev->streams[ZG01_VOICE_IN];
-    struct snd_pcm_substream *sub;
-    struct snd_pcm_runtime *rt;
+    struct zg01_stream *cap[ZG01_CAPTURE_STREAMS] = {
+        &dev->streams[ZG01_VOICE_IN],
+        &dev->streams[ZG01_STREAMING_IN],
+    };
+    struct snd_pcm_runtime *cap_rt[ZG01_CAPTURE_STREAMS];
     struct zg01_feedback_plan plan = {0};
     unsigned long flags;
-    unsigned int old_pos, i, f;
+    unsigned int cap_old[ZG01_CAPTURE_STREAMS];
+    unsigned int i, f, k;
     bool valid = urb->status == 0 && urb->number_of_packets == ISO_PKTS_IN;
 
     spin_lock_irqsave(&dev->lock, flags);
     zg01_usb_stats_account(&c->stats, urb, true, ktime_get_ns());
     zg01_in_trace_account(&dev->in_trace, urb, ktime_get_ns());
-    sub = s->substream;
-    rt = (s->enabled && sub && sub->runtime && sub->runtime->dma_area &&
-          snd_pcm_running(sub)) ? sub->runtime : NULL;
-    old_pos = s->pcm_pos;
+    for (k = 0; k < ZG01_CAPTURE_STREAMS; k++) {
+        struct snd_pcm_substream *sub = cap[k]->substream;
+
+        cap_rt[k] = (cap[k]->enabled && sub && sub->runtime &&
+                     sub->runtime->dma_area && snd_pcm_running(sub)) ?
+                    sub->runtime : NULL;
+        cap_old[k] = cap[k]->pcm_pos;
+    }
     if (zg01_chain_active(c) && !atomic_read(&dev->disconnecting)) {
         for (i = 0; i < urb->number_of_packets && i < ISO_PKTS_IN; i++) {
             const struct usb_iso_packet_descriptor *p = &urb->iso_frame_desc[i];
@@ -1052,18 +1072,24 @@ static void zg01_iso_in(struct urb *urb)
             }
             c->stats.feedback_valid++;
             plan.frames[i] = frames;
-            if (!rt)
-                continue;
-            for (f = 0; f < frames; f++) {
-                unsigned int off = (s->pcm_pos % rt->buffer_size) * 8;
+            for (k = 0; k < ZG01_CAPTURE_STREAMS; k++) {
+                if (!cap_rt[k])
+                    continue;
+                for (f = 0; f < frames; f++) {
+                    unsigned int off =
+                        (cap[k]->pcm_pos % cap_rt[k]->buffer_size) * 8;
 
-                memcpy(rt->dma_area + off,
-                       urb->transfer_buffer + p->offset + 8 + f * 16, 8);
-                s->pcm_pos++;
+                    memcpy(cap_rt[k]->dma_area + off,
+                           urb->transfer_buffer + p->offset + 8 + f * 16 +
+                               cap[k]->capture_offset, 8);
+                    cap[k]->pcm_pos++;
+                }
             }
         }
-        if (rt && s->pcm_pos != old_pos)
-            queue_work(zg01_period_wq, &s->period_work);
+        for (k = 0; k < ZG01_CAPTURE_STREAMS; k++) {
+            if (cap_rt[k] && cap[k]->pcm_pos != cap_old[k])
+                queue_work(zg01_period_wq, &cap[k]->period_work);
+        }
         if (zg01_chain_active(&dev->out_chain) &&
             (dev->feedback.pending || atomic_read(&dev->out_chain.inflight)) &&
             !dev->feedback_fault) {
@@ -1522,6 +1548,11 @@ int zg01_create_pcm_devices(struct zg01_dev *dev)
         return ret;
 
     ret = zg01_new_pcm(dev, ZG01_VOICE_IN, "ZG01 Voice In", 0, 1,
+                       PCM_BUFFER_BYTES_MAX_VOICE);
+    if (ret)
+        return ret;
+
+    ret = zg01_new_pcm(dev, ZG01_STREAMING_IN, "ZG01 Streaming In", 0, 1,
                        PCM_BUFFER_BYTES_MAX_VOICE);
     if (ret)
         return ret;

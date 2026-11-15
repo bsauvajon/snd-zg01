@@ -18,6 +18,23 @@ use crate::widgets::{ChannelMeter, Meter, MeterSpec};
 /// The channel labels of a surround bank, in the vendor QML order.
 const CHANNELS: [&str; 8] = ["L", "R", "C", "LFE", "SBL", "SBR", "SL", "SR"];
 
+/// The labels of `Meter Stream Mix`, which is four stereo pairs.
+///
+/// The device meters the four sources of the STREAMING OUTPUT MIXER on
+/// this group instead of reporting a surround bus: MIC 0/1, VOICE 2/3,
+/// GAME 4/5 and the summed output 6/7.
+const STREAM_PAIRS: [&str; 8] = [
+    "MIC L", "MIC R", "VOICE L", "VOICE R", "GAME L", "GAME R", "OUT L", "OUT R",
+];
+
+/// The channel labels of one bank.
+fn bank_labels(id: MeterId) -> [&'static str; 8] {
+    match id {
+        MeterId::StreamMix => STREAM_PAIRS,
+        _ => CHANNELS,
+    }
+}
+
 /// The full scale of the card meter controls, in device steps.
 const METER_FULL_SCALE: f64 = 127.0;
 
@@ -209,11 +226,11 @@ fn build_bank(id: MeterId, title: &str, meters: &mut Vec<Metered>) -> gtk::Box {
     grid.set_column_spacing(10);
     grid.set_row_spacing(4);
     grid.set_hexpand(true);
-    for (channel, channel_label) in CHANNELS.iter().enumerate() {
+    for (channel, channel_label) in bank_labels(id).iter().enumerate() {
         let label = gtk::Label::new(Some(channel_label));
         label.add_css_class("channel-label");
         label.set_xalign(0.0);
-        label.set_width_chars(3);
+        label.set_width_chars(if id == MeterId::StreamMix { 8 } else { 3 });
 
         let accessible = format!("{title} {channel_label}");
         let meter = ChannelMeter::new(&accessible, None);

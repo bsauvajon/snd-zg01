@@ -21,7 +21,8 @@ The `snd-zg01-dkms` package installs:
    - `src/zg01_usb.c`, `src/zg01_pcm.c`, `src/zg01_control.c`,
      `src/zg01_usb_discovery.c`, headers, `Makefile`, `dkms.conf`
 2. The UCM profile to `/usr/share/alsa/ucm2/conf.d/zg01_usb/`:
-   - exposes Game Out, Voice Out, and Voice In as separate PipeWire devices
+   - exposes Game Out, Voice Out, Voice In and Streaming In as separate
+     PipeWire devices
 3. Documentation to `/usr/share/doc/snd-zg01-dkms/`:
    - changelog and copyright (GPL-2+)
 4. Post-install actions (`debian/snd-zg01-dkms.postinst`):

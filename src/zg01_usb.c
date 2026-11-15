@@ -1,11 +1,11 @@
 /*
  * Yamaha ZG01 USB Audio Driver - USB glue
  *
- * One USB device, one ALSA card, three PCM devices (Game playback,
- * Voice Out playback, Voice In capture).  Probe anchors on interface 1
- * (shared EP 0x01 playback).  Interface 2 (EP 0x81 capture) is claimed
- * by the same driver instance and creates no extra card.  No global
- * device pointers, no devices_mutex.
+ * One USB device, one ALSA card, four PCM devices (Game playback,
+ * Voice Out playback, Voice In capture, Streaming In capture).  Probe
+ * anchors on interface 1 (shared EP 0x01 playback).  Interface 2
+ * (EP 0x81 capture) is claimed by the same driver instance and creates
+ * no extra card.  No global device pointers, no devices_mutex.
  */
 
 #include <linux/bitops.h>
@@ -152,6 +152,10 @@ static int zg01_probe(struct usb_interface *interface,
     dev->streams[ZG01_VOICE_OUT].direction = SNDRV_PCM_STREAM_PLAYBACK;
     dev->streams[ZG01_VOICE_IN].pcm_device = ZG01_PCM_VOICE_IN;
     dev->streams[ZG01_VOICE_IN].direction = SNDRV_PCM_STREAM_CAPTURE;
+    dev->streams[ZG01_VOICE_IN].capture_offset = 0;
+    dev->streams[ZG01_STREAMING_IN].pcm_device = ZG01_PCM_STREAMING_IN;
+    dev->streams[ZG01_STREAMING_IN].direction = SNDRV_PCM_STREAM_CAPTURE;
+    dev->streams[ZG01_STREAMING_IN].capture_offset = 8;
 
     dev->out_chain.dev = dev;
     dev->in_chain.dev = dev;
@@ -217,7 +221,7 @@ static int zg01_probe(struct usb_interface *interface,
     }
 
     usb_set_intfdata(interface, dev);
-    dev_info(&interface->dev, "ZG01 card created (3 PCM devices)\n");
+    dev_info(&interface->dev, "ZG01 card created (4 PCM devices)\n");
     return 0;
 
 err_free_card:

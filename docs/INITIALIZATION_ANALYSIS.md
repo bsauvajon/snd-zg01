@@ -54,8 +54,11 @@ descriptors; the packet formats below are reverse engineered.
 - Interface 1 (playback, EP 0x01): 240-byte packets, 6 frames of 40 bytes.
   Frame: Voice_L(4), Voice_R(4), Game_L(4), Game_R(4), then 24 pad bytes.
 - Interface 2 (capture, EP 0x81): 108-byte packets.
-  Header 8 bytes (counter + 0x60000000 marker), 6 frames of 16 bytes
-  (L 4, R 4, pad 8), trailer 4 bytes (counter repeat).
+  Header 8 bytes (counter + payload length), 6 frames of 16 bytes, trailer
+  4 bytes (counter repeat).  Each frame carries four 32-bit channels:
+  Voice_L(4), Voice_R(4), Streaming_L(4), Streaming_R(4).  The interface
+  declares four 32-bit channels, matching the two recording devices Windows
+  exposes (Voice and Streaming).
 
 The 40-byte playback frame carries both sinks on one endpoint. The driver
 writes the Game and Voice samples into separate frame slots, which is why the
